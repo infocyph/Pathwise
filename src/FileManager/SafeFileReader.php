@@ -138,7 +138,7 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
      */
     public function releaseLock(): void
     {
-        if ($this->isLocked) {
+        if ($this->isLocked && isset($this->file)) {
             $this->file->flock(LOCK_UN);
             $this->isLocked = false;
         }

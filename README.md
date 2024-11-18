@@ -10,8 +10,6 @@
 
 Pathwise is a robust PHP library designed for streamlined file and directory management. With features like safe reading/writing, metadata extraction, path utilities, compression, and permission management, it ensures a developer-friendly experience while handling complex file operations.
 
-
-
 ## **Table of Contents**
 1. [Introduction](#pathwise-file-management-made-simple)
 2. [Prerequisites](#prerequisites)
@@ -32,8 +30,6 @@ Pathwise is a robust PHP library designed for streamlined file and directory man
     - [File and Directory Utilities](#file-and-directory-utilities)
 9. [Support](#support)
 10. [License](#license)
-
-
 
 ## **Prerequisites**
 - Language: PHP 8.2/+
