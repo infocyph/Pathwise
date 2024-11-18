@@ -69,7 +69,7 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      * @param int $delay Delay between retries in milliseconds (used only if $waitForLock is true).
      * @throws FileAccessException If lock could not be acquired.
      */
-    public function lock(int $lockType = LOCK_EX, bool $waitForLock = false, int $retries = 3, int $delay = 100): void
+    public function lock(int $lockType = LOCK_EX, bool $waitForLock = false, int $retries = 5, int $delay = 200): void
     {
         $this->initiate($this->append ? 'a' : 'w');
         $attempt = 0;
@@ -80,12 +80,11 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
                 $this->isLocked = true;
                 return;
             }
-            if ($waitForLock) {
-                usleep($delay * 1000); // Convert milliseconds to microseconds
-                $attempt++;
-            } else {
+            if (!$waitForLock) {
                 break;
             }
+            usleep($delay * 1000);
+            $attempt++;
         } while ($attempt < $retries);
 
         throw new FileAccessException("Failed to acquire lock on file {$this->filename} after $retries attempts.");
@@ -120,31 +119,20 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
     public function __call(string $type, array $params)
     {
         $this->initiate($this->append ? 'a' : 'w');
-
-        try {
-            if (!$this->isLocked) {
-                $this->lock();  // Non-blocking by default
-            }
-
-            $returnable = match ($type) {
-                'character' => $this->writeCharacter(...$params),
-                'line' => $this->writeLine(...$params),
-                'csv' => $this->writeCSV(...$params),
-                'binary' => $this->writeBinary(...$params),
-                'json' => $this->writeJSON(...$params),
-                'regex' => $this->writePatternMatch(...$params),
-                'fixedWidth' => $this->writeFixedWidth(...$params),
-                'xml' => $this->writeXML(...$params),
-                'serialized' => $this->writeSerialized(...$params),
-                'jsonArray' => $this->writeJSONArray(...$params),
-                default => throw new Exception("Unknown write type '$type'"),
-            };
-
-            $this->trackWriteType($type);
-        } finally {
-            $this->unlock();  // Ensure unlock even if an exception occurs
-        }
-
+        $returnable = match ($type) {
+            'character' => $this->writeCharacter(...$params),
+            'line' => $this->writeLine(...$params),
+            'csv' => $this->writeCSV(...$params),
+            'binary' => $this->writeBinary(...$params),
+            'json' => $this->writeJSON(...$params),
+            'regex' => $this->writePatternMatch(...$params),
+            'fixedWidth' => $this->writeFixedWidth(...$params),
+            'xml' => $this->writeXML(...$params),
+            'serialized' => $this->writeSerialized(...$params),
+            'jsonArray' => $this->writeJSONArray(...$params),
+            default => throw new Exception("Unknown write type '$type'"),
+        };
+        $this->trackWriteType($type);
         return $returnable;
     }
 
@@ -155,12 +143,12 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      * The write count is incremented after writing the data.
      *
      * @param string $char The character to write to the file.
-     * @return bool True if writing is successful, false otherwise.
+     * @return int|false The number of bytes written, or false on failure.
      */
-    private function writeCharacter(string $char): bool
+    private function writeCharacter(string $char): int|false
     {
         $this->writeCount++;
-        return (bool)$this->file->fwrite($char);
+        return $this->file->fwrite($char);
     }
 
     /**
@@ -171,12 +159,12 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      * The write count is incremented after writing the data.
      *
      * @param string $content The content to write to the file.
-     * @return bool True if writing is successful, false otherwise.
+     * @return int|false The number of bytes written, or false on failure.
      */
-    private function writeLine(string $content): bool
+    private function writeLine(string $content): int|false
     {
         $this->writeCount++;
-        return (bool)$this->file->fwrite($content . PHP_EOL);
+        return $this->file->fwrite($content . PHP_EOL);
     }
 
     /**
@@ -186,12 +174,12 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      * The write count is incremented after writing the data.
      *
      * @param string $data The binary data to write.
-     * @return bool True if writing is successful, false otherwise.
+     * @return int|false The number of bytes written, or false on failure.
      */
-    private function writeBinary(string $data): bool
+    private function writeBinary(string $data): int|false
     {
         $this->writeCount++;
-        return (bool)$this->file->fwrite($data);
+        return $this->file->fwrite($data);
     }
 
     /**
@@ -205,16 +193,16 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      * @param string $separator The character used to separate fields. Defaults to ','.
      * @param string $enclosure The character used to enclose fields. Defaults to '"'.
      * @param string $escape The character used to escape special characters. Defaults to '\\'.
-     * @return bool True if writing is successful, false on failure.
+     * @return int|false The number of bytes written, or false on failure.
      */
     private function writeCSV(
         array $row,
         string $separator = ",",
         string $enclosure = "\"",
         string $escape = "\\",
-    ): bool {
+    ): int|false {
         $this->writeCount++;
-        return (bool)$this->file->fputcsv($row, $separator, $enclosure, $escape);
+        return $this->file->fputcsv($row, $separator, $enclosure, $escape);
     }
 
     /**
@@ -225,10 +213,10 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      *
      * @param mixed $data The data to encode as JSON and write.
      * @param bool $prettyPrint If true, the JSON will be formatted for readability. Defaults to false.
-     * @return bool True if writing is successful, false on failure.
+     * @return int|false The number of bytes written, or false on failure.
      * @throws Exception If JSON encoding fails.
      */
-    private function writeJSON(mixed $data, bool $prettyPrint = false): bool
+    private function writeJSON(mixed $data, bool $prettyPrint = false): int|false
     {
         $jsonOptions = $prettyPrint ? JSON_PRETTY_PRINT : 0;
         $jsonData = json_encode($data, $jsonOptions);
@@ -236,7 +224,7 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
             throw new Exception("JSON encoding failed: " . json_last_error_msg());
         }
         $this->writeCount++;
-        return (bool)$this->file->fwrite($jsonData . PHP_EOL);
+        return $this->file->fwrite($jsonData . PHP_EOL);
     }
 
     /**
@@ -248,13 +236,13 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      *
      * @param string $content The content to be checked and potentially written.
      * @param string $pattern The regex pattern to match against the content.
-     * @return bool True if the content was written to the file, false otherwise.
+     * @return int|false The number of bytes written, or false on failure.
      */
-    private function writePatternMatch(string $content, string $pattern): bool
+    private function writePatternMatch(string $content, string $pattern): int|false
     {
         if (preg_match($pattern, $content)) {
             $this->writeCount++;
-            return (bool)$this->file->fwrite($content . PHP_EOL);
+            return $this->file->fwrite($content . PHP_EOL);
         }
         return false;
     }
@@ -267,10 +255,10 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      *
      * @param array $data The data to write. Each element is written as a string.
      * @param array $widths The widths of each field. Each element is a positive integer.
-     * @return bool True if writing is successful, false on failure.
+     * @return int|false The number of bytes written, or false on failure.
      * @throws Exception If the count of $data does not match the count of $widths.
      */
-    private function writeFixedWidth(array $data, array $widths): bool
+    private function writeFixedWidth(array $data, array $widths): int|false
     {
         if (count($data) !== count($widths)) {
             throw new Exception("Data and widths arrays must match.");
@@ -280,7 +268,7 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
             $line .= str_pad((string) $field, $widths[$index]);
         }
         $this->writeCount++;
-        return (bool)$this->file->fwrite($line . PHP_EOL);
+        return $this->file->fwrite($line . PHP_EOL);
     }
 
     /**
@@ -290,12 +278,12 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      * and writes it to the file, appending a newline character.
      *
      * @param SimpleXMLElement $element The XML element to write.
-     * @return bool True if to write was successful, false on failure.
+     * @return int|false The number of bytes written, or false on failure.
      */
-    private function writeXML(SimpleXMLElement $element): bool
+    private function writeXML(SimpleXMLElement $element): int|false
     {
         $this->writeCount++;
-        return (bool)$this->file->fwrite($element->asXML() . PHP_EOL);
+        return $this->file->fwrite($element->asXML() . PHP_EOL);
     }
 
     /**
@@ -306,13 +294,13 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      * followed by a newline.
      *
      * @param mixed $data The data to serialize and write.
-     * @return bool True if to write was successful, false on failure.
+     * @return int|false The number of bytes written, or false on failure.
      */
-    private function writeSerialized(mixed $data): bool
+    private function writeSerialized(mixed $data): int|false
     {
         $serializedData = serialize($data);
         $this->writeCount++;
-        return (bool)$this->file->fwrite($serializedData . PHP_EOL);
+        return $this->file->fwrite($serializedData . PHP_EOL);
     }
 
     /**
@@ -321,10 +309,10 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      * @param array $data The array of data to write.
      * @param bool $prettyPrint If true, the JSON will be formatted with
      *     indentation and whitespace for readability. Defaults to false.
-     * @return bool True if to write was successful, false on failure.
+     * @return int|false The number of bytes written, or false on failure.
      * @throws Exception If the JSON encoding fails.
      */
-    private function writeJSONArray(array $data, bool $prettyPrint = false): bool
+    private function writeJSONArray(array $data, bool $prettyPrint = false): int|false
     {
         $jsonOptions = $prettyPrint ? JSON_PRETTY_PRINT : 0;
         $jsonData = json_encode($data, $jsonOptions);
@@ -332,7 +320,7 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
             throw new Exception("JSON encoding failed: " . json_last_error_msg());
         }
         $this->writeCount++;
-        return (bool)$this->file->fwrite($jsonData . PHP_EOL);
+        return $this->file->fwrite($jsonData . PHP_EOL);
     }
 
     /**
@@ -418,6 +406,7 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      * Closes the file and releases any system resources associated with it.
      *
      * Called automatically when the object is no longer referenced.
+     * @throws FileAccessException
      */
     public function __destruct()
     {
