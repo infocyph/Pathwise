@@ -495,23 +495,11 @@ class DirectoryOperations
      */
     public function syncTo(string $destination, bool $deleteOrphans = true, ?callable $progress = null): array
     {
-        if (!FlysystemHelper::directoryExists($this->path)) {
-            throw new DirectoryOperationException("Source directory does not exist: {$this->path}");
-        }
-
-        $destination = PathHelper::normalize($destination);
-        if (!FlysystemHelper::directoryExists($destination)) {
-            FlysystemHelper::createDirectory($destination);
-        }
-
-        $report = [
-            'created' => [],
-            'updated' => [],
-            'deleted' => [],
-            'unchanged' => [],
-        ];
-
+        $this->assertSourceDirectoryExists();
+        $destination = $this->ensureDirectoryExists($destination);
+        $report = $this->newSyncReport();
         $sourceEntries = [];
+
         $sourceLocation = $this->storageLocation($this->path);
         $sourceItems = FlysystemHelper::listContents($this->path, true);
         $total = count($sourceItems);
@@ -524,63 +512,12 @@ class DirectoryOperations
             }
 
             $current++;
-            $type = (string) ($item['type'] ?? 'file');
-            $sourceEntries[$relative] = $type;
-            $targetPath = $this->buildPath($destination, $relative);
-
-            if ($type === 'dir') {
-                if (!FlysystemHelper::directoryExists($targetPath)) {
-                    FlysystemHelper::createDirectory($targetPath);
-                    $report['created'][] = $relative . '/';
-                }
-            } else {
-                $sourcePath = $this->buildPath($this->path, $relative);
-                if (!FlysystemHelper::fileExists($targetPath)) {
-                    FlysystemHelper::copy($sourcePath, $targetPath);
-                    $report['created'][] = $relative;
-                } else {
-                    $sourceHash = FlysystemHelper::checksum($sourcePath, 'sha256');
-                    $targetHash = FlysystemHelper::checksum($targetPath, 'sha256');
-                    if (!is_string($sourceHash) || !is_string($targetHash) || !hash_equals($sourceHash, $targetHash)) {
-                        FlysystemHelper::copy($sourcePath, $targetPath);
-                        $report['updated'][] = $relative;
-                    } else {
-                        $report['unchanged'][] = $relative;
-                    }
-                }
-            }
-
-            if (is_callable($progress)) {
-                $progress([
-                    'operation' => 'sync',
-                    'path' => $relative,
-                    'current' => $current,
-                    'total' => max(1, $total),
-                ]);
-            }
+            $this->syncOneItem($destination, $relative, $item, $sourceEntries, $report);
+            $this->emitSyncProgress($progress, $relative, $current, $total);
         }
 
         if ($deleteOrphans) {
-            $destinationLocation = $this->storageLocation($destination);
-            $destinationItems = FlysystemHelper::listContents($destination, true);
-
-            usort($destinationItems, static fn (array $a, array $b): int => strlen((string) ($b['path'] ?? '')) <=> strlen((string) ($a['path'] ?? '')));
-
-            foreach ($destinationItems as $item) {
-                $relative = $this->relativeStoragePath($destinationLocation, (string) ($item['path'] ?? ''));
-                if ($relative === '' || isset($sourceEntries[$relative])) {
-                    continue;
-                }
-
-                $targetPath = $this->buildPath($destination, $relative);
-                if (($item['type'] ?? null) === 'dir') {
-                    FlysystemHelper::deleteDirectory($targetPath);
-                    $report['deleted'][] = $relative . '/';
-                } else {
-                    FlysystemHelper::delete($targetPath);
-                    $report['deleted'][] = $relative;
-                }
-            }
+            $this->deleteSyncOrphans($destination, $sourceEntries, $report);
         }
 
         return $report;
@@ -595,101 +532,20 @@ class DirectoryOperations
     public function unzip(string $source): bool
     {
         $source = PathHelper::normalize($source);
-        if (!FlysystemHelper::fileExists($source)) {
-            throw new DirectoryOperationException("ZIP source does not exist: {$source}");
-        }
-
-        if (!FlysystemHelper::directoryExists($this->path)) {
-            FlysystemHelper::createDirectory($this->path);
-        }
-
-        $localSource = $source;
-        $cleanupSource = false;
-
-        if (!$this->isLocalPath($source) || !is_file($source)) {
-            $tempSource = tempnam(sys_get_temp_dir(), 'pathwise_unzip_');
-            if ($tempSource === false) {
-                throw new DirectoryOperationException('Unable to create temporary ZIP source.');
-            }
-
-            $sourceStream = FlysystemHelper::readStream($source);
-            $targetStream = fopen($tempSource, 'wb');
-            if (!is_resource($sourceStream) || !is_resource($targetStream)) {
-                if (is_resource($sourceStream)) {
-                    fclose($sourceStream);
-                }
-                if (is_resource($targetStream)) {
-                    fclose($targetStream);
-                }
-                @unlink($tempSource);
-                throw new DirectoryOperationException("Unable to read ZIP source: {$source}");
-            }
-
-            stream_copy_to_stream($sourceStream, $targetStream);
-            fclose($sourceStream);
-            fclose($targetStream);
-
-            $localSource = $tempSource;
-            $cleanupSource = true;
-        }
+        $this->assertZipSourceExists($source);
+        $this->ensureDirectoryExists($this->path);
+        [$localSource, $cleanupSource] = $this->prepareLocalZipSource($source);
 
         try {
-            if (
-                $this->executionStrategy !== ExecutionStrategy::PHP
-                && NativeOperationsAdapter::canUseNativeCompression()
-                && $this->isLocalPath($this->path)
-            ) {
-                $native = NativeOperationsAdapter::decompressZip($localSource, $this->path);
-                if ($native['success']) {
-                    return true;
-                }
-
-                if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
-                    throw new DirectoryOperationException("Native unzip failed for '{$source}' to '{$this->path}'.");
-                }
+            if ($this->tryNativeUnzip($localSource, $source)) {
+                return true;
             }
 
-            $zip = new ZipArchive();
-            if ($zip->open($localSource) !== true) {
-                throw new DirectoryOperationException("Unable to open ZIP source: {$source}");
-            }
-
-            for ($i = 0; $i < $zip->numFiles; $i++) {
-                $entry = (string) $zip->getNameIndex($i);
-                $entry = ltrim(str_replace('\\', '/', $entry), '/');
-                if ($entry === '') {
-                    continue;
-                }
-
-                if (str_ends_with($entry, '/')) {
-                    FlysystemHelper::createDirectory($this->buildPath($this->path, rtrim($entry, '/')));
-                    continue;
-                }
-
-                $relativeDir = pathinfo($entry, PATHINFO_DIRNAME);
-                if ($relativeDir !== '' && $relativeDir !== '.') {
-                    $targetDir = $this->buildPath($this->path, str_replace('\\', '/', $relativeDir));
-                    if (!FlysystemHelper::directoryExists($targetDir)) {
-                        FlysystemHelper::createDirectory($targetDir);
-                    }
-                }
-
-                $contents = $zip->getFromIndex($i);
-                if (!is_string($contents)) {
-                    $zip->close();
-                    throw new DirectoryOperationException("Unable to extract ZIP entry: {$entry}");
-                }
-
-                FlysystemHelper::write($this->buildPath($this->path, $entry), $contents);
-            }
-
-            $zip->close();
+            $this->extractZipContents($localSource, $source);
 
             return true;
         } finally {
-            if ($cleanupSource && is_file($localSource)) {
-                @unlink($localSource);
-            }
+            $this->cleanupTemporaryFile($cleanupSource, $localSource);
         }
     }
 
@@ -710,103 +566,24 @@ class DirectoryOperations
      */
     public function zip(string $destination): bool
     {
-        if (!FlysystemHelper::directoryExists($this->path)) {
-            throw new DirectoryOperationException("Source directory does not exist: {$this->path}");
-        }
-
+        $this->assertSourceDirectoryExists();
         $destination = PathHelper::normalize($destination);
         $useLocalDestination = $this->isLocalPath($destination);
 
-        if (
-            $this->executionStrategy !== ExecutionStrategy::PHP
-            && NativeOperationsAdapter::canUseNativeCompression()
-            && $this->isLocalPath($this->path)
-            && $useLocalDestination
-        ) {
-            $native = NativeOperationsAdapter::compressToZip($this->path, $destination);
-            if ($native['success']) {
-                return true;
-            }
-
-            if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
-                throw new DirectoryOperationException("Native zip failed for '{$this->path}' to '{$destination}'.");
-            }
+        if ($this->tryNativeZip($destination, $useLocalDestination)) {
+            return true;
         }
 
-        $zipPath = $destination;
-        if (!$useLocalDestination) {
-            $tempZip = tempnam(sys_get_temp_dir(), 'pathwise_zip_');
-            if ($tempZip === false) {
-                throw new DirectoryOperationException('Unable to allocate temporary ZIP path.');
-            }
-
-            @unlink($tempZip);
-            $zipPath = $tempZip;
-        } else {
-            $parent = dirname($zipPath);
-            if (!is_dir($parent)) {
-                @mkdir($parent, 0755, true);
-            }
+        $zipPath = $this->prepareZipPath($destination, $useLocalDestination);
+        $zip = $this->openZipArchive($zipPath, $destination, $useLocalDestination);
+        try {
+            $this->addContentsToZip($zip, $zipPath);
+        } finally {
+            $zip->close();
         }
-
-        $zip = new ZipArchive();
-        if ($zip->open($zipPath, ZipArchive::CREATE) !== true) {
-            if (!$useLocalDestination && is_file($zipPath)) {
-                @unlink($zipPath);
-            }
-            throw new DirectoryOperationException("Unable to create ZIP archive at '{$destination}'.");
-        }
-
-        if ($this->isLocalPath($this->path) && is_dir($this->path)) {
-            $directoryIterator = new RecursiveDirectoryIterator($this->path, FilesystemIterator::SKIP_DOTS);
-            $iterator = new RecursiveIteratorIterator($directoryIterator, RecursiveIteratorIterator::SELF_FIRST);
-
-            foreach ($iterator as $file) {
-                $subPathName = str_replace('\\', '/', $iterator->getInnerIterator()->getSubPathName());
-                if ($file->isDir()) {
-                    $zip->addEmptyDir($subPathName);
-                    continue;
-                }
-
-                $zip->addFile($file->getPathname(), $subPathName);
-            }
-        } else {
-            $sourceLocation = $this->storageLocation($this->path);
-            foreach (FlysystemHelper::listContents($this->path, true) as $item) {
-                $relative = $this->relativeStoragePath($sourceLocation, (string) ($item['path'] ?? ''));
-                if ($relative === '') {
-                    continue;
-                }
-
-                $zipPathName = str_replace('\\', '/', $relative);
-                if (($item['type'] ?? null) === 'dir') {
-                    $zip->addEmptyDir(rtrim($zipPathName, '/'));
-                    continue;
-                }
-
-                $zip->addFromString($zipPathName, FlysystemHelper::read($this->buildPath($this->path, $relative)));
-            }
-        }
-
-        $zip->close();
 
         if (!$useLocalDestination) {
-            $stream = fopen($zipPath, 'rb');
-            if (!is_resource($stream)) {
-                if (is_file($zipPath)) {
-                    @unlink($zipPath);
-                }
-                throw new DirectoryOperationException("Unable to stream ZIP archive at '{$zipPath}'.");
-            }
-
-            try {
-                FlysystemHelper::writeStream($destination, $stream);
-            } finally {
-                fclose($stream);
-                if (is_file($zipPath)) {
-                    @unlink($zipPath);
-                }
-            }
+            $this->persistZipToDestination($zipPath, $destination);
         }
 
         return true;
@@ -838,6 +615,72 @@ class DirectoryOperations
         return true;
     }
 
+    private function addContentsToZip(ZipArchive $zip, string $zipPath): void
+    {
+        if ($this->isLocalPath($this->path) && is_dir($this->path)) {
+            $this->addLocalContentsToZip($zip, $zipPath);
+
+            return;
+        }
+
+        $this->addFlysystemContentsToZip($zip);
+    }
+
+    private function addFlysystemContentsToZip(ZipArchive $zip): void
+    {
+        $sourceLocation = $this->storageLocation($this->path);
+        foreach (FlysystemHelper::listContents($this->path, true) as $item) {
+            $relative = $this->relativeStoragePath($sourceLocation, (string) ($item['path'] ?? ''));
+            if ($relative === '') {
+                continue;
+            }
+
+            $zipPathName = str_replace('\\', '/', $relative);
+            if (($item['type'] ?? null) === 'dir') {
+                $zip->addEmptyDir(rtrim($zipPathName, '/'));
+                continue;
+            }
+
+            $zip->addFromString($zipPathName, FlysystemHelper::read($this->buildPath($this->path, $relative)));
+        }
+    }
+
+    private function addLocalContentsToZip(ZipArchive $zip, string $zipPath): void
+    {
+        $normalizedZipPath = PathHelper::normalize($zipPath);
+        $directoryIterator = new RecursiveDirectoryIterator($this->path, FilesystemIterator::SKIP_DOTS);
+        $iterator = new RecursiveIteratorIterator($directoryIterator, RecursiveIteratorIterator::SELF_FIRST);
+
+        foreach ($iterator as $file) {
+            $currentPath = PathHelper::normalize($file->getPathname());
+            if ($currentPath === $normalizedZipPath) {
+                continue;
+            }
+
+            $subPathName = str_replace('\\', '/', $iterator->getInnerIterator()->getSubPathName());
+            if ($file->isDir()) {
+                $zip->addEmptyDir($subPathName);
+                continue;
+            }
+
+            $zip->addFile($file->getPathname(), $subPathName);
+        }
+    }
+
+    private function assertSourceDirectoryExists(): void
+    {
+        if (!FlysystemHelper::directoryExists($this->path)) {
+            throw new DirectoryOperationException("Source directory does not exist: {$this->path}");
+        }
+    }
+
+    private function assertZipSourceExists(string $source): void
+    {
+        if (!FlysystemHelper::fileExists($source)) {
+            throw new DirectoryOperationException("ZIP source does not exist: {$source}");
+        }
+    }
+
     private function buildPath(string $basePath, string $relativePath): string
     {
         $relativePath = trim(str_replace('\\', '/', $relativePath), '/');
@@ -850,6 +693,136 @@ class DirectoryOperations
         }
 
         return PathHelper::join($basePath, $relativePath);
+    }
+
+    private function cleanupTemporaryFile(bool $shouldCleanup, string $path): void
+    {
+        if ($shouldCleanup && is_file($path)) {
+            @unlink($path);
+        }
+    }
+
+    private function copyIfSyncRequired(string $sourcePath, string $targetPath): string
+    {
+        if (!FlysystemHelper::fileExists($targetPath)) {
+            FlysystemHelper::copy($sourcePath, $targetPath);
+
+            return 'created';
+        }
+
+        $sourceHash = FlysystemHelper::checksum($sourcePath, 'sha256');
+        $targetHash = FlysystemHelper::checksum($targetPath, 'sha256');
+        if (!is_string($sourceHash) || !is_string($targetHash) || !hash_equals($sourceHash, $targetHash)) {
+            FlysystemHelper::copy($sourcePath, $targetPath);
+
+            return 'updated';
+        }
+
+        return 'unchanged';
+    }
+
+    private function deleteSyncOrphans(string $destination, array $sourceEntries, array &$report): void
+    {
+        $destinationLocation = $this->storageLocation($destination);
+        $destinationItems = FlysystemHelper::listContents($destination, true);
+
+        usort(
+            $destinationItems,
+            static fn (array $a, array $b): int => strlen((string) ($b['path'] ?? '')) <=> strlen((string) ($a['path'] ?? '')),
+        );
+
+        foreach ($destinationItems as $item) {
+            $relative = $this->relativeStoragePath($destinationLocation, (string) ($item['path'] ?? ''));
+            if ($relative === '' || isset($sourceEntries[$relative])) {
+                continue;
+            }
+
+            $targetPath = $this->buildPath($destination, $relative);
+            if (($item['type'] ?? null) === 'dir') {
+                FlysystemHelper::deleteDirectory($targetPath);
+                $report['deleted'][] = $relative . '/';
+                continue;
+            }
+
+            FlysystemHelper::delete($targetPath);
+            $report['deleted'][] = $relative;
+        }
+    }
+
+    private function emitSyncProgress(?callable $progress, string $relative, int $current, int $total): void
+    {
+        if (!is_callable($progress)) {
+            return;
+        }
+
+        $progress([
+            'operation' => 'sync',
+            'path' => $relative,
+            'current' => $current,
+            'total' => max(1, $total),
+        ]);
+    }
+
+    private function ensureDirectoryExists(string $path): string
+    {
+        $path = PathHelper::normalize($path);
+        if (!FlysystemHelper::directoryExists($path)) {
+            FlysystemHelper::createDirectory($path);
+        }
+
+        return $path;
+    }
+
+    private function ensureZipEntryDirectory(string $entry): void
+    {
+        $relativeDir = pathinfo($entry, PATHINFO_DIRNAME);
+        if ($relativeDir === '' || $relativeDir === '.') {
+            return;
+        }
+
+        $targetDir = $this->buildPath($this->path, str_replace('\\', '/', $relativeDir));
+        if (!FlysystemHelper::directoryExists($targetDir)) {
+            FlysystemHelper::createDirectory($targetDir);
+        }
+    }
+
+    private function extractSingleZipEntry(ZipArchive $zip, int $index): void
+    {
+        $entry = (string) $zip->getNameIndex($index);
+        $entry = ltrim(str_replace('\\', '/', $entry), '/');
+        if ($entry === '') {
+            return;
+        }
+
+        if (str_ends_with($entry, '/')) {
+            FlysystemHelper::createDirectory($this->buildPath($this->path, rtrim($entry, '/')));
+
+            return;
+        }
+
+        $this->ensureZipEntryDirectory($entry);
+        $contents = $zip->getFromIndex($index);
+        if (!is_string($contents)) {
+            throw new DirectoryOperationException("Unable to extract ZIP entry: {$entry}");
+        }
+
+        FlysystemHelper::write($this->buildPath($this->path, $entry), $contents);
+    }
+
+    private function extractZipContents(string $localSource, string $source): void
+    {
+        $zip = new ZipArchive();
+        if ($zip->open($localSource) !== true) {
+            throw new DirectoryOperationException("Unable to open ZIP source: {$source}");
+        }
+
+        try {
+            for ($i = 0; $i < $zip->numFiles; $i++) {
+                $this->extractSingleZipEntry($zip, $i);
+            }
+        } finally {
+            $zip->close();
+        }
     }
 
     private function invokeFilter(?callable $filter, string $path, array $metadata): bool
@@ -868,6 +841,108 @@ class DirectoryOperations
     private function isLocalPath(string $path): bool
     {
         return !PathHelper::hasScheme($path) && PathHelper::isAbsolute($path);
+    }
+
+    /**
+     * @return array{created: array, updated: array, deleted: array, unchanged: array}
+     */
+    private function newSyncReport(): array
+    {
+        return [
+            'created' => [],
+            'updated' => [],
+            'deleted' => [],
+            'unchanged' => [],
+        ];
+    }
+
+    private function openZipArchive(string $zipPath, string $destination, bool $useLocalDestination): ZipArchive
+    {
+        $zip = new ZipArchive();
+        if ($zip->open($zipPath, ZipArchive::CREATE) === true) {
+            return $zip;
+        }
+
+        if (!$useLocalDestination && is_file($zipPath)) {
+            @unlink($zipPath);
+        }
+
+        throw new DirectoryOperationException("Unable to create ZIP archive at '{$destination}'.");
+    }
+
+    private function persistZipToDestination(string $zipPath, string $destination): void
+    {
+        $stream = fopen($zipPath, 'rb');
+        if (!is_resource($stream)) {
+            if (is_file($zipPath)) {
+                @unlink($zipPath);
+            }
+            throw new DirectoryOperationException("Unable to stream ZIP archive at '{$zipPath}'.");
+        }
+
+        try {
+            FlysystemHelper::writeStream($destination, $stream);
+        } finally {
+            fclose($stream);
+            if (is_file($zipPath)) {
+                @unlink($zipPath);
+            }
+        }
+    }
+
+    /**
+     * @return array{string, bool}
+     */
+    private function prepareLocalZipSource(string $source): array
+    {
+        if ($this->isLocalPath($source) && is_file($source)) {
+            return [$source, false];
+        }
+
+        $tempSource = tempnam(sys_get_temp_dir(), 'pathwise_unzip_');
+        if ($tempSource === false) {
+            throw new DirectoryOperationException('Unable to create temporary ZIP source.');
+        }
+
+        $sourceStream = FlysystemHelper::readStream($source);
+        $targetStream = fopen($tempSource, 'wb');
+        if (!is_resource($sourceStream) || !is_resource($targetStream)) {
+            if (is_resource($sourceStream)) {
+                fclose($sourceStream);
+            }
+            if (is_resource($targetStream)) {
+                fclose($targetStream);
+            }
+            @unlink($tempSource);
+            throw new DirectoryOperationException("Unable to read ZIP source: {$source}");
+        }
+
+        stream_copy_to_stream($sourceStream, $targetStream);
+        fclose($sourceStream);
+        fclose($targetStream);
+
+        return [$tempSource, true];
+    }
+
+    private function prepareZipPath(string $destination, bool $useLocalDestination): string
+    {
+        if (!$useLocalDestination) {
+            $tempZip = tempnam(sys_get_temp_dir(), 'pathwise_zip_');
+            if ($tempZip === false) {
+                throw new DirectoryOperationException('Unable to allocate temporary ZIP path.');
+            }
+
+            @unlink($tempZip);
+
+            return $tempZip;
+        }
+
+        $parent = dirname($destination);
+        if (!is_dir($parent)) {
+            @mkdir($parent, 0755, true);
+        }
+
+        return $destination;
     }
 
     private function relativeStoragePath(string $baseLocation, string $itemPath): string
@@ -895,5 +970,71 @@ class DirectoryOperations
         [, $location] = FlysystemHelper::resolveDirectory($directoryPath);
 
         return trim(str_replace('\\', '/', $location), '/');
+    }
+
+    private function syncOneItem(string $destination, string $relative, array $item, array &$sourceEntries, array &$report): void
+    {
+        $type = (string) ($item['type'] ?? 'file');
+        $sourceEntries[$relative] = $type;
+
+        if ($type === 'dir') {
+            $targetPath = $this->buildPath($destination, $relative);
+            if (!FlysystemHelper::directoryExists($targetPath)) {
+                FlysystemHelper::createDirectory($targetPath);
+                $report['created'][] = $relative . '/';
+            }
+
+            return;
+        }
+
+        $sourcePath = $this->buildPath($this->path, $relative);
+        $targetPath = $this->buildPath($destination, $relative);
+        $result = $this->copyIfSyncRequired($sourcePath, $targetPath);
+        $report[$result][] = $relative;
+    }
+
+    private function tryNativeUnzip(string $localSource, string $source): bool
+    {
+        if (
+            $this->executionStrategy === ExecutionStrategy::PHP
+            || !NativeOperationsAdapter::canUseNativeCompression()
+            || !$this->isLocalPath($this->path)
+        ) {
+            return false;
+        }
+
+        $native = NativeOperationsAdapter::decompressZip($localSource, $this->path);
+        if ($native['success']) {
+            return true;
+        }
+
+        if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
+            throw new DirectoryOperationException("Native unzip failed for '{$source}' to '{$this->path}'.");
+        }
+
+        return false;
+    }
+
+    private function tryNativeZip(string $destination, bool $useLocalDestination): bool
+    {
+        if (
+            $this->executionStrategy === ExecutionStrategy::PHP
+            || !NativeOperationsAdapter::canUseNativeCompression()
+            || !$this->isLocalPath($this->path)
+            || !$useLocalDestination
+        ) {
+            return false;
+        }
+
+        $native = NativeOperationsAdapter::compressToZip($this->path, $destination);
+        if ($native['success']) {
+            return true;
+        }
+
+        if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
+            throw new DirectoryOperationException("Native zip failed for '{$this->path}' to '{$destination}'.");
+        }
+
+        return false;
     }
 }

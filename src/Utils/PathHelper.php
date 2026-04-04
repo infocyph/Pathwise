@@ -273,48 +273,7 @@ class PathHelper
             return self::$cache[$originalPath];
         }
 
-        if ($path === '') {
-            return self::$cache[$originalPath] = '';
-        }
-
-        if (self::hasScheme($path)) {
-            return self::$cache[$originalPath] = self::normalizeSchemePath($path);
-        }
-
-        $path = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $path);
-
-        $prefix = '';
-        if (preg_match('/^[a-zA-Z]:[\\\\\\/]/', $path) === 1) {
-            $prefix = strtoupper(substr($path, 0, 2)) . DIRECTORY_SEPARATOR;
-            $path = substr($path, 3);
-        } elseif (str_starts_with($path, DIRECTORY_SEPARATOR)) {
-            $prefix = DIRECTORY_SEPARATOR;
-            $path = ltrim($path, DIRECTORY_SEPARATOR);
-        }
-
-        $parts = preg_split('/[\\\\\\/]+/', $path, -1, PREG_SPLIT_NO_EMPTY);
-        $stack = [];
-        foreach ($parts as $part) {
-            if ($part === '' || $part === '.') {
-                continue;
-            }
-            if ($part === '..') {
-                if ($stack !== [] && end($stack) !== '..') {
-                    array_pop($stack);
-                } elseif ($prefix === '') {
-                    $stack[] = '..';
-                }
-            } else {
-                $stack[] = $part;
-            }
-        }
-
-        $normalized = $prefix . implode(DIRECTORY_SEPARATOR, $stack);
-        if ($normalized === '' && $prefix !== '') {
-            $normalized = $prefix;
-        }
-
-        return self::$cache[$originalPath] = $normalized;
+        return self::$cache[$originalPath] = self::normalizeUncached($path);
     }
 
     /**
@@ -394,6 +353,61 @@ class PathHelper
         return self::normalize(self::join($base, $path));
     }
 
+    private static function buildNormalizedPath(string $prefix, array $stack): string
+    {
+        $normalized = $prefix . implode(DIRECTORY_SEPARATOR, $stack);
+        if ($normalized === '' && $prefix !== '') {
+            return $prefix;
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @return array{string, string}
+     */
+    private static function extractPathPrefix(string $path): array
+    {
+        if (preg_match('/^[a-zA-Z]:[\\\\\\/]/', $path) === 1) {
+            return [strtoupper(substr($path, 0, 2)) . DIRECTORY_SEPARATOR, substr($path, 3)];
+        }
+
+        if (str_starts_with($path, DIRECTORY_SEPARATOR)) {
+            return [DIRECTORY_SEPARATOR, ltrim($path, DIRECTORY_SEPARATOR)];
+        }
+
+        return ['', $path];
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private static function normalizePathParts(string $path, bool $hasAbsolutePrefix): array
+    {
+        $parts = preg_split('/[\\\\\\/]+/', $path, -1, PREG_SPLIT_NO_EMPTY);
+        $stack = [];
+
+        foreach ($parts as $part) {
+            if ($part === '' || $part === '.') {
+                continue;
+            }
+
+            if ($part === '..') {
+                if ($stack !== [] && end($stack) !== '..') {
+                    array_pop($stack);
+                } elseif (!$hasAbsolutePrefix) {
+                    $stack[] = '..';
+                }
+
+                continue;
+            }
+
+            $stack[] = $part;
+        }
+
+        return $stack;
+    }
+
     private static function normalizeSchemePath(string $path): string
     {
         if (preg_match('/^([a-zA-Z0-9._-]+):\/\/(.*)$/', $path, $matches) !== 1) {
@@ -429,5 +443,22 @@ class PathHelper
         }
 
         return $scheme . '://' . $normalized;
+    }
+
+    private static function normalizeUncached(string $path): string
+    {
+        if ($path === '') {
+            return '';
+        }
+
+        if (self::hasScheme($path)) {
+            return self::normalizeSchemePath($path);
+        }
+
+        $path = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $path);
+        [$prefix, $relativePath] = self::extractPathPrefix($path);
+        $stack = self::normalizePathParts($relativePath, $prefix !== '');
+
+        return self::buildNormalizedPath($prefix, $stack);
     }
 }

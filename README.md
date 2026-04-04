@@ -16,21 +16,22 @@ Pathwise is a robust PHP library designed as **Flysystem + more** for streamline
 3. [Installation](#installation)
 4. [Features Overview](#features-overview)
 5. [Documentation Map](#documentation-map)
-6. [FileManager](#filemanager)
+6. [Quality Gates](#quality-gates)
+7. [FileManager](#filemanager)
     - [SafeFileReader](#safefilereader)
     - [SafeFileWriter](#safefilewriter)
     - [FileOperations](#fileoperations)
     - [FileCompression](#filecompression)
-7. [DirectoryManager](#directorymanager)
+8. [DirectoryManager](#directorymanager)
     - [DirectoryOperations](#directoryoperations)
-8. [Utils](#utils)
+9. [Utils](#utils)
     - [PathHelper](#pathhelper)
     - [PermissionsHelper](#permissionshelper)
     - [MetadataHelper](#metadatahelper)
-9. [Handy Functions](#handy-functions)
+10. [Handy Functions](#handy-functions)
     - [File and Directory Utilities](#file-and-directory-utilities)
-10. [Support](#support)
-11. [License](#license)
+11. [Support](#support)
+12. [License](#license)
 
 ## **Prerequisites**
 - Language: PHP 8.4/+
@@ -86,6 +87,22 @@ Then use module pages for details:
 - [Indexing](docs/indexing.rst)
 - [Retention](docs/retention.rst)
 - [Utilities](docs/utilities.rst)
+
+## **Quality Gates**
+
+Pathwise includes a cognitive complexity gate powered by `tomasvotruba/cognitive-complexity` on top of PHPStan.
+
+Run it locally:
+
+```bash
+composer test:phpstan
+```
+
+Current thresholds (see `phpstan.neon.dist`):
+
+- Class cognitive complexity: `250`
+- Function/method cognitive complexity: `9`
+- Dependency-tree complexity: `400`
 
 ## **FileManager**
 
