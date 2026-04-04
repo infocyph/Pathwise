@@ -4,6 +4,7 @@ namespace Infocyph\Pathwise\FileManager;
 
 use Infocyph\Pathwise\Core\ExecutionStrategy;
 use Infocyph\Pathwise\Exceptions\CompressionException;
+use Infocyph\Pathwise\FileManager\Concerns\FsConcern;
 use Infocyph\Pathwise\Native\NativeOperationsAdapter;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
@@ -11,6 +12,8 @@ use ZipArchive;
 
 class FileCompression
 {
+    use FsConcern;
+
     private readonly ZipArchive $zip;
     private bool $cleanupWorkingZipPath = false;
     private ?string $defaultDecompressionPath = null;
@@ -90,32 +93,7 @@ class FileCompression
         $this->log("Adding file: $filePath");
         $zipPath ??= basename($filePath);
         $zipPath = $this->normalizeZipPath($zipPath);
-
-        $isLocalFile = !PathHelper::hasScheme($filePath) && is_file($filePath);
-
-        if ($this->password) {
-            $this->zip->setPassword($this->password);
-            if ($isLocalFile) {
-                if (!$this->zip->addFile($filePath, $zipPath)) {
-                    throw new CompressionException("Failed to add file to ZIP: $filePath");
-                }
-            } else {
-                if (!$this->zip->addFromString($zipPath, FlysystemHelper::read($filePath))) {
-                    throw new CompressionException("Failed to add file to ZIP: $filePath");
-                }
-            }
-            $this->zip->setEncryptionName($zipPath, $this->encryptionAlgorithm);
-        } else {
-            if ($isLocalFile) {
-                if (!$this->zip->addFile($filePath, $zipPath)) {
-                    throw new CompressionException("Failed to add file to ZIP: $filePath");
-                }
-            } else {
-                if (!$this->zip->addFromString($zipPath, FlysystemHelper::read($filePath))) {
-                    throw new CompressionException("Failed to add file to ZIP: $filePath");
-                }
-            }
-        }
+        $this->addFileToArchive($filePath, $zipPath);
 
         $this->progressTotal = max(1, $this->progressTotal);
         $this->advanceProgress('compress', $zipPath);
@@ -297,73 +275,18 @@ class FileCompression
     public function decompress(?string $destination = null): self
     {
         $this->reopenIfNeeded();
-        $destination ??= $this->defaultDecompressionPath;
-        if (!$destination) {
-            throw new CompressionException("No destination path provided for decompression.");
-        }
-        $destination = PathHelper::normalize($destination);
-        $isRemoteDestination = $this->isRemotePath($destination);
-        $extractDestination = $destination;
-        $extractTempDir = null;
+        $destination = $this->resolveDecompressionDestination($destination);
+        ['extractDestination' => $extractDestination, 'extractTempDir' => $extractTempDir, 'isRemote' => $isRemoteDestination] = $this->prepareExtractionDestination($destination);
 
-        if ($isRemoteDestination) {
-            $extractTempDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('pathwise_extract_', true);
-            if (!@mkdir($extractTempDir, 0755, true) && !is_dir($extractTempDir)) {
-                throw new CompressionException("Unable to create extraction directory: {$extractTempDir}");
-            }
-            $extractDestination = PathHelper::normalize($extractTempDir);
-        } elseif (!FlysystemHelper::directoryExists($destination)) {
-            FlysystemHelper::createDirectory($destination);
+        if ($this->attemptNativeDecompression($destination, $isRemoteDestination)) {
+            return $this;
         }
 
-        if ($this->executionStrategy !== ExecutionStrategy::PHP && $this->password === null && NativeOperationsAdapter::canUseNativeCompression() && !$isRemoteDestination) {
-            $this->closeZip();
-            $native = NativeOperationsAdapter::decompressZip($this->workingZipPath, $destination);
-            if ($native['success']) {
-                if (is_callable($this->progressCallback)) {
-                    ($this->progressCallback)([
-                        'operation' => 'decompress',
-                        'path' => $this->zipFilePath,
-                        'current' => 1,
-                        'total' => 1,
-                    ]);
-                }
-                $this->openZip();
-
-                return $this;
-            }
-
-            if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
-                throw new CompressionException("Native decompression failed for archive: {$this->zipFilePath}");
-            }
-
-            $this->openZip();
-        }
-
-        if ($this->password) {
-            $this->zip->setPassword($this->password);
-        }
+        $this->applyArchivePassword();
 
         try {
-            if (!$this->zip->extractTo($extractDestination)) {
-                throw new CompressionException("Failed to extract ZIP archive.");
-            }
-
-            if ($isRemoteDestination) {
-                $this->copyLocalDirectoryToFlysystem($extractDestination, $destination);
-            }
-
-            if (is_callable($this->progressCallback)) {
-                $total = $this->zip->numFiles;
-                for ($i = 0; $i < $total; $i++) {
-                    ($this->progressCallback)([
-                        'operation' => 'decompress',
-                        'path' => (string) $this->zip->getNameIndex($i),
-                        'current' => $i + 1,
-                        'total' => $total,
-                    ]);
-                }
-            }
+            $this->extractArchive($extractDestination, $destination, $isRemoteDestination);
+            $this->emitDecompressionProgress();
         } finally {
             if ($extractTempDir !== null) {
                 $this->cleanupLocalizedPath($extractTempDir);
@@ -573,6 +496,44 @@ class FileCompression
         return $this;
     }
 
+    private function addArchiveEntry(ZipArchive $zip, string $sourcePath, string $relativePath): void
+    {
+        if ($this->password !== null) {
+            $zip->setPassword($this->password);
+            $zip->addFile($sourcePath, $relativePath);
+            $zip->setEncryptionName($relativePath, $this->encryptionAlgorithm);
+
+            return;
+        }
+
+        $zip->addFile($sourcePath, $relativePath);
+    }
+
+    private function addDirectoryEntriesToZip(string $path, ZipArchive $zip, string $baseDir): void
+    {
+        $relativePath = $this->getRelativePath($path, $baseDir);
+        if ($relativePath !== '' && !$this->shouldTraverseDirectory($relativePath)) {
+            return;
+        }
+
+        if ($relativePath !== '') {
+            $zip->addEmptyDir($relativePath);
+        }
+
+        $entries = scandir($path);
+        if ($entries === false) {
+            throw new CompressionException("Failed to read directory: {$path}");
+        }
+
+        foreach ($entries as $file) {
+            if ($file === '.' || $file === '..') {
+                continue;
+            }
+
+            $this->addFilesToZip($path . DIRECTORY_SEPARATOR . $file, $zip, $baseDir);
+        }
+    }
+
 
     /**
      * Recursively adds files to the current ZIP archive.
@@ -590,42 +551,12 @@ class FileCompression
         $baseDir ??= $path;
 
         if (is_dir($path)) {
-            $relativePath = $this->getRelativePath($path, $baseDir);
-            if ($relativePath !== '' && !$this->shouldTraverseDirectory($relativePath)) {
-                return;
-            }
-            if (!empty($relativePath)) {
-                $zip->addEmptyDir($relativePath);
-            }
+            $this->addDirectoryEntriesToZip($path, $zip, $baseDir);
 
-            $entries = scandir($path);
-            if ($entries === false) {
-                throw new CompressionException("Failed to read directory: {$path}");
-            }
-
-            foreach ($entries as $file) {
-                if ($file !== '.' && $file !== '..') {
-                    $this->addFilesToZip($path . DIRECTORY_SEPARATOR . $file, $zip, $baseDir);
-                }
-            }
-        } else {
-            $relativePath = $this->getRelativePath($path, $baseDir);
-            if ($relativePath === '') {
-                $relativePath = basename($path);
-            }
-            if (!$this->shouldIncludePath($relativePath)) {
-                return;
-            }
-            if ($this->password) {
-                $zip->setPassword($this->password);
-                $zip->addFile($path, $relativePath);
-                $zip->setEncryptionName($relativePath, $this->encryptionAlgorithm);
-            } else {
-                $zip->addFile($path, $relativePath);
-            }
-
-            $this->advanceProgress('compress', $relativePath);
+            return;
         }
+
+        $this->addSinglePathToZip($path, $zip, $baseDir);
     }
 
 
@@ -663,16 +594,43 @@ class FileCompression
                 }
             }
         } elseif ((empty($extensions) || in_array(pathinfo($path, PATHINFO_EXTENSION), $extensions)) && $this->shouldIncludePath($relativePath)) {
-            if ($this->password) {
-                $zip->setPassword($this->password);
-                $zip->addFile($path, $relativePath);
-                $zip->setEncryptionName($relativePath, $this->encryptionAlgorithm);
-            } else {
-                $zip->addFile($path, $relativePath);
-            }
-
+            $this->addArchiveEntry($zip, $path, $relativePath);
             $this->advanceProgress('compress', $relativePath);
         }
+    }
+
+    private function addFileToArchive(string $filePath, string $zipPath): void
+    {
+        if ($this->password !== null) {
+            $this->zip->setPassword($this->password);
+        }
+
+        $added = $this->isLocalFilesystemPath($filePath)
+            ? $this->zip->addFile($filePath, $zipPath)
+            : $this->zip->addFromString($zipPath, FlysystemHelper::read($filePath));
+
+        if (!$added) {
+            throw new CompressionException("Failed to add file to ZIP: $filePath");
+        }
+
+        if ($this->password !== null) {
+            $this->zip->setEncryptionName($zipPath, $this->encryptionAlgorithm);
+        }
+    }
+
+    private function addSinglePathToZip(string $path, ZipArchive $zip, string $baseDir): void
+    {
+        $relativePath = $this->getRelativePath($path, $baseDir);
+        if ($relativePath === '') {
+            $relativePath = basename($path);
+        }
+
+        if (!$this->shouldIncludePath($relativePath)) {
+            return;
+        }
+
+        $this->addArchiveEntry($zip, $path, $relativePath);
+        $this->advanceProgress('compress', $relativePath);
     }
 
     private function advanceProgress(string $operation, string $path): void
@@ -688,6 +646,49 @@ class FileCompression
             'current' => $this->progressCurrent,
             'total' => $this->progressTotal,
         ]);
+    }
+
+    private function applyArchivePassword(): void
+    {
+        if ($this->password !== null) {
+            $this->zip->setPassword($this->password);
+        }
+    }
+
+    private function attemptNativeDecompression(string $destination, bool $isRemoteDestination): bool
+    {
+        if (
+            $this->executionStrategy === ExecutionStrategy::PHP
+            || $this->password !== null
+            || $isRemoteDestination
+            || !NativeOperationsAdapter::canUseNativeCompression()
+        ) {
+            return false;
+        }
+
+        $this->closeZip();
+        $native = NativeOperationsAdapter::decompressZip($this->workingZipPath, $destination);
+        if ($native['success']) {
+            if (is_callable($this->progressCallback)) {
+                ($this->progressCallback)([
+                    'operation' => 'decompress',
+                    'path' => $this->zipFilePath,
+                    'current' => 1,
+                    'total' => 1,
+                ]);
+            }
+            $this->openZip();
+
+            return true;
+        }
+
+        if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
+            throw new CompressionException("Native decompression failed for archive: {$this->zipFilePath}");
+        }
+
+        $this->openZip();
+
+        return false;
     }
 
     private function cleanupDeferredLocalizedPaths(): void
@@ -748,6 +749,11 @@ class FileCompression
         }
 
         $this->cleanupDeferredLocalizedPaths();
+    }
+
+    private function copyFlysystemFileToLocal(string $sourcePath, string $localTarget): void
+    {
+        $this->doCopyFlysystemFileToLocal($sourcePath, $localTarget);
     }
 
     private function copyLocalDirectoryToFlysystem(string $localSource, string $destination): void
@@ -820,6 +826,16 @@ class FileCompression
         return $count;
     }
 
+    private function createExtractionTempDirectory(): string
+    {
+        $extractTempDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('pathwise_extract_', true);
+        if (!@mkdir($extractTempDir, 0755, true) && !is_dir($extractTempDir)) {
+            throw new CompressionException("Unable to create extraction directory: {$extractTempDir}");
+        }
+
+        return PathHelper::normalize($extractTempDir);
+    }
+
     private function deferLocalizedCleanupPath(?string $path): void
     {
         if (!is_string($path) || $path === '') {
@@ -827,6 +843,39 @@ class FileCompression
         }
 
         $this->localizedCleanupPaths[$path] = true;
+    }
+
+    private function emitDecompressionProgress(): void
+    {
+        if (!is_callable($this->progressCallback)) {
+            return;
+        }
+
+        $total = $this->zip->numFiles;
+        for ($i = 0; $i < $total; $i++) {
+            ($this->progressCallback)([
+                'operation' => 'decompress',
+                'path' => (string) $this->zip->getNameIndex($i),
+                'current' => $i + 1,
+                'total' => $total,
+            ]);
+        }
+    }
+
+    private function ensureLocalDirectoryExists(string $path): void
+    {
+        $this->doEnsureLocalDirectoryExists($path);
+    }
+
+    private function extractArchive(string $extractDestination, string $destination, bool $isRemoteDestination): void
+    {
+        if (!$this->zip->extractTo($extractDestination)) {
+            throw new CompressionException("Failed to extract ZIP archive.");
+        }
+
+        if ($isRemoteDestination) {
+            $this->copyLocalDirectoryToFlysystem($extractDestination, $destination);
+        }
     }
 
     /**
@@ -854,6 +903,11 @@ class FileCompression
         $this->progressTotal = $this->countFilesForCompression($source, $extensions);
     }
 
+    private function isLocalFilesystemPath(string $path): bool
+    {
+        return !PathHelper::hasScheme($path) && is_file($path);
+    }
+
     private function isRemotePath(string $path): bool
     {
         return PathHelper::hasScheme($path) || (FlysystemHelper::hasDefaultFilesystem() && !PathHelper::isAbsolute($path));
@@ -861,83 +915,12 @@ class FileCompression
 
     private function loadIgnorePatterns(string $source): void
     {
-        $this->ignorePatterns = [];
-
-        if (!is_dir($source)) {
-            return;
-        }
-
-        foreach ($this->ignoreFileNames as $fileName) {
-            $ignoreFilePath = PathHelper::join($source, $fileName);
-            if (!FlysystemHelper::fileExists($ignoreFilePath)) {
-                continue;
-            }
-
-            $lines = preg_split('/\R/', FlysystemHelper::read($ignoreFilePath)) ?: [];
-            if (!is_array($lines)) {
-                continue;
-            }
-
-            foreach ($lines as $line) {
-                $pattern = trim($line);
-                if ($pattern === '' || str_starts_with($pattern, '#')) {
-                    continue;
-                }
-                $this->ignorePatterns[] = str_replace('\\', '/', ltrim($pattern, './'));
-            }
-        }
+        $this->doLoadIgnorePatterns($source);
     }
 
     private function localizeCompressionSource(string $source, ?string &$cleanupPath = null): string
     {
-        $normalizedSource = PathHelper::normalize($source);
-        $cleanupPath = null;
-
-        if (!PathHelper::hasScheme($normalizedSource) && (is_file($normalizedSource) || is_dir($normalizedSource))) {
-            return $normalizedSource;
-        }
-
-        if (FlysystemHelper::fileExists($normalizedSource)) {
-            $tempFile = tempnam(sys_get_temp_dir(), 'pathwise_src_');
-            if ($tempFile === false) {
-                throw new CompressionException("Unable to localize source path: {$source}");
-            }
-
-            $stream = FlysystemHelper::readStream($normalizedSource);
-            $target = fopen($tempFile, 'wb');
-            if (!is_resource($stream) || !is_resource($target)) {
-                if (is_resource($stream)) {
-                    fclose($stream);
-                }
-                if (is_resource($target)) {
-                    fclose($target);
-                }
-                @unlink($tempFile);
-                throw new CompressionException("Unable to localize source path: {$source}");
-            }
-
-            stream_copy_to_stream($stream, $target);
-            fclose($stream);
-            fclose($target);
-
-            $cleanupPath = PathHelper::normalize($tempFile);
-
-            return $cleanupPath;
-        }
-
-        if (FlysystemHelper::directoryExists($normalizedSource)) {
-            $tempDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('pathwise_src_dir_', true);
-            if (!@mkdir($tempDir, 0755, true) && !is_dir($tempDir)) {
-                throw new CompressionException("Unable to localize source path: {$source}");
-            }
-
-            $cleanupPath = PathHelper::normalize($tempDir);
-            $this->materializeDirectoryToLocal($normalizedSource, $cleanupPath);
-
-            return $cleanupPath;
-        }
-
-        throw new CompressionException("Source path does not exist: {$source}");
+        return $this->doLocalizeCompressionSource($source, $cleanupPath);
     }
 
 
@@ -958,52 +941,7 @@ class FileCompression
 
     private function materializeDirectoryToLocal(string $sourcePath, string $localDirectory): void
     {
-        [, $baseLocation] = FlysystemHelper::resolveDirectory($sourcePath);
-        $base = trim(str_replace('\\', '/', $baseLocation), '/');
-
-        foreach (FlysystemHelper::listContents($sourcePath, true) as $item) {
-            $itemPath = trim((string) ($item['path'] ?? ''), '/');
-            if ($itemPath === '') {
-                continue;
-            }
-
-            $relative = $base !== '' && str_starts_with($itemPath, $base . '/')
-                ? substr($itemPath, strlen($base) + 1)
-                : ($itemPath === $base ? '' : $itemPath);
-            if ($relative === '') {
-                continue;
-            }
-
-            $localTarget = PathHelper::join($localDirectory, $relative);
-            if (($item['type'] ?? null) === 'dir') {
-                if (!is_dir($localTarget)) {
-                    @mkdir($localTarget, 0755, true);
-                }
-                continue;
-            }
-
-            $localParent = dirname($localTarget);
-            if (!is_dir($localParent)) {
-                @mkdir($localParent, 0755, true);
-            }
-
-            $resolvedPath = PathHelper::join($sourcePath, $relative);
-            $stream = FlysystemHelper::readStream($resolvedPath);
-            $target = fopen($localTarget, 'wb');
-            if (!is_resource($stream) || !is_resource($target)) {
-                if (is_resource($stream)) {
-                    fclose($stream);
-                }
-                if (is_resource($target)) {
-                    fclose($target);
-                }
-                throw new CompressionException("Unable to read source path: {$resolvedPath}");
-            }
-
-            stream_copy_to_stream($stream, $target);
-            fclose($stream);
-            fclose($target);
-        }
+        $this->doMaterializeDirectoryToLocal($sourcePath, $localDirectory);
     }
 
     private function normalizeZipPath(string $path): string
@@ -1042,6 +980,30 @@ class FileCompression
         $this->isOpen = true;
     }
 
+    private function prepareExtractionDestination(string $destination): array
+    {
+        $isRemoteDestination = $this->isRemotePath($destination);
+        if ($isRemoteDestination) {
+            $extractDestination = $this->createExtractionTempDirectory();
+
+            return [
+                'extractDestination' => $extractDestination,
+                'extractTempDir' => $extractDestination,
+                'isRemote' => true,
+            ];
+        }
+
+        if (!FlysystemHelper::directoryExists($destination)) {
+            FlysystemHelper::createDirectory($destination);
+        }
+
+        return [
+            'extractDestination' => $destination,
+            'extractTempDir' => null,
+            'isRemote' => false,
+        ];
+    }
+
 
     /**
      * Reopen the ZIP archive if it has been closed.
@@ -1056,46 +1018,29 @@ class FileCompression
         }
     }
 
+    private function resolveDecompressionDestination(?string $destination): string
+    {
+        $destination ??= $this->defaultDecompressionPath;
+        if (!$destination) {
+            throw new CompressionException("No destination path provided for decompression.");
+        }
+
+        return PathHelper::normalize($destination);
+    }
+
+    private function resolveMaterializationBase(string $sourcePath): string
+    {
+        return $this->doResolveMaterializationBase($sourcePath);
+    }
+
+    private function resolveMaterializedRelativePath(array $item, string $base): ?string
+    {
+        return $this->doResolveMaterializedRelativePath($item, $base);
+    }
+
     private function resolveWorkingZipPath(bool $create): string
     {
-        if (!$this->isRemotePath($this->zipFilePath)) {
-            return PathHelper::normalize($this->zipFilePath);
-        }
-
-        $tempFile = tempnam(sys_get_temp_dir(), 'pathwise_zip_');
-        if ($tempFile === false) {
-            throw new CompressionException("Unable to allocate temporary ZIP path for {$this->zipFilePath}");
-        }
-
-        $this->cleanupWorkingZipPath = true;
-        $this->syncWorkingZipOnClose = true;
-        $normalizedTemp = PathHelper::normalize($tempFile);
-
-        if (FlysystemHelper::fileExists($this->zipFilePath)) {
-            $source = FlysystemHelper::readStream($this->zipFilePath);
-            $target = fopen($normalizedTemp, 'wb');
-            if (!is_resource($source) || !is_resource($target)) {
-                if (is_resource($source)) {
-                    fclose($source);
-                }
-                if (is_resource($target)) {
-                    fclose($target);
-                }
-                throw new CompressionException("Unable to read ZIP archive: {$this->zipFilePath}");
-            }
-
-            stream_copy_to_stream($source, $target);
-            fclose($source);
-            fclose($target);
-        } elseif (!$create) {
-            @unlink($normalizedTemp);
-            throw new CompressionException("ZIP archive does not exist: {$this->zipFilePath}");
-        } else {
-            // Avoid opening an empty placeholder file as a ZIP archive (deprecated behavior in PHP 8.4+).
-            @unlink($normalizedTemp);
-        }
-
-        return $normalizedTemp;
+        return $this->doResolveWorkingZipPath($create);
     }
 
     private function shouldAttemptNativeCompression(): bool
@@ -1114,69 +1059,17 @@ class FileCompression
 
     private function shouldIncludePath(string $relativePath): bool
     {
-        $relativePath = str_replace('\\', '/', ltrim($relativePath, '/'));
-        if ($relativePath === '') {
-            return true;
-        }
-
-        if ($this->includePatterns !== []) {
-            $matchesInclude = false;
-            foreach ($this->includePatterns as $pattern) {
-                if (fnmatch($pattern, $relativePath)) {
-                    $matchesInclude = true;
-                    break;
-                }
-            }
-            if (!$matchesInclude) {
-                return false;
-            }
-        }
-
-        foreach (array_merge($this->excludePatterns, $this->ignorePatterns) as $pattern) {
-            if (fnmatch($pattern, $relativePath)) {
-                return false;
-            }
-        }
-
-        return true;
+        return $this->doShouldIncludePath($relativePath);
     }
 
     private function shouldTraverseDirectory(string $relativePath): bool
     {
-        $normalized = str_replace('\\', '/', trim($relativePath, '/'));
-        if ($normalized === '') {
-            return true;
-        }
-
-        foreach (array_merge($this->excludePatterns, $this->ignorePatterns) as $pattern) {
-            $pattern = trim($pattern);
-            if ($pattern === '') {
-                continue;
-            }
-            if (fnmatch(rtrim($pattern, '/'), $normalized) || fnmatch(rtrim($pattern, '/') . '/*', $normalized . '/x')) {
-                return false;
-            }
-        }
-
-        return true;
+        return $this->doShouldTraverseDirectory($relativePath);
     }
 
     private function syncWorkingZipIfNeeded(): void
     {
-        if (!$this->syncWorkingZipOnClose || !is_file($this->workingZipPath)) {
-            return;
-        }
-
-        $stream = fopen($this->workingZipPath, 'rb');
-        if (!is_resource($stream)) {
-            throw new CompressionException("Unable to stream ZIP archive: {$this->workingZipPath}");
-        }
-
-        try {
-            FlysystemHelper::writeStream($this->zipFilePath, $stream);
-        } finally {
-            fclose($stream);
-        }
+        $this->doSyncWorkingZipIfNeeded();
     }
 
 

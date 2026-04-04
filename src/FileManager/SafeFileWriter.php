@@ -359,6 +359,22 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
         return hash_equals(hash($algorithm, $content), $fileHash);
     }
 
+    private function createAtomicTempFilePath(): string
+    {
+        if ($this->isRemoteTarget()) {
+            return $this->createLocalTempFile('pathwise_writer_atomic_');
+        }
+
+        $directory = dirname($this->filename);
+        $prefix = basename($this->filename) . '.tmp_';
+        $tempFile = tempnam($directory, $prefix);
+        if ($tempFile === false) {
+            throw new FileAccessException("Unable to create temporary file for atomic write: {$this->filename}");
+        }
+
+        return $tempFile;
+    }
+
     private function createLocalTempFile(string $prefix): string
     {
         $tempFile = tempnam(sys_get_temp_dir(), $prefix);
@@ -417,6 +433,14 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
         return $this->filename;
     }
 
+    private function initializeRemoteWorkingPath(): void
+    {
+        $this->localWorkingPath = $this->createLocalTempFile('pathwise_writer_');
+        $this->cleanupLocalWorkingPath = true;
+        $this->syncBackOnClose = true;
+        $this->preloadRemoteAppendSourceIfNeeded();
+    }
+
     /**
      * Initializes the internal state of the SafeFileWriter.
      *
@@ -442,58 +466,53 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
         return PathHelper::hasScheme($this->filename) || (FlysystemHelper::hasDefaultFilesystem() && !PathHelper::isAbsolute($this->filename));
     }
 
+    private function preloadRemoteAppendSourceIfNeeded(): void
+    {
+        if (!$this->append || !FlysystemHelper::fileExists($this->filename) || !is_string($this->localWorkingPath)) {
+            return;
+        }
+
+        $source = FlysystemHelper::readStream($this->filename);
+        $target = fopen($this->localWorkingPath, 'wb');
+        if (!is_resource($source) || !is_resource($target)) {
+            if (is_resource($source)) {
+                fclose($source);
+            }
+            if (is_resource($target)) {
+                fclose($target);
+            }
+            throw new FileAccessException("Cannot write to file: {$this->filename}");
+        }
+
+        stream_copy_to_stream($source, $target);
+        fclose($source);
+        fclose($target);
+    }
+
+    private function resolveNonAtomicTargetFilePath(): string
+    {
+        if (!$this->isRemoteTarget()) {
+            return $this->filename;
+        }
+
+        if ($this->localWorkingPath === null) {
+            $this->initializeRemoteWorkingPath();
+        }
+
+        return (string) $this->localWorkingPath;
+    }
+
     private function resolveTargetFilePath(): string
     {
         if (!$this->atomicWriteEnabled) {
-            if ($this->isRemoteTarget()) {
-                if ($this->localWorkingPath !== null) {
-                    return $this->localWorkingPath;
-                }
-
-                $this->localWorkingPath = $this->createLocalTempFile('pathwise_writer_');
-                $this->cleanupLocalWorkingPath = true;
-                $this->syncBackOnClose = true;
-
-                if ($this->append && FlysystemHelper::fileExists($this->filename)) {
-                    $source = FlysystemHelper::readStream($this->filename);
-                    $target = fopen($this->localWorkingPath, 'wb');
-                    if (!is_resource($source) || !is_resource($target)) {
-                        if (is_resource($source)) {
-                            fclose($source);
-                        }
-                        if (is_resource($target)) {
-                            fclose($target);
-                        }
-                        throw new FileAccessException("Cannot write to file: {$this->filename}");
-                    }
-
-                    stream_copy_to_stream($source, $target);
-                    fclose($source);
-                    fclose($target);
-                }
-
-                return $this->localWorkingPath;
-            }
-
-            return $this->filename;
+            return $this->resolveNonAtomicTargetFilePath();
         }
 
         if ($this->atomicTempFilePath !== null) {
             return $this->atomicTempFilePath;
         }
 
-        if ($this->isRemoteTarget()) {
-            $tempFile = $this->createLocalTempFile('pathwise_writer_atomic_');
-        } else {
-            $directory = dirname($this->filename);
-            $prefix = basename($this->filename) . '.tmp_';
-            $tempFile = tempnam($directory, $prefix);
-            if ($tempFile === false) {
-                throw new FileAccessException("Unable to create temporary file for atomic write: {$this->filename}");
-            }
-        }
-
-        $this->atomicTempFilePath = PathHelper::normalize($tempFile);
+        $this->atomicTempFilePath = PathHelper::normalize($this->createAtomicTempFilePath());
 
         return $this->atomicTempFilePath;
     }
