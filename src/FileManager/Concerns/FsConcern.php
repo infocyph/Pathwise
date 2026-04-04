@@ -227,13 +227,10 @@ trait FsConcern
             }
         }
 
-        foreach (array_merge($this->excludePatterns, $this->ignorePatterns) as $pattern) {
-            if (fnmatch($pattern, $relativePath)) {
-                return false;
-            }
-        }
-
-        return true;
+        return array_all(
+            array_merge($this->excludePatterns, $this->ignorePatterns),
+            fn($pattern) => !fnmatch($pattern, $relativePath)
+        );
     }
 
     private function doShouldTraverseDirectory(string $relativePath): bool
