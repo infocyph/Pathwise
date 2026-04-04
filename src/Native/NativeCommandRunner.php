@@ -1,0 +1,33 @@
+<?php
+
+namespace Infocyph\Pathwise\Native;
+
+final class NativeCommandRunner
+{
+    public static function commandExists(string $command): bool
+    {
+        $lookup = PHP_OS_FAMILY === 'Windows'
+            ? "where " . escapeshellcmd($command) . " >NUL 2>&1"
+            : "command -v " . escapeshellarg($command) . " >/dev/null 2>&1";
+
+        $result = self::run($lookup);
+
+        return $result['success'];
+    }
+    /**
+     * @return array{success: bool, output: array<int, string>, code: int}
+     */
+    public static function run(string $command): array
+    {
+        $output = [];
+        $exitCode = 1;
+
+        exec($command . ' 2>&1', $output, $exitCode);
+
+        return [
+            'success' => $exitCode === 0,
+            'output' => $output,
+            'code' => $exitCode,
+        ];
+    }
+}

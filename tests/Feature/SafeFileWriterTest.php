@@ -2,14 +2,31 @@
 
 use Infocyph\Pathwise\Exceptions\FileAccessException;
 use Infocyph\Pathwise\FileManager\SafeFileWriter;
+use Infocyph\Pathwise\Utils\FlysystemHelper;
+use League\Flysystem\Filesystem;
+use League\Flysystem\Local\LocalFilesystemAdapter;
 
 beforeEach(function () {
     $this->tempFilePath = sys_get_temp_dir().DIRECTORY_SEPARATOR.uniqid('test_file_', true).'.txt';
+    $this->mountRoot = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('writer_mount_', true);
+    mkdir($this->mountRoot, 0755, true);
+    FlysystemHelper::mount('writer', new Filesystem(new LocalFilesystemAdapter($this->mountRoot)));
 });
 
 afterEach(function () {
+    FlysystemHelper::reset();
+
     if (file_exists($this->tempFilePath)) {
         unlink($this->tempFilePath);
+    }
+
+    if (is_dir($this->mountRoot)) {
+        foreach (glob($this->mountRoot . DIRECTORY_SEPARATOR . '*') as $item) {
+            if (is_file($item)) {
+                unlink($item);
+            }
+        }
+        rmdir($this->mountRoot);
     }
 });
 
@@ -150,4 +167,36 @@ test('it converts to string and JSON serializes', function () {
     expect((string)$writer)
         ->toContain($this->tempFilePath)
         ->and(json_encode($writer))->toContain('"filename"');
+});
+
+test('it supports atomic write mode', function () {
+    file_put_contents($this->tempFilePath, 'before');
+
+    $writer = (new SafeFileWriter($this->tempFilePath))
+        ->enableAtomicWrite();
+
+    $writer->line('after');
+    expect(file_get_contents($this->tempFilePath))->toBe('before');
+
+    $writer->close();
+    $normalizedContent = str_replace(["\r\n", "\r"], "\n", file_get_contents($this->tempFilePath));
+    expect($normalizedContent)->toBe("after\n");
+});
+
+test('it verifies checksum after writing', function () {
+    $writer = new SafeFileWriter($this->tempFilePath);
+    $ok = $writer->writeAndVerify('checksum-content');
+
+    expect($ok)->toBeTrue()
+        ->and($writer->verifyChecksum(hash('sha256', 'checksum-content')))->toBeTrue();
+});
+
+test('it writes mounted files through local staging and sync', function () {
+    $writer = new SafeFileWriter('writer://remote.txt');
+    $writer->line('hello');
+    $writer->close();
+
+    $normalizedContent = str_replace(["\r\n", "\r"], "\n", FlysystemHelper::read('writer://remote.txt'));
+
+    expect($normalizedContent)->toBe("hello\n");
 });

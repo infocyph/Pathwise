@@ -2,14 +2,31 @@
 
 use Infocyph\Pathwise\Exceptions\FileAccessException;
 use Infocyph\Pathwise\FileManager\SafeFileReader;
+use Infocyph\Pathwise\Utils\FlysystemHelper;
+use League\Flysystem\Filesystem;
+use League\Flysystem\Local\LocalFilesystemAdapter;
 
 beforeEach(function () {
     $this->tempFilePath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('test_file_', true) . '.txt';
     file_put_contents($this->tempFilePath, "Hello\nWorld\nJSON\n{\"key\": \"value\"}\n<b>XML</b>\n");
+    $this->mountRoot = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('reader_mount_', true);
+    mkdir($this->mountRoot, 0755, true);
+    FlysystemHelper::mount('reader', new Filesystem(new LocalFilesystemAdapter($this->mountRoot)));
 });
 afterEach(function () {
+    FlysystemHelper::reset();
+
     if (file_exists($this->tempFilePath)) {
         unlink($this->tempFilePath);
+    }
+
+    if (is_dir($this->mountRoot)) {
+        foreach (glob($this->mountRoot . DIRECTORY_SEPARATOR . '*') as $item) {
+            if (is_file($item)) {
+                unlink($item);
+            }
+        }
+        rmdir($this->mountRoot);
     }
 });
 
@@ -105,4 +122,12 @@ test('it resets and seeks to a position in lines', function () {
     $reader->seek(2);
     $lines = iterator_to_array($reader->line(), false);
     expect($lines[0])->toBe("JSON\n");
+});
+
+test('it reads mounted files through local staging', function () {
+    FlysystemHelper::write('reader://remote.txt', "A\nB\n");
+    $reader = new SafeFileReader('reader://remote.txt');
+    $lines = array_map('trim', iterator_to_array($reader->line(), false));
+
+    expect($lines)->toBe(['A', 'B']);
 });

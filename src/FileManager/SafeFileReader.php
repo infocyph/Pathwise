@@ -6,6 +6,8 @@ use Countable;
 use Exception;
 use Generator;
 use Infocyph\Pathwise\Exceptions\FileAccessException;
+use Infocyph\Pathwise\Utils\FlysystemHelper;
+use Infocyph\Pathwise\Utils\PathHelper;
 use Iterator;
 use NoRewindIterator;
 use SeekableIterator;
@@ -29,12 +31,14 @@ use XMLReader;
  */
 final class SafeFileReader implements Countable, Iterator, SeekableIterator
 {
-    private SplFileObject $file;
+    private bool $cleanupLocalWorkingPath = false;
     private int $count = 0;
-    private int $position = 0;
-    private int $fileSize;
     private ?Generator $currentIterator = null;
+    private SplFileObject $file;
+    private int $fileSize;
     private bool $isLocked = false;
+    private ?string $localWorkingPath = null;
+    private int $position = 0;
 
     /**
      * Initializes the SafeFileReader.
@@ -49,6 +53,21 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
         private readonly string $mode = 'r',
         private readonly bool $exclusiveLock = false,
     ) {
+    }
+
+    /**
+     * Destructor for the SafeFileReader class.
+     *
+     * This method ensures that any locks held on the file are released
+     * when the object is destroyed, preventing potential deadlocks
+     * or access issues in subsequent file operations.
+     */
+    public function __destruct()
+    {
+        $this->releaseLock();
+        if ($this->cleanupLocalWorkingPath && is_string($this->localWorkingPath) && is_file($this->localWorkingPath)) {
+            @unlink($this->localWorkingPath);
+        }
     }
 
     /**
@@ -86,74 +105,13 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
     }
 
     /**
-     * Initializes the internal state of the SafeFileReader.
+     * Returns the total number of elements read from the file.
      *
-     * This method is called internally whenever a file operation is requested.
-     * It checks if the internal state has already been initialized, and if not,
-     * initializes it. It checks if the file is readable, creates a new
-     * SplFileObject instance, sets the file size and applies the lock.
-     * It resets the position after that.
-     *
-     * @throws FileAccessException If the file is not accessible.
+     * @return int The total number of elements read from the file.
      */
-    private function initiate(): void
+    public function count(): int
     {
-        if (!isset($this->file)) {
-            if (!is_readable($this->filename)) {
-                throw new FileAccessException("Cannot access file at path: {$this->filename}");
-            }
-            $this->file = new SplFileObject($this->filename, $this->mode);
-            $this->fileSize = $this->file->getSize();
-            $this->applyLock();
-            $this->resetPosition();
-        }
-    }
-
-    /**
-     * Applies a lock to the file.
-     *
-     * This method attempts to acquire a lock on the file, using an exclusive
-     * lock if specified, or a shared lock otherwise. If the file is already
-     * locked, it releases the current lock before attempting to apply a new one.
-     *
-     * @throws FileAccessException If the file cannot be locked.
-     */
-    private function applyLock(): void
-    {
-        if ($this->isLocked) {
-            $this->releaseLock();
-        }
-        $lockType = $this->exclusiveLock ? LOCK_EX : LOCK_SH;
-        if (!$this->file->flock($lockType)) {
-            throw new FileAccessException("Unable to lock file at path: {$this->filename}");
-        }
-        $this->isLocked = true;
-    }
-
-    /**
-     * Releases the lock on the file.
-     *
-     * This method releases a shared lock if one has been previously acquired,
-     * and marks the object as not being locked.
-     */
-    public function releaseLock(): void
-    {
-        if ($this->isLocked && isset($this->file)) {
-            $this->file->flock(LOCK_UN);
-            $this->isLocked = false;
-        }
-    }
-
-    /**
-     * Destructor for the SafeFileReader class.
-     *
-     * This method ensures that any locks held on the file are released
-     * when the object is destroyed, preventing potential deadlocks
-     * or access issues in subsequent file operations.
-     */
-    public function __destruct()
-    {
-        $this->releaseLock();
+        return $this->count;
     }
 
     /**
@@ -198,6 +156,20 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
     }
 
     /**
+     * Releases the lock on the file.
+     *
+     * This method releases a shared lock if one has been previously acquired,
+     * and marks the object as not being locked.
+     */
+    public function releaseLock(): void
+    {
+        if ($this->isLocked && isset($this->file)) {
+            $this->file->flock(LOCK_UN);
+            $this->isLocked = false;
+        }
+    }
+
+    /**
      * Resets the file pointer to the beginning of the file.
      *
      * This method rewinds the internal file pointer to the beginning of the file,
@@ -209,19 +181,6 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
         $this->file->rewind();
         $this->resetPosition();
         $this->currentIterator?->rewind();
-    }
-
-    /**
-     * Checks if the current element is valid.
-     *
-     * This method returns the validity of the current element from the internal
-     * iterator. If the iterator is not initialized, it returns false.
-     *
-     * @return bool True if the current element is valid, false otherwise.
-     */
-    public function valid(): bool
-    {
-        return $this->currentIterator?->valid() ?? false;
     }
 
     /**
@@ -244,88 +203,56 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
     }
 
     /**
-     * Returns the total number of elements read from the file.
+     * Checks if the current element is valid.
      *
-     * @return int The total number of elements read from the file.
+     * This method returns the validity of the current element from the internal
+     * iterator. If the iterator is not initialized, it returns false.
+     *
+     * @return bool True if the current element is valid, false otherwise.
      */
-    public function count(): int
+    public function valid(): bool
     {
-        return $this->count;
+        return $this->currentIterator?->valid() ?? false;
     }
 
     /**
-     * Resets the internal state of the file reader.
+     * Applies a lock to the file.
      *
-     * This function is used to reset the internal state of the file reader to
-     * its initial state. It rewinds the file to its beginning and resets the
-     * count and position.
+     * This method attempts to acquire a lock on the file, using an exclusive
+     * lock if specified, or a shared lock otherwise. If the file is already
+     * locked, it releases the current lock before attempting to apply a new one.
+     *
+     * @throws FileAccessException If the file cannot be locked.
      */
-    private function reset(): void
+    private function applyLock(): void
     {
-        $this->file->rewind();
-        $this->resetPosition();
+        if ($this->isLocked) {
+            $this->releaseLock();
+        }
+        $lockType = $this->exclusiveLock ? LOCK_EX : LOCK_SH;
+        if (!$this->file->flock($lockType)) {
+            throw new FileAccessException("Unable to lock file at path: {$this->filename}");
+        }
+        $this->isLocked = true;
     }
 
     /**
-     * Resets the internal position and count.
+     * Reads the file in binary chunks of a specified size.
      *
-     * This is used after rewinding the file to ensure the correct state is
-     * maintained.
+     * This method reads the file in binary mode, yielding chunks of data
+     * of the specified byte size until the end of the file is reached.
+     * The position and count are incremented for each binary chunk read.
+     *
+     * @param int $bytes The number of bytes to read in each chunk. Defaults to 1024.
+     * @return Generator Yields binary data chunks from the file.
      */
-    private function resetPosition(): void
-    {
-        $this->count = 0;
-        $this->position = 0;
-    }
-
-    /**
-     * Iterates over the file line by line.
-     *
-     * This function reads the file one line at a time, yielding each line.
-     * It continues until the end of the file is reached. The position and
-     * count are incremented for each line read. If the last line is empty
-     * and the end of the file is reached, the iteration is terminated.
-     *
-     * @return Generator Yields each line from the file.
-     */
-    private function lineIterator(): Generator
+    private function binaryIterator(int $bytes = 1024): Generator
     {
         while (!$this->file->eof()) {
-            $line = $this->file->fgets();
-            if ($this->file->eof() && trim($line) === '') {
-                break;
-            }
-            yield $line;
+            yield $this->file->fread($bytes);
             $this->position++;
             $this->count++;
         }
-    }
-
-    /**
-     * Reads an XML file and yields each element with the given name.
-     *
-     * The iterator yields a SimpleXMLElement for each element with the given name.
-     * The elements are yielded in the order they appear in the file.
-     *
-     * Note that this iterator does not support seeking or rewinding.
-     *
-     * @param string $element The name of the element to yield.
-     * @return Generator Yields each element with the given name.
-     * @throws Exception If the file cannot be opened or read.
-     */
-    private function xmlIterator(string $element): Generator
-    {
-        $reader = new XMLReader();
-        if (!$reader->open($this->filename)) {
-            throw new Exception("Failed to open XML file: {$this->filename}");
-        }
-
-        while ($reader->read()) {
-            if ($reader->nodeType === XMLReader::ELEMENT && $reader->localName === $element) {
-                yield new SimpleXMLElement($reader->readOuterXml());
-            }
-        }
-        $reader->close();
     }
 
     /**
@@ -371,19 +298,75 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
     }
 
     /**
-     * Reads the file in binary chunks of a specified size.
+     * Yields an array of fields for each line of the file, where each field is of a fixed width.
      *
-     * This method reads the file in binary mode, yielding chunks of data
-     * of the specified byte size until the end of the file is reached.
-     * The position and count are incremented for each binary chunk read.
+     * The given $widths array is used to determine the width of each field.
+     * The fields are extracted from each line using substr(), and are yielded as an array.
      *
-     * @param int $bytes The number of bytes to read in each chunk. Defaults to 1024.
-     * @return Generator Yields binary data chunks from the file.
+     * @param array $widths An array of positive integers, each specifying the width of a field.
+     * @return Generator Yields an array of fields for each line of the file.
      */
-    private function binaryIterator(int $bytes = 1024): Generator
+    private function fixedWidthIterator(array $widths): Generator
     {
         while (!$this->file->eof()) {
-            yield $this->file->fread($bytes);
+            $line = $this->file->fgets();
+            $fields = [];
+            $offset = 0;
+            foreach ($widths as $width) {
+                $fields[] = substr($line, $offset, $width);
+                $offset += $width;
+            }
+            yield $fields;
+            $this->position++;
+            $this->count++;
+        }
+    }
+
+    /**
+     * Initializes the internal state of the SafeFileReader.
+     *
+     * This method is called internally whenever a file operation is requested.
+     * It checks if the internal state has already been initialized, and if not,
+     * initializes it. It checks if the file is readable, creates a new
+     * SplFileObject instance, sets the file size and applies the lock.
+     * It resets the position after that.
+     *
+     * @throws FileAccessException If the file is not accessible.
+     */
+    private function initiate(): void
+    {
+        if (!isset($this->file)) {
+            $workingPath = $this->resolveReadablePath();
+            if (!is_readable($workingPath)) {
+                throw new FileAccessException("Cannot access file at path: {$this->filename}");
+            }
+
+            $this->file = new SplFileObject($workingPath, $this->mode);
+            $this->fileSize = $this->file->getSize();
+            $this->applyLock();
+            $this->resetPosition();
+        }
+    }
+
+
+    /**
+     * Iterates over a JSON array with error handling.
+     *
+     * This function reads the entire content of the file, decodes it as a JSON array,
+     * and yields each element. If the JSON decoding fails or the decoded value is not
+     * an array, an exception is thrown.
+     *
+     * @return Generator Yields each element of the JSON array.
+     * @throws Exception If decoding the JSON array fails.
+     */
+    private function jsonArrayIteratorWithHandling(): Generator
+    {
+        $jsonArray = json_decode($this->file->fread($this->fileSize), true);
+        if (json_last_error() !== JSON_ERROR_NONE || !is_array($jsonArray)) {
+            throw new Exception('JSON array decoding error: ' . json_last_error_msg());
+        }
+        foreach ($jsonArray as $element) {
+            yield $element;
             $this->position++;
             $this->count++;
         }
@@ -417,6 +400,29 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
     }
 
     /**
+     * Iterates over the file line by line.
+     *
+     * This function reads the file one line at a time, yielding each line.
+     * It continues until the end of the file is reached. The position and
+     * count are incremented for each line read. If the last line is empty
+     * and the end of the file is reached, the iteration is terminated.
+     *
+     * @return Generator Yields each line from the file.
+     */
+    private function lineIterator(): Generator
+    {
+        while (!$this->file->eof()) {
+            $line = $this->file->fgets();
+            if ($this->file->eof() && trim($line) === '') {
+                break;
+            }
+            yield $line;
+            $this->position++;
+            $this->count++;
+        }
+    }
+
+    /**
      * Iterates over the file line by line, applying the given regex pattern to each line.
      *
      * For each line, if the regex pattern matches, the matches are yielded as an array.
@@ -441,28 +447,72 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
     }
 
     /**
-     * Yields an array of fields for each line of the file, where each field is of a fixed width.
+     * Resets the internal state of the file reader.
      *
-     * The given $widths array is used to determine the width of each field.
-     * The fields are extracted from each line using substr(), and are yielded as an array.
-     *
-     * @param array $widths An array of positive integers, each specifying the width of a field.
-     * @return Generator Yields an array of fields for each line of the file.
+     * This function is used to reset the internal state of the file reader to
+     * its initial state. It rewinds the file to its beginning and resets the
+     * count and position.
      */
-    private function fixedWidthIterator(array $widths): Generator
+    private function reset(): void
     {
-        while (!$this->file->eof()) {
-            $line = $this->file->fgets();
-            $fields = [];
-            $offset = 0;
-            foreach ($widths as $width) {
-                $fields[] = substr($line, $offset, $width);
-                $offset += $width;
-            }
-            yield $fields;
-            $this->position++;
-            $this->count++;
+        $this->file->rewind();
+        $this->resetPosition();
+    }
+
+    /**
+     * Resets the internal position and count.
+     *
+     * This is used after rewinding the file to ensure the correct state is
+     * maintained.
+     */
+    private function resetPosition(): void
+    {
+        $this->count = 0;
+        $this->position = 0;
+    }
+
+    private function resolveReadablePath(): string
+    {
+        $normalized = PathHelper::normalize($this->filename);
+        $preferFlysystem = FlysystemHelper::hasDefaultFilesystem() && !PathHelper::isAbsolute($normalized);
+        if (!$preferFlysystem && !PathHelper::hasScheme($normalized) && is_file($normalized)) {
+            return $normalized;
         }
+
+        if (!FlysystemHelper::fileExists($normalized)) {
+            throw new FileAccessException("Cannot access file at path: {$this->filename}");
+        }
+
+        if ($this->localWorkingPath !== null && is_file($this->localWorkingPath)) {
+            return $this->localWorkingPath;
+        }
+
+        $stream = FlysystemHelper::readStream($normalized);
+        if (!is_resource($stream)) {
+            throw new FileAccessException("Cannot access file at path: {$this->filename}");
+        }
+
+        $tempFile = tempnam(sys_get_temp_dir(), 'pathwise_reader_');
+        if ($tempFile === false) {
+            fclose($stream);
+            throw new FileAccessException("Cannot access file at path: {$this->filename}");
+        }
+
+        $target = fopen($tempFile, 'wb');
+        if (!is_resource($target)) {
+            fclose($stream);
+            @unlink($tempFile);
+            throw new FileAccessException("Cannot access file at path: {$this->filename}");
+        }
+
+        stream_copy_to_stream($stream, $target);
+        fclose($stream);
+        fclose($target);
+
+        $this->localWorkingPath = PathHelper::normalize($tempFile);
+        $this->cleanupLocalWorkingPath = true;
+
+        return $this->localWorkingPath;
     }
 
     /**
@@ -490,27 +540,30 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
         }
     }
 
-
     /**
-     * Iterates over a JSON array with error handling.
+     * Reads an XML file and yields each element with the given name.
      *
-     * This function reads the entire content of the file, decodes it as a JSON array,
-     * and yields each element. If the JSON decoding fails or the decoded value is not
-     * an array, an exception is thrown.
+     * The iterator yields a SimpleXMLElement for each element with the given name.
+     * The elements are yielded in the order they appear in the file.
      *
-     * @return Generator Yields each element of the JSON array.
-     * @throws Exception If decoding the JSON array fails.
+     * Note that this iterator does not support seeking or rewinding.
+     *
+     * @param string $element The name of the element to yield.
+     * @return Generator Yields each element with the given name.
+     * @throws Exception If the file cannot be opened or read.
      */
-    private function jsonArrayIteratorWithHandling(): Generator
+    private function xmlIterator(string $element): Generator
     {
-        $jsonArray = json_decode($this->file->fread($this->fileSize), true);
-        if (json_last_error() !== JSON_ERROR_NONE || !is_array($jsonArray)) {
-            throw new Exception('JSON array decoding error: ' . json_last_error_msg());
+        $reader = new XMLReader();
+        if (!$reader->open($this->localWorkingPath ?? $this->filename)) {
+            throw new Exception("Failed to open XML file: {$this->filename}");
         }
-        foreach ($jsonArray as $element) {
-            yield $element;
-            $this->position++;
-            $this->count++;
+
+        while ($reader->read()) {
+            if ($reader->nodeType === XMLReader::ELEMENT && $reader->localName === $element) {
+                yield new SimpleXMLElement($reader->readOuterXml());
+            }
         }
+        $reader->close();
     }
 }

@@ -10,6 +10,9 @@ beforeEach(function () {
     mkdir($this->tempDirPath);
     file_put_contents($this->tempDirPath.DIRECTORY_SEPARATOR.'file1.txt', 'Content 1');
     file_put_contents($this->tempDirPath.DIRECTORY_SEPARATOR.'file2.txt', 'Content 2');
+
+    $this->missingFilePath = sys_get_temp_dir().DIRECTORY_SEPARATOR.uniqid('missing_file_', true).'.txt';
+    $this->missingDirPath = sys_get_temp_dir().DIRECTORY_SEPARATOR.uniqid('missing_dir_', true);
 });
 
 afterEach(function () {
@@ -34,7 +37,7 @@ test('it retrieves file size in human-readable format', function () {
 });
 
 test('it returns null for non-existent file size', function () {
-    $size = MetadataHelper::getFileSize('/invalid/path.txt');
+    $size = MetadataHelper::getFileSize($this->missingFilePath);
     expect($size)->toBeNull();
 });
 
@@ -44,7 +47,7 @@ test('it retrieves directory size', function () {
 });
 
 test('it returns null for non-existent directory size', function () {
-    $size = MetadataHelper::getDirectorySize('/invalid/directory');
+    $size = MetadataHelper::getDirectorySize($this->missingDirPath);
     expect($size)->toBeNull();
 });
 
@@ -59,7 +62,7 @@ test('it retrieves file count non-recursively', function () {
 });
 
 test('it returns null for non-existent directory file count', function () {
-    $fileCount = MetadataHelper::getFileCount('/invalid/directory');
+    $fileCount = MetadataHelper::getFileCount($this->missingDirPath);
     expect($fileCount)->toBeNull();
 });
 
@@ -75,7 +78,7 @@ test('it retrieves human-readable file timestamps', function () {
 });
 
 test('it returns null for non-existent file timestamps', function () {
-    $timestamps = MetadataHelper::getTimestamps('/invalid/path.txt');
+    $timestamps = MetadataHelper::getTimestamps($this->missingFilePath);
     expect($timestamps)->toBeNull();
 });
 
@@ -116,7 +119,7 @@ test('it retrieves mime type of file', function () {
 });
 
 test('it returns null for non-existent file mime type', function () {
-    $mimeType = MetadataHelper::getMimeType('/invalid/path.txt');
+    $mimeType = MetadataHelper::getMimeType($this->missingFilePath);
     expect($mimeType)->toBeNull();
 });
 
@@ -131,7 +134,7 @@ test('it identifies directory type', function () {
 });
 
 test('it returns null for invalid path type', function () {
-    $fileType = MetadataHelper::getPathType('/invalid/path');
+    $fileType = MetadataHelper::getPathType($this->missingFilePath);
     expect($fileType)->toBeNull();
 });
 

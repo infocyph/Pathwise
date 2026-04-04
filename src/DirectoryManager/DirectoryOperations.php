@@ -3,14 +3,22 @@
 namespace Infocyph\Pathwise\DirectoryManager;
 
 use FilesystemIterator;
+use Infocyph\Pathwise\Core\ExecutionStrategy;
+use Infocyph\Pathwise\Exceptions\DirectoryOperationException;
+use Infocyph\Pathwise\Native\NativeOperationsAdapter;
+use Infocyph\Pathwise\Utils\FlysystemHelper;
+use Infocyph\Pathwise\Utils\PathHelper;
 use Infocyph\Pathwise\Utils\PermissionsHelper;
 use InvalidArgumentException;
+use League\Flysystem\DirectoryListing;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use ZipArchive;
 
 class DirectoryOperations
 {
+    private ExecutionStrategy $executionStrategy = ExecutionStrategy::AUTO;
+
     /**
      * Constructor to initialize the directory path.
      *
@@ -20,6 +28,81 @@ class DirectoryOperations
      */
     public function __construct(protected string $path)
     {
+        $this->path = PathHelper::normalize($path);
+    }
+
+    /**
+     * Copies the contents of the directory to the specified destination.
+     *
+     * @param  string  $destination  The path to the destination directory.
+     * @return bool True if the copy operation was successful, false otherwise.
+     */
+    public function copy(string $destination, ?callable $progress = null): bool
+    {
+        if (!FlysystemHelper::directoryExists($this->path)) {
+            throw new DirectoryOperationException("Source directory does not exist: {$this->path}");
+        }
+
+        $destination = PathHelper::normalize($destination);
+        if (!FlysystemHelper::directoryExists($destination)) {
+            FlysystemHelper::createDirectory($destination);
+        }
+
+        if (
+            $this->executionStrategy !== ExecutionStrategy::PHP
+            && NativeOperationsAdapter::canUseNativeDirectoryCopy()
+            && $this->isLocalPath($this->path)
+            && $this->isLocalPath($destination)
+        ) {
+            if (is_callable($progress)) {
+                $progress([
+                    'operation' => 'copy',
+                    'path' => $this->path,
+                    'current' => 0,
+                    'total' => 1,
+                ]);
+            }
+
+            $native = NativeOperationsAdapter::copyDirectory($this->path, $destination, false);
+            if ($native['success']) {
+                if (is_callable($progress)) {
+                    $progress([
+                        'operation' => 'copy',
+                        'path' => $this->path,
+                        'current' => 1,
+                        'total' => 1,
+                    ]);
+                }
+
+                return true;
+            }
+
+            if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
+                throw new DirectoryOperationException("Native directory copy failed for '{$this->path}' to '{$destination}'.");
+            }
+        }
+
+        if (is_callable($progress)) {
+            $progress([
+                'operation' => 'copy',
+                'path' => $this->path,
+                'current' => 0,
+                'total' => 1,
+            ]);
+        }
+
+        FlysystemHelper::copyDirectory($this->path, $destination);
+
+        if (is_callable($progress)) {
+            $progress([
+                'operation' => 'copy',
+                'path' => $this->path,
+                'current' => 1,
+                'total' => 1,
+            ]);
+        }
+
+        return true;
     }
 
     /**
@@ -31,228 +114,16 @@ class DirectoryOperations
      */
     public function create(int $permissions = 0755, bool $recursive = true): bool
     {
-        return mkdir($this->path, $permissions, $recursive);
-    }
-
-    /**
-     * Deletes the directory.
-     *
-     * If $recursive is true, the contents of the directory will be deleted
-     * before the directory itself is deleted.
-     *
-     * @param  bool  $recursive  Whether to delete the contents of the directory first.
-     * @return bool True if the directory was successfully deleted, false otherwise.
-     */
-    public function delete(bool $recursive = false): bool
-    {
-        if ($recursive) {
-            $this->deleteDirectoryContents($this->path);
+        if (FlysystemHelper::directoryExists($this->path)) {
+            return true;
         }
 
-        // Attempt to remove the main directory and return true if successful
-        return @rmdir($this->path) || ! is_dir($this->path);
-    }
-
-    /**
-     * Copies the contents of the directory to the specified destination.
-     *
-     * This method recursively copies all files and subdirectories from the
-     * current directory to the given destination directory. If the destination
-     * directory does not exist, it will be created with default permissions.
-     *
-     * @param  string  $destination  The path to the destination directory.
-     * @return bool True if the copy operation was successful, false otherwise.
-     */
-    public function copy(string $destination): bool
-    {
-        if (! is_dir($destination)) {
-            mkdir($destination, 0755, true);
-        }
-
-        $directoryIterator = new RecursiveDirectoryIterator($this->path, FilesystemIterator::SKIP_DOTS);
-        $iterator = new RecursiveIteratorIterator($directoryIterator, RecursiveIteratorIterator::SELF_FIRST);
-
-        foreach ($iterator as $item) {
-            $subPathName = $iterator->getInnerIterator()->getSubPathName();
-            $destPath = $destination.DIRECTORY_SEPARATOR.$subPathName;
-
-            if ($item->isDir()) {
-                mkdir($destPath);
-            } else {
-                copy($item, $destPath);
-            }
+        FlysystemHelper::createDirectory($this->path);
+        if ($this->isLocalPath($this->path) && is_dir($this->path)) {
+            @chmod($this->path, $permissions);
         }
 
         return true;
-    }
-
-    /**
-     * Moves the directory to the given destination.
-     *
-     * @param  string  $destination  The path to move the directory to.
-     * @return bool True if the directory was successfully moved, false otherwise.
-     */
-    public function move(string $destination): bool
-    {
-        return rename($this->path, $destination);
-    }
-
-    /**
-     * Returns an array of items in the directory.
-     *
-     * @param  bool  $detailed  Whether to return detailed information about each item.
-     * @param  callable|null  $filter  A filter to apply to each item. If the filter
-     *                                 returns false, the item is not included in the returned array.
-     * @return array An array of items in the directory. If $detailed is true, each
-     *               item is an associative array containing 'path', 'type', 'size', 'permissions',
-     *               and 'last_modified' keys. If $detailed is false, each item is a string
-     *               containing the path to the item.
-     */
-    public function listContents(bool $detailed = false, ?callable $filter = null): array
-    {
-        $contents = [];
-        $iterator = $this->getIterator();
-
-        foreach ($iterator as $item) {
-            if ($filter && ! $filter($item)) {
-                continue;
-            }
-
-            if ($detailed) {
-                $contents[] = [
-                    'path' => $item->getPathname(),
-                    'type' => $item->isDir() ? 'directory' : 'file',
-                    'size' => $item->getSize(),
-                    'permissions' => PermissionsHelper::getHumanReadablePermissions($item->getPerms()),
-                    'last_modified' => $item->getMTime(),
-                ];
-            } else {
-                $contents[] = $item->getPathname();
-            }
-        }
-
-        return $contents;
-    }
-
-    /**
-     * Gets the current permissions of the directory.
-     *
-     * The permissions are returned as an octal number, e.g. 0755.
-     *
-     * @return int The current permissions of the directory.
-     */
-    public function getPermissions(): int
-    {
-        return fileperms($this->path) & 0777;
-    }
-
-    /**
-     * Set the permissions of the directory to the given value.
-     *
-     * @param  int  $permissions  The new permissions for the directory. This should
-     *                            be an octal number, e.g. 0755.
-     * @return bool True if the permissions were successfully set, false otherwise.
-     */
-    public function setPermissions(int $permissions): bool
-    {
-        return chmod($this->path, $permissions);
-    }
-
-    /**
-     * Lists the current permissions of the directory in a string like 'rwxr-x--'.
-     *
-     * The method uses an array of flags to map the current permissions to a
-     * string of 'r', 'w', or 'x' representing read, write, and execute
-     * permissions for the owner, group, and others.
-     *
-     * @return string The current permissions of the directory.
-     */
-    public function listPermissions(): string
-    {
-        return PermissionsHelper::getHumanReadablePermissions($this->getPermissions());
-    }
-
-    /**
-     * Calculates the total size of all files in the directory.
-     *
-     * This method iterates over all files in the directory and sums their sizes.
-     * Directories are skipped. An optional filter callable can be provided to
-     * include only specific files in the size calculation.
-     *
-     * @param  callable|null  $filter  An optional callable to filter files. It receives an SplFileInfo
-     *                                 object and should return true to include the file, false otherwise.
-     * @return int The total size of all files that pass the filter in bytes.
-     */
-    public function size(?callable $filter = null): int
-    {
-        $size = 0;
-        $iterator = $this->getIterator();
-
-        foreach ($iterator as $file) {
-            if (! $file->isDir() && (! $filter || $filter($file))) {
-                $size += $file->getSize();
-            }
-        }
-
-        return $size;
-    }
-
-    /**
-     * Gets an iterator that traverses the directory tree.
-     *
-     * This method returns a RecursiveIteratorIterator that traverses the
-     * directory tree starting from the current directory path. The iterator
-     * will yield SplFileInfo objects for all files and directories found.
-     *
-     * @return RecursiveIteratorIterator An iterator that traverses the directory tree.
-     */
-    public function getIterator(): RecursiveIteratorIterator
-    {
-        return new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($this->path, FilesystemIterator::SKIP_DOTS),
-        );
-    }
-
-    /**
-     * Get the maximum depth of the directory.
-     *
-     * @return int The maximum depth of the directory.
-     */
-    public function getDepth(): int
-    {
-        $maxDepth = 0;
-        $iterator = $this->getIterator();
-
-        foreach ($iterator as $file) {
-            $depth = $iterator->getDepth();
-            $maxDepth = max($maxDepth, $depth);
-        }
-
-        return $maxDepth;
-    }
-
-    /**
-     * Flatten the directory structure and return an array of file paths.
-     *
-     * This method returns an array of file paths without any directory structure.
-     * If a filter is provided, it will be used to filter the files.
-     *
-     * @param  callable|null  $filter  A filter to apply to the files. If the filter
-     *                                 returns true, the file will be included in the flattened array.
-     * @return array An array of file paths.
-     */
-    public function flatten(?callable $filter = null): array
-    {
-        $flattened = [];
-        $iterator = $this->getIterator();
-
-        foreach ($iterator as $file) {
-            if (! $file->isDir() && (! $filter || $filter($file))) {
-                $flattened[] = $file->getPathname();
-            }
-        }
-
-        return $flattened;
     }
 
     /**
@@ -262,95 +133,37 @@ class DirectoryOperations
      */
     public function createTempDir(): string
     {
-        $tempDir = sys_get_temp_dir().DIRECTORY_SEPARATOR.uniqid('temp_', true);
-        mkdir($tempDir);
+        $tempDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('temp_', true);
+        FlysystemHelper::createDirectory($tempDir);
 
         return $tempDir;
     }
 
     /**
-     * Returns a sorted array of the directory's contents.
+     * Deletes the directory.
      *
-     * @param  string  $sortOrder  The sort order of the contents. Defaults to 'asc'.
-     * @return array An array of the directory's contents, sorted by the given order.
-     *
-     * @see scandir()
+     * @param  bool  $recursive  Whether to delete the contents of the directory first.
+     * @return bool True if the directory was successfully deleted, false otherwise.
      */
-    public function listSortedContents(string $sortOrder = 'asc'): array
+    public function delete(bool $recursive = false): bool
     {
-        $contents = scandir($this->path, $sortOrder === 'asc' ? SCANDIR_SORT_ASCENDING : SCANDIR_SORT_DESCENDING);
-
-        return array_values(array_diff($contents, ['.', '..']));
-    }
-
-    /**
-     * Zip the contents of the directory to a file.
-     *
-     * @param  string  $destination  The path to the zip file.
-     * @return bool True if the zip was created successfully, false otherwise.
-     */
-    public function zip(string $destination): bool
-    {
-        $zip = new ZipArchive();
-        if ($zip->open($destination, ZipArchive::CREATE) === true) {
-            $directoryIterator = new RecursiveDirectoryIterator($this->path, FilesystemIterator::SKIP_DOTS);
-            $iterator = new RecursiveIteratorIterator($directoryIterator, RecursiveIteratorIterator::SELF_FIRST);
-
-            foreach ($iterator as $file) {
-                $subPathName = $iterator->getInnerIterator()->getSubPathName();
-                $zip->addFile($file->getPathname(), $subPathName);
-            }
-
-            $zip->close();
-
+        if (!FlysystemHelper::directoryExists($this->path)) {
             return true;
         }
 
-        return false;
-    }
+        if ($recursive) {
+            FlysystemHelper::deleteDirectory($this->path);
 
-    /**
-     * Extracts the contents of a zip file to the directory represented by this object.
-     *
-     * @param  string  $source  The path to the zip file.
-     * @return bool True if the extraction was successful, false otherwise.
-     */
-    public function unzip(string $source): bool
-    {
-        $zip = new ZipArchive();
-        if ($zip->open($source) === true) {
-            $zip->extractTo($this->path);
-            $zip->close();
-
-            return true;
+            return !FlysystemHelper::directoryExists($this->path);
         }
 
-        return false;
-    }
-
-    /**
-     * Deletes all files and directories in the given directory.
-     *
-     * @param  string  $directory  The directory to delete contents of.
-     * @return bool True if the directory contents were successfully deleted, false otherwise.
-     */
-    protected function deleteDirectoryContents(string $directory): bool
-    {
-        $iterator = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($directory, FilesystemIterator::SKIP_DOTS),
-            RecursiveIteratorIterator::CHILD_FIRST,
-        );
-
-        foreach ($iterator as $file) {
-            if ($file->isDir()) {
-                rmdir($file->getRealPath());
-
-                continue;
-            }
-            unlink($file->getRealPath());
+        if (FlysystemHelper::listContents($this->path, false) !== []) {
+            return false;
         }
 
-        return true;
+        FlysystemHelper::deleteDirectory($this->path);
+
+        return !FlysystemHelper::directoryExists($this->path);
     }
 
     /**
@@ -369,25 +182,718 @@ class DirectoryOperations
     public function find(array $criteria = []): array
     {
         $results = [];
-        $iterator = $this->getIterator();
+        $sourceLocation = $this->storageLocation($this->path);
         $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
 
-        foreach ($iterator as $file) {
+        foreach (FlysystemHelper::listContents($this->path, true) as $item) {
+            if (($item['type'] ?? null) !== 'file') {
+                continue;
+            }
+
+            $relative = $this->relativeStoragePath($sourceLocation, (string) ($item['path'] ?? ''));
+            if ($relative === '') {
+                continue;
+            }
+
+            $resolvedPath = $this->buildPath($this->path, $relative);
+            $size = (int) ($item['file_size'] ?? 0);
+
+            $permissionsMatch = true;
+            if (!empty($criteria['permissions']) && !$isWindows) {
+                $permissionsMatch = false;
+                if ($this->isLocalPath($resolvedPath) && file_exists($resolvedPath)) {
+                    $permissions = fileperms($resolvedPath);
+                    if (is_int($permissions)) {
+                        $permissionsMatch = ($permissions & 0777) === $criteria['permissions'];
+                    }
+                }
+            }
+
             $conditions = [
-                empty($criteria['name']) || str_contains((string) $file->getFilename(), (string) $criteria['name']),
-                empty($criteria['extension']) || $file->getExtension() === $criteria['extension'],
-                $isWindows || empty($criteria['permissions']) || ($file->getPerms() & 0777) === $criteria['permissions'],
-                empty($criteria['minSize']) || $file->getSize() >= $criteria['minSize'],
-                empty($criteria['maxSize']) || $file->getSize() <= $criteria['maxSize'],
+                empty($criteria['name']) || str_contains(basename($resolvedPath), (string) $criteria['name']),
+                empty($criteria['extension']) || pathinfo($resolvedPath, PATHINFO_EXTENSION) === $criteria['extension'],
+                $permissionsMatch,
+                empty($criteria['minSize']) || $size >= $criteria['minSize'],
+                empty($criteria['maxSize']) || $size <= $criteria['maxSize'],
             ];
 
             if (in_array(false, $conditions, true)) {
                 continue;
             }
 
-            $results[] = $file->getPathname();
+            $results[] = $resolvedPath;
         }
 
         return $results;
+    }
+
+    /**
+     * Flatten the directory structure and return an array of file paths.
+     *
+     * @param  callable|null  $filter  Optional callback with signature:
+     *                                  fn(string $path, array $metadata): bool
+     * @return array An array of file paths.
+     */
+    public function flatten(?callable $filter = null): array
+    {
+        $flattened = [];
+        $sourceLocation = $this->storageLocation($this->path);
+
+        foreach (FlysystemHelper::listContents($this->path, true) as $item) {
+            if (($item['type'] ?? null) !== 'file') {
+                continue;
+            }
+
+            $relative = $this->relativeStoragePath($sourceLocation, (string) ($item['path'] ?? ''));
+            if ($relative === '') {
+                continue;
+            }
+
+            $resolvedPath = $this->buildPath($this->path, $relative);
+            if (!$this->invokeFilter($filter, $resolvedPath, $item)) {
+                continue;
+            }
+
+            $flattened[] = $resolvedPath;
+        }
+
+        return $flattened;
+    }
+
+    /**
+     * Get the maximum depth of the directory.
+     *
+     * @return int The maximum depth of the directory.
+     */
+    public function getDepth(): int
+    {
+        $maxDepth = 0;
+        $sourceLocation = $this->storageLocation($this->path);
+
+        foreach (FlysystemHelper::listContents($this->path, true) as $item) {
+            $relative = $this->relativeStoragePath($sourceLocation, (string) ($item['path'] ?? ''));
+            if ($relative === '') {
+                continue;
+            }
+
+            $depth = substr_count(trim(str_replace('\\', '/', $relative), '/'), '/');
+            $maxDepth = max($maxDepth, $depth);
+        }
+
+        return $maxDepth;
+    }
+
+    /**
+     * Gets an iterator that traverses the local directory tree.
+     *
+     * @return RecursiveIteratorIterator An iterator that traverses the directory tree.
+     */
+    public function getIterator(): RecursiveIteratorIterator
+    {
+        if (!$this->isLocalPath($this->path) || !is_dir($this->path)) {
+            throw new DirectoryOperationException("Iterator is only available for local directories: {$this->path}");
+        }
+
+        return new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($this->path, FilesystemIterator::SKIP_DOTS),
+        );
+    }
+
+    /**
+     * Gets the current permissions of the directory.
+     *
+     * @return int The current permissions of the directory.
+     */
+    public function getPermissions(): int
+    {
+        if (!$this->isLocalPath($this->path) || !file_exists($this->path)) {
+            throw new DirectoryOperationException("Unable to retrieve permissions for non-local directory: {$this->path}");
+        }
+
+        $permissions = fileperms($this->path);
+        if ($permissions === false) {
+            throw new DirectoryOperationException("Unable to retrieve permissions for directory: {$this->path}");
+        }
+
+        return $permissions & 0777;
+    }
+
+    /**
+     * Returns an array of items in the directory.
+     *
+     * @param  bool  $detailed  Whether to return detailed information about each item.
+     * @param  callable|null  $filter  Optional callback with signature:
+     *                                 fn(string $path, array $metadata): bool
+     * @return array An array of items in the directory.
+     */
+    public function listContents(bool $detailed = false, ?callable $filter = null): array
+    {
+        $contents = [];
+        $sourceLocation = $this->storageLocation($this->path);
+
+        foreach (FlysystemHelper::listContents($this->path, true) as $item) {
+            $relative = $this->relativeStoragePath($sourceLocation, (string) ($item['path'] ?? ''));
+            if ($relative === '') {
+                continue;
+            }
+
+            $resolvedPath = $this->buildPath($this->path, $relative);
+            if (!$this->invokeFilter($filter, $resolvedPath, $item)) {
+                continue;
+            }
+
+            if ($detailed) {
+                $permissions = null;
+                if ($this->isLocalPath($resolvedPath) && file_exists($resolvedPath)) {
+                    $permissionBits = fileperms($resolvedPath);
+                    if (is_int($permissionBits)) {
+                        $permissions = PermissionsHelper::formatPermissions($permissionBits);
+                    }
+                }
+
+                $contents[] = [
+                    'path' => $resolvedPath,
+                    'type' => (string) ($item['type'] ?? 'file'),
+                    'size' => (int) ($item['file_size'] ?? 0),
+                    'permissions' => $permissions ?? (string) ($item['visibility'] ?? ''),
+                    'last_modified' => (int) ($item['last_modified'] ?? 0),
+                ];
+            } else {
+                $contents[] = $resolvedPath;
+            }
+        }
+
+        return $contents;
+    }
+
+    public function listContentsListing(bool $deep = true): DirectoryListing
+    {
+        return FlysystemHelper::listContentsListing($this->path, $deep);
+    }
+
+    /**
+     * Lists the current permissions of the directory in a string like 'rwxr-x--'.
+     *
+     * @return string The current permissions of the directory.
+     */
+    public function listPermissions(): string
+    {
+        return PermissionsHelper::formatPermissions($this->getPermissions());
+    }
+
+    /**
+     * Returns a sorted array of the directory's first-level contents.
+     *
+     * @param  string  $sortOrder  The sort order of the contents. Defaults to 'asc'.
+     * @return array An array of the directory's contents, sorted by the given order.
+     */
+    public function listSortedContents(string $sortOrder = 'asc'): array
+    {
+        $sourceLocation = $this->storageLocation($this->path);
+        $contents = [];
+
+        foreach (FlysystemHelper::listContents($this->path, false) as $item) {
+            $relative = $this->relativeStoragePath($sourceLocation, (string) ($item['path'] ?? ''));
+            if ($relative === '') {
+                continue;
+            }
+
+            $contents[] = basename(str_replace('\\', '/', $relative));
+        }
+
+        sort($contents, SORT_STRING);
+        if ($sortOrder !== 'asc') {
+            $contents = array_reverse($contents);
+        }
+
+        return $contents;
+    }
+
+    /**
+     * Moves the directory to the given destination.
+     *
+     * @param  string  $destination  The path to move the directory to.
+     * @return bool True if the directory was successfully moved, false otherwise.
+     */
+    public function move(string $destination): bool
+    {
+        if (!FlysystemHelper::directoryExists($this->path)) {
+            return false;
+        }
+
+        FlysystemHelper::moveDirectory($this->path, PathHelper::normalize($destination));
+
+        return true;
+    }
+
+    public function setExecutionStrategy(ExecutionStrategy $executionStrategy): self
+    {
+        $this->executionStrategy = $executionStrategy;
+
+        return $this;
+    }
+
+    /**
+     * Set the permissions of the directory to the given value.
+     *
+     * @param  int  $permissions  The new permissions for the directory.
+     * @return bool True if the permissions were successfully set, false otherwise.
+     */
+    public function setPermissions(int $permissions): bool
+    {
+        if (!$this->isLocalPath($this->path) || !file_exists($this->path)) {
+            throw new DirectoryOperationException("Unable to set permissions for non-local directory: {$this->path}");
+        }
+
+        return chmod($this->path, $permissions);
+    }
+
+    public function setVisibility(string $visibility): self
+    {
+        FlysystemHelper::setVisibility($this->path, $visibility);
+
+        return $this;
+    }
+
+    /**
+     * Calculates the total size of all files in the directory.
+     *
+     * @param  callable|null  $filter  Optional callback with signature:
+     *                                 fn(string $path, array $metadata): bool
+     * @return int The total size of all files that pass the filter in bytes.
+     */
+    public function size(?callable $filter = null): int
+    {
+        $size = 0;
+        $sourceLocation = $this->storageLocation($this->path);
+
+        foreach (FlysystemHelper::listContents($this->path, true) as $item) {
+            if (($item['type'] ?? null) !== 'file') {
+                continue;
+            }
+
+            $relative = $this->relativeStoragePath($sourceLocation, (string) ($item['path'] ?? ''));
+            if ($relative === '') {
+                continue;
+            }
+
+            $resolvedPath = $this->buildPath($this->path, $relative);
+            if (!$this->invokeFilter($filter, $resolvedPath, $item)) {
+                continue;
+            }
+
+            $size += (int) ($item['file_size'] ?? 0);
+        }
+
+        return $size;
+    }
+
+    /**
+     * Mirror the source directory to destination and return a diff report.
+     *
+     * @return array{created: array, updated: array, deleted: array, unchanged: array}
+     */
+    public function syncTo(string $destination, bool $deleteOrphans = true, ?callable $progress = null): array
+    {
+        if (!FlysystemHelper::directoryExists($this->path)) {
+            throw new DirectoryOperationException("Source directory does not exist: {$this->path}");
+        }
+
+        $destination = PathHelper::normalize($destination);
+        if (!FlysystemHelper::directoryExists($destination)) {
+            FlysystemHelper::createDirectory($destination);
+        }
+
+        $report = [
+            'created' => [],
+            'updated' => [],
+            'deleted' => [],
+            'unchanged' => [],
+        ];
+
+        $sourceEntries = [];
+        $sourceLocation = $this->storageLocation($this->path);
+        $sourceItems = FlysystemHelper::listContents($this->path, true);
+        $total = count($sourceItems);
+        $current = 0;
+
+        foreach ($sourceItems as $item) {
+            $relative = $this->relativeStoragePath($sourceLocation, (string) ($item['path'] ?? ''));
+            if ($relative === '') {
+                continue;
+            }
+
+            $current++;
+            $type = (string) ($item['type'] ?? 'file');
+            $sourceEntries[$relative] = $type;
+            $targetPath = $this->buildPath($destination, $relative);
+
+            if ($type === 'dir') {
+                if (!FlysystemHelper::directoryExists($targetPath)) {
+                    FlysystemHelper::createDirectory($targetPath);
+                    $report['created'][] = $relative . '/';
+                }
+            } else {
+                $sourcePath = $this->buildPath($this->path, $relative);
+                if (!FlysystemHelper::fileExists($targetPath)) {
+                    FlysystemHelper::copy($sourcePath, $targetPath);
+                    $report['created'][] = $relative;
+                } else {
+                    $sourceHash = FlysystemHelper::checksum($sourcePath, 'sha256');
+                    $targetHash = FlysystemHelper::checksum($targetPath, 'sha256');
+                    if (!is_string($sourceHash) || !is_string($targetHash) || !hash_equals($sourceHash, $targetHash)) {
+                        FlysystemHelper::copy($sourcePath, $targetPath);
+                        $report['updated'][] = $relative;
+                    } else {
+                        $report['unchanged'][] = $relative;
+                    }
+                }
+            }
+
+            if (is_callable($progress)) {
+                $progress([
+                    'operation' => 'sync',
+                    'path' => $relative,
+                    'current' => $current,
+                    'total' => max(1, $total),
+                ]);
+            }
+        }
+
+        if ($deleteOrphans) {
+            $destinationLocation = $this->storageLocation($destination);
+            $destinationItems = FlysystemHelper::listContents($destination, true);
+
+            usort($destinationItems, static fn (array $a, array $b): int => strlen((string) ($b['path'] ?? '')) <=> strlen((string) ($a['path'] ?? '')));
+
+            foreach ($destinationItems as $item) {
+                $relative = $this->relativeStoragePath($destinationLocation, (string) ($item['path'] ?? ''));
+                if ($relative === '' || isset($sourceEntries[$relative])) {
+                    continue;
+                }
+
+                $targetPath = $this->buildPath($destination, $relative);
+                if (($item['type'] ?? null) === 'dir') {
+                    FlysystemHelper::deleteDirectory($targetPath);
+                    $report['deleted'][] = $relative . '/';
+                } else {
+                    FlysystemHelper::delete($targetPath);
+                    $report['deleted'][] = $relative;
+                }
+            }
+        }
+
+        return $report;
+    }
+
+    /**
+     * Extracts the contents of a zip file to the directory represented by this object.
+     *
+     * @param  string  $source  The path to the zip file.
+     * @return bool True if the extraction was successful, false otherwise.
+     */
+    public function unzip(string $source): bool
+    {
+        $source = PathHelper::normalize($source);
+        if (!FlysystemHelper::fileExists($source)) {
+            throw new DirectoryOperationException("ZIP source does not exist: {$source}");
+        }
+
+        if (!FlysystemHelper::directoryExists($this->path)) {
+            FlysystemHelper::createDirectory($this->path);
+        }
+
+        $localSource = $source;
+        $cleanupSource = false;
+
+        if (!$this->isLocalPath($source) || !is_file($source)) {
+            $tempSource = tempnam(sys_get_temp_dir(), 'pathwise_unzip_');
+            if ($tempSource === false) {
+                throw new DirectoryOperationException('Unable to create temporary ZIP source.');
+            }
+
+            $sourceStream = FlysystemHelper::readStream($source);
+            $targetStream = fopen($tempSource, 'wb');
+            if (!is_resource($sourceStream) || !is_resource($targetStream)) {
+                if (is_resource($sourceStream)) {
+                    fclose($sourceStream);
+                }
+                if (is_resource($targetStream)) {
+                    fclose($targetStream);
+                }
+                @unlink($tempSource);
+                throw new DirectoryOperationException("Unable to read ZIP source: {$source}");
+            }
+
+            stream_copy_to_stream($sourceStream, $targetStream);
+            fclose($sourceStream);
+            fclose($targetStream);
+
+            $localSource = $tempSource;
+            $cleanupSource = true;
+        }
+
+        try {
+            if (
+                $this->executionStrategy !== ExecutionStrategy::PHP
+                && NativeOperationsAdapter::canUseNativeCompression()
+                && $this->isLocalPath($this->path)
+            ) {
+                $native = NativeOperationsAdapter::decompressZip($localSource, $this->path);
+                if ($native['success']) {
+                    return true;
+                }
+
+                if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
+                    throw new DirectoryOperationException("Native unzip failed for '{$source}' to '{$this->path}'.");
+                }
+            }
+
+            $zip = new ZipArchive();
+            if ($zip->open($localSource) !== true) {
+                throw new DirectoryOperationException("Unable to open ZIP source: {$source}");
+            }
+
+            for ($i = 0; $i < $zip->numFiles; $i++) {
+                $entry = (string) $zip->getNameIndex($i);
+                $entry = ltrim(str_replace('\\', '/', $entry), '/');
+                if ($entry === '') {
+                    continue;
+                }
+
+                if (str_ends_with($entry, '/')) {
+                    FlysystemHelper::createDirectory($this->buildPath($this->path, rtrim($entry, '/')));
+                    continue;
+                }
+
+                $relativeDir = pathinfo($entry, PATHINFO_DIRNAME);
+                if ($relativeDir !== '' && $relativeDir !== '.') {
+                    $targetDir = $this->buildPath($this->path, str_replace('\\', '/', $relativeDir));
+                    if (!FlysystemHelper::directoryExists($targetDir)) {
+                        FlysystemHelper::createDirectory($targetDir);
+                    }
+                }
+
+                $contents = $zip->getFromIndex($i);
+                if (!is_string($contents)) {
+                    $zip->close();
+                    throw new DirectoryOperationException("Unable to extract ZIP entry: {$entry}");
+                }
+
+                FlysystemHelper::write($this->buildPath($this->path, $entry), $contents);
+            }
+
+            $zip->close();
+
+            return true;
+        } finally {
+            if ($cleanupSource && is_file($localSource)) {
+                @unlink($localSource);
+            }
+        }
+    }
+
+    public function visibility(): ?string
+    {
+        if (!FlysystemHelper::directoryExists($this->path)) {
+            throw new DirectoryOperationException("Directory does not exist: {$this->path}");
+        }
+
+        return FlysystemHelper::visibility($this->path);
+    }
+
+    /**
+     * Zip the contents of the directory to a file.
+     *
+     * @param  string  $destination  The path to the zip file.
+     * @return bool True if the zip was created successfully, false otherwise.
+     */
+    public function zip(string $destination): bool
+    {
+        if (!FlysystemHelper::directoryExists($this->path)) {
+            throw new DirectoryOperationException("Source directory does not exist: {$this->path}");
+        }
+
+        $destination = PathHelper::normalize($destination);
+        $useLocalDestination = $this->isLocalPath($destination);
+
+        if (
+            $this->executionStrategy !== ExecutionStrategy::PHP
+            && NativeOperationsAdapter::canUseNativeCompression()
+            && $this->isLocalPath($this->path)
+            && $useLocalDestination
+        ) {
+            $native = NativeOperationsAdapter::compressToZip($this->path, $destination);
+            if ($native['success']) {
+                return true;
+            }
+
+            if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
+                throw new DirectoryOperationException("Native zip failed for '{$this->path}' to '{$destination}'.");
+            }
+        }
+
+        $zipPath = $destination;
+        if (!$useLocalDestination) {
+            $tempZip = tempnam(sys_get_temp_dir(), 'pathwise_zip_');
+            if ($tempZip === false) {
+                throw new DirectoryOperationException('Unable to allocate temporary ZIP path.');
+            }
+
+            @unlink($tempZip);
+            $zipPath = $tempZip;
+        } else {
+            $parent = dirname($zipPath);
+            if (!is_dir($parent)) {
+                @mkdir($parent, 0755, true);
+            }
+        }
+
+        $zip = new ZipArchive();
+        if ($zip->open($zipPath, ZipArchive::CREATE) !== true) {
+            if (!$useLocalDestination && is_file($zipPath)) {
+                @unlink($zipPath);
+            }
+            throw new DirectoryOperationException("Unable to create ZIP archive at '{$destination}'.");
+        }
+
+        if ($this->isLocalPath($this->path) && is_dir($this->path)) {
+            $directoryIterator = new RecursiveDirectoryIterator($this->path, FilesystemIterator::SKIP_DOTS);
+            $iterator = new RecursiveIteratorIterator($directoryIterator, RecursiveIteratorIterator::SELF_FIRST);
+
+            foreach ($iterator as $file) {
+                $subPathName = str_replace('\\', '/', $iterator->getInnerIterator()->getSubPathName());
+                if ($file->isDir()) {
+                    $zip->addEmptyDir($subPathName);
+                    continue;
+                }
+
+                $zip->addFile($file->getPathname(), $subPathName);
+            }
+        } else {
+            $sourceLocation = $this->storageLocation($this->path);
+            foreach (FlysystemHelper::listContents($this->path, true) as $item) {
+                $relative = $this->relativeStoragePath($sourceLocation, (string) ($item['path'] ?? ''));
+                if ($relative === '') {
+                    continue;
+                }
+
+                $zipPathName = str_replace('\\', '/', $relative);
+                if (($item['type'] ?? null) === 'dir') {
+                    $zip->addEmptyDir(rtrim($zipPathName, '/'));
+                    continue;
+                }
+
+                $zip->addFromString($zipPathName, FlysystemHelper::read($this->buildPath($this->path, $relative)));
+            }
+        }
+
+        $zip->close();
+
+        if (!$useLocalDestination) {
+            $stream = fopen($zipPath, 'rb');
+            if (!is_resource($stream)) {
+                if (is_file($zipPath)) {
+                    @unlink($zipPath);
+                }
+                throw new DirectoryOperationException("Unable to stream ZIP archive at '{$zipPath}'.");
+            }
+
+            try {
+                FlysystemHelper::writeStream($destination, $stream);
+            } finally {
+                fclose($stream);
+                if (is_file($zipPath)) {
+                    @unlink($zipPath);
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Deletes all files and directories in the given local directory.
+     *
+     * @param  string  $directory  The directory to delete contents of.
+     * @return bool True if the directory contents were successfully deleted, false otherwise.
+     */
+    protected function deleteDirectoryContents(string $directory): bool
+    {
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($directory, FilesystemIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::CHILD_FIRST,
+        );
+
+        foreach ($iterator as $file) {
+            if ($file->isDir()) {
+                rmdir($file->getRealPath());
+
+                continue;
+            }
+
+            unlink($file->getRealPath());
+        }
+
+        return true;
+    }
+
+    private function buildPath(string $basePath, string $relativePath): string
+    {
+        $relativePath = trim(str_replace('\\', '/', $relativePath), '/');
+        if ($relativePath === '') {
+            return PathHelper::normalize($basePath);
+        }
+
+        if (PathHelper::hasScheme($basePath)) {
+            return rtrim(str_replace('\\', '/', $basePath), '/') . '/' . $relativePath;
+        }
+
+        return PathHelper::join($basePath, $relativePath);
+    }
+
+    private function invokeFilter(?callable $filter, string $path, array $metadata): bool
+    {
+        if ($filter === null) {
+            return true;
+        }
+
+        try {
+            return (bool) $filter($path, $metadata);
+        } catch (\ArgumentCountError) {
+            return (bool) $filter($path);
+        }
+    }
+
+    private function isLocalPath(string $path): bool
+    {
+        return !PathHelper::hasScheme($path) && PathHelper::isAbsolute($path);
+    }
+
+    private function relativeStoragePath(string $baseLocation, string $itemPath): string
+    {
+        $normalizedBase = trim(str_replace('\\', '/', $baseLocation), '/');
+        $normalizedPath = trim(str_replace('\\', '/', $itemPath), '/');
+
+        if ($normalizedBase === '') {
+            return $normalizedPath;
+        }
+
+        if ($normalizedPath === $normalizedBase) {
+            return '';
+        }
+
+        if (str_starts_with($normalizedPath, $normalizedBase . '/')) {
+            return substr($normalizedPath, strlen($normalizedBase) + 1);
+        }
+
+        return $normalizedPath;
+    }
+
+    private function storageLocation(string $directoryPath): string
+    {
+        [, $location] = FlysystemHelper::resolveDirectory($directoryPath);
+
+        return trim(str_replace('\\', '/', $location), '/');
     }
 }
