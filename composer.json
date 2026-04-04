@@ -18,7 +18,8 @@
         }
     },
     "require": {
-        "php": ">=8.4"
+        "php": ">=8.4",
+        "league/flysystem": "^3.33"
     },
     "suggest": {
         "ext-zip": "required if you want to use compression.",

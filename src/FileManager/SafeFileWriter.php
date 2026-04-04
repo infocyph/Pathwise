@@ -2,15 +2,16 @@
 
 namespace Infocyph\Pathwise\FileManager;
 
+use Countable;
+use DateTime;
 use DateTimeInterface;
 use Exception;
 use Infocyph\Pathwise\Exceptions\FileAccessException;
-use SplFileObject;
-use SimpleXMLElement;
-use DateTime;
-use Countable;
-use Stringable;
+use Infocyph\Pathwise\Utils\PathHelper;
 use JsonSerializable;
+use SimpleXMLElement;
+use SplFileObject;
+use Stringable;
 
 /**
  * @method SafeFileReader character() Character iterator
@@ -26,10 +27,12 @@ use JsonSerializable;
  */
 class SafeFileWriter implements Countable, Stringable, JsonSerializable
 {
+    private ?string $atomicTempFilePath = null;
+    private bool $atomicWriteEnabled = false;
     private ?SplFileObject $file = null;
+    private bool $isLocked = false;
     private int $writeCount = 0;
     private array $writeTypesCount = [];
-    private bool $isLocked = false;
 
     /**
      * Creates a new SafeFileWriter instance.
@@ -42,65 +45,18 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
     }
 
     /**
-     * Initializes the internal state of the SafeFileWriter.
+     * Closes the file and releases any system resources associated with it.
      *
-     * This function is called internally whenever a write operation is requested.
-     * It checks if the internal state has already been initialized, and if not,
-     * initializes it. It checks if the file is writable, creating it if it does
-     * not exist. Otherwise, it throws a FileAccessException.
+     * Called automatically when the object is no longer referenced.
      * @throws FileAccessException
      */
-    private function initiate(string $mode = 'w'): void
+    public function __destruct()
     {
-        if (!$this->file) {
-            if (!is_writable(dirname($this->filename)) && !file_exists($this->filename)) {
-                throw new FileAccessException("Cannot write to directory: " . dirname($this->filename));
-            }
-            $this->file = new SplFileObject($this->filename, $mode);
+        try {
+            $this->close();
+        } catch (\Throwable) {
+            // Never throw from destructors.
         }
-    }
-
-    /**
-     * Attempts to acquire a lock, with optional retry mechanism.
-     *
-     * @param int $lockType Lock type (LOCK_EX for exclusive, LOCK_SH for shared).
-     * @param bool $waitForLock Whether to wait for the lock by retrying.
-     * @param int $retries Number of retries to attempt if $waitForLock is true.
-     * @param int $delay Delay between retries in milliseconds (used only if $waitForLock is true).
-     * @throws FileAccessException If lock could not be acquired.
-     */
-    public function lock(int $lockType = LOCK_EX, bool $waitForLock = false, int $retries = 5, int $delay = 200): void
-    {
-        $this->initiate($this->append ? 'a' : 'w');
-        $attempt = 0;
-
-        do {
-            $lockMode = $waitForLock ? $lockType : $lockType | LOCK_NB;
-            if ($this->file->flock($lockMode)) {
-                $this->isLocked = true;
-                return;
-            }
-            if (!$waitForLock) {
-                break;
-            }
-            usleep($delay * 1000);
-            $attempt++;
-        } while ($attempt < $retries);
-
-        throw new FileAccessException("Failed to acquire lock on file {$this->filename} after $retries attempts.");
-    }
-
-    /**
-     * Releases the lock on the file.
-     *
-     * @throws FileAccessException If unlock fails.
-     */
-    public function unlock(): void
-    {
-        if ($this->isLocked && $this->file && !$this->file->flock(LOCK_UN)) {
-            throw new FileAccessException("Failed to release lock on file {$this->filename}.");
-        }
-        $this->isLocked = false;
     }
 
     /**
@@ -137,34 +93,310 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
     }
 
     /**
-     * Writes a single character to the file.
+     * Converts the SafeFileWriter object to a string representation.
      *
-     * This function takes a single character and writes it to the file.
-     * The write count is incremented after writing the data.
+     * This method returns a string that includes the filename, current file size in bytes,
+     * and the total number of write operations performed.
      *
-     * @param string $char The character to write to the file.
-     * @return int|false The number of bytes written, or false on failure.
+     * @return string A descriptive string of the SafeFileWriter object.
      */
-    private function writeCharacter(string $char): int|false
+    public function __toString(): string
     {
-        $this->writeCount++;
-        return $this->file->fwrite($char);
+        return sprintf(
+            "SafeFileWriter [File: %s, Size: %d bytes, Writes: %d]",
+            $this->filename,
+            $this->getSize(),
+            $this->writeCount,
+        );
     }
 
     /**
-     * Writes a line of text to the file.
+     * Closes the file handle.
      *
-     * This function takes a string of content and writes it to the file,
-     * appending a newline character at the end.
-     * The write count is incremented after writing the data.
-     *
-     * @param string $content The content to write to the file.
-     * @return int|false The number of bytes written, or false on failure.
+     * This method releases the lock on the file if it has not already been
+     * released, and then unsets the file handle to free up resources.
+     * @throws FileAccessException
      */
-    private function writeLine(string $content): int|false
+    public function close(): void
     {
-        $this->writeCount++;
-        return $this->file->fwrite($content . PHP_EOL);
+        if ($this->file === null) {
+            return;
+        }
+
+        $this->unlock();
+        $this->file = null;
+        $this->finalizeAtomicWrite();
+    }
+
+    /**
+     * Returns the total number of write operations performed.
+     *
+     * @return int The total number of write operations performed.
+     */
+    public function count(): int
+    {
+        return $this->writeCount;
+    }
+
+    public function enableAtomicWrite(bool $enabled = true): self
+    {
+        if ($enabled && $this->append) {
+            throw new FileAccessException('Atomic write mode is not supported in append mode.');
+        }
+
+        $this->atomicWriteEnabled = $enabled;
+
+        return $this;
+    }
+
+    /**
+     * Flushes the output to the file.
+     *
+     * This method forces any buffered output to be written to the underlying
+     * file resource, ensuring that all data is physically stored on the disk.
+     */
+    public function flush(): void
+    {
+        $this->initiate($this->append ? 'a' : 'w');
+        $this->file?->fflush();
+    }
+
+    /**
+     * Gets the creation date of the file.
+     *
+     * @return DateTime The creation date of the file.
+     */
+    public function getCreationDate(): DateTime
+    {
+        return new DateTime('@' . filectime($this->getActiveOrFinalPath()));
+    }
+
+    /**
+     * Gets the last modification date of the file.
+     *
+     * @return DateTime The last modification date of the file.
+     */
+    public function getModificationDate(): DateTime
+    {
+        return new DateTime('@' . filemtime($this->getActiveOrFinalPath()));
+    }
+
+    /**
+     * Gets the size of the file in bytes.
+     *
+     * @return int The size of the file in bytes.
+     */
+    public function getSize(): int
+    {
+        $target = $this->getActiveOrFinalPath();
+        $size = filesize($target);
+        return is_int($size) ? $size : 0;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * Returns an associative array with the following keys:
+     * - `filename`: The name of the file being written.
+     * - `size`: The size of the file in bytes.
+     * - `writes`: The total number of writes executed.
+     * - `writeTypesCount`: An associative array with counts of each type of write.
+     * - `modificationDate`: The last modification date in ISO 8601 format.
+     * - `creationDate`: The creation date in ISO 8601 format.
+     *
+     * @return array The associative array to be JSON serialized.
+     */
+    public function jsonSerialize(): array
+    {
+        return [
+            'filename' => $this->filename,
+            'size' => $this->getSize(),
+            'writes' => $this->writeCount,
+            'writeTypesCount' => $this->writeTypesCount,
+            'modificationDate' => $this->getModificationDate()->format(DateTimeInterface::ATOM),
+            'creationDate' => $this->getCreationDate()->format(DateTimeInterface::ATOM),
+        ];
+    }
+
+    /**
+     * Attempts to acquire a lock, with optional retry mechanism.
+     *
+     * @param int $lockType Lock type (LOCK_EX for exclusive, LOCK_SH for shared).
+     * @param bool $waitForLock Whether to wait for the lock by retrying.
+     * @param int $retries Number of retries to attempt if $waitForLock is true.
+     * @param int $delay Delay between retries in milliseconds (used only if $waitForLock is true).
+     * @throws FileAccessException If lock could not be acquired.
+     */
+    public function lock(int $lockType = LOCK_EX, bool $waitForLock = false, int $retries = 5, int $delay = 200): void
+    {
+        $this->initiate($this->append ? 'a' : 'w');
+        $attempt = 0;
+
+        do {
+            $lockMode = $waitForLock ? $lockType : $lockType | LOCK_NB;
+            if ($this->file->flock($lockMode)) {
+                $this->isLocked = true;
+                return;
+            }
+            if (!$waitForLock) {
+                break;
+            }
+            usleep($delay * 1000);
+            $attempt++;
+        } while ($attempt < $retries);
+
+        throw new FileAccessException("Failed to acquire lock on file {$this->filename} after $retries attempts.");
+    }
+
+    /**
+     * Truncates the file to the specified size.
+     *
+     * If the size is not specified, the file is truncated to 0 bytes.
+     * @param int $size The size to truncate to. Defaults to 0.
+     */
+    public function truncate(int $size = 0): void
+    {
+        $this->initiate($this->append ? 'a' : 'w');
+        $this->file?->ftruncate($size);
+    }
+
+    /**
+     * Releases the lock on the file.
+     *
+     * @throws FileAccessException If unlock fails.
+     */
+    public function unlock(): void
+    {
+        if ($this->isLocked && $this->file && !$this->file->flock(LOCK_UN)) {
+            throw new FileAccessException("Failed to release lock on file {$this->filename}.");
+        }
+        $this->isLocked = false;
+    }
+
+    public function verifyChecksum(string $expectedChecksum, string $algorithm = 'sha256'): bool
+    {
+        if (!in_array($algorithm, hash_algos(), true)) {
+            throw new Exception("Unsupported checksum algorithm: {$algorithm}");
+        }
+
+        $path = $this->getActiveOrFinalPath();
+        $fileHash = hash_file($algorithm, $path);
+
+        return is_string($fileHash) && hash_equals($expectedChecksum, $fileHash);
+    }
+
+    /**
+     * Write content and verify checksum against the persisted file.
+     *
+     * @throws Exception
+     */
+    public function writeAndVerify(string $content, string $algorithm = 'sha256'): bool
+    {
+        if (!in_array($algorithm, hash_algos(), true)) {
+            throw new Exception("Unsupported checksum algorithm: {$algorithm}");
+        }
+
+        $this->initiate('w');
+        $this->truncate(0);
+        $this->writeBinary($content);
+        $this->flush();
+
+        if ($this->atomicWriteEnabled) {
+            $this->close();
+        }
+
+        $fileHash = hash_file($algorithm, $this->filename);
+        if (!is_string($fileHash)) {
+            return false;
+        }
+
+        return hash_equals(hash($algorithm, $content), $fileHash);
+    }
+
+    private function finalizeAtomicWrite(): void
+    {
+        if (!$this->atomicWriteEnabled || $this->atomicTempFilePath === null) {
+            return;
+        }
+
+        if (!is_file($this->atomicTempFilePath)) {
+            $this->atomicTempFilePath = null;
+            return;
+        }
+
+        if (!@rename($this->atomicTempFilePath, $this->filename)) {
+            if (!@copy($this->atomicTempFilePath, $this->filename)) {
+                throw new FileAccessException("Failed to finalize atomic write for {$this->filename}");
+            }
+            @unlink($this->atomicTempFilePath);
+        }
+
+        $this->atomicTempFilePath = null;
+    }
+
+    private function getActiveOrFinalPath(): string
+    {
+        if ($this->atomicWriteEnabled && $this->atomicTempFilePath !== null && is_file($this->atomicTempFilePath)) {
+            return $this->atomicTempFilePath;
+        }
+
+        return $this->filename;
+    }
+
+    /**
+     * Initializes the internal state of the SafeFileWriter.
+     *
+     * This function is called internally whenever a write operation is requested.
+     * It checks if the internal state has already been initialized, and if not,
+     * initializes it. It checks if the file is writable, creating it if it does
+     * not exist. Otherwise, it throws a FileAccessException.
+     * @throws FileAccessException
+     */
+    private function initiate(string $mode = 'w'): void
+    {
+        if (!$this->file) {
+            $targetFile = $this->resolveTargetFilePath();
+            if (!is_writable(dirname($targetFile)) && !file_exists($targetFile)) {
+                throw new FileAccessException("Cannot write to directory: " . dirname($targetFile));
+            }
+            $this->file = new SplFileObject($targetFile, $mode);
+        }
+    }
+
+    private function resolveTargetFilePath(): string
+    {
+        if (!$this->atomicWriteEnabled) {
+            return $this->filename;
+        }
+
+        if ($this->atomicTempFilePath !== null) {
+            return $this->atomicTempFilePath;
+        }
+
+        $directory = dirname($this->filename);
+        $prefix = basename($this->filename) . '.tmp_';
+        $tempFile = tempnam($directory, $prefix);
+        if ($tempFile === false) {
+            throw new FileAccessException("Unable to create temporary file for atomic write: {$this->filename}");
+        }
+
+        $this->atomicTempFilePath = PathHelper::normalize($tempFile);
+
+        return $this->atomicTempFilePath;
+    }
+
+    /**
+     * Tracks the number of times a write type is called.
+     *
+     * @param string $type The type of write (e.g. 'character', 'line', 'csv', etc.).
+     */
+    private function trackWriteType(string $type): void
+    {
+        $type = strtolower($type);
+        if (!isset($this->writeTypesCount[$type])) {
+            $this->writeTypesCount[$type] = 0;
+        }
+        $this->writeTypesCount[$type]++;
     }
 
     /**
@@ -180,6 +412,21 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
     {
         $this->writeCount++;
         return $this->file->fwrite($data);
+    }
+
+    /**
+     * Writes a single character to the file.
+     *
+     * This function takes a single character and writes it to the file.
+     * The write count is incremented after writing the data.
+     *
+     * @param string $char The character to write to the file.
+     * @return int|false The number of bytes written, or false on failure.
+     */
+    private function writeCharacter(string $char): int|false
+    {
+        $this->writeCount++;
+        return $this->file->fwrite($char);
     }
 
     /**
@@ -203,48 +450,6 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
     ): int|false {
         $this->writeCount++;
         return $this->file->fputcsv($row, $separator, $enclosure, $escape);
-    }
-
-    /**
-     * Writes JSON data to the file.
-     *
-     * This function encodes the provided data as JSON and writes it to the file.
-     * Optionally, it can format the JSON with indentation and whitespace for readability.
-     *
-     * @param mixed $data The data to encode as JSON and write.
-     * @param bool $prettyPrint If true, the JSON will be formatted for readability. Defaults to false.
-     * @return int|false The number of bytes written, or false on failure.
-     * @throws Exception If JSON encoding fails.
-     */
-    private function writeJSON(mixed $data, bool $prettyPrint = false): int|false
-    {
-        $jsonOptions = $prettyPrint ? JSON_PRETTY_PRINT : 0;
-        $jsonData = json_encode($data, $jsonOptions);
-        if ($jsonData === false) {
-            throw new Exception("JSON encoding failed: " . json_last_error_msg());
-        }
-        $this->writeCount++;
-        return $this->file->fwrite($jsonData . PHP_EOL);
-    }
-
-    /**
-     * Writes the given content to the file if it matches the specified pattern.
-     *
-     * This function checks if the provided content matches the given regex pattern.
-     * If a match is found, the content is written to the file with a newline appended.
-     * The write count is incremented each time content is successfully written.
-     *
-     * @param string $content The content to be checked and potentially written.
-     * @param string $pattern The regex pattern to match against the content.
-     * @return int|false The number of bytes written, or false on failure.
-     */
-    private function writePatternMatch(string $content, string $pattern): int|false
-    {
-        if (preg_match($pattern, $content)) {
-            $this->writeCount++;
-            return $this->file->fwrite($content . PHP_EOL);
-        }
-        return false;
     }
 
     /**
@@ -272,35 +477,25 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
     }
 
     /**
-     * Writes an XML element to the file.
+     * Writes JSON data to the file.
      *
-     * This function takes a SimpleXMLElement, converts it to an XML string,
-     * and writes it to the file, appending a newline character.
+     * This function encodes the provided data as JSON and writes it to the file.
+     * Optionally, it can format the JSON with indentation and whitespace for readability.
      *
-     * @param SimpleXMLElement $element The XML element to write.
+     * @param mixed $data The data to encode as JSON and write.
+     * @param bool $prettyPrint If true, the JSON will be formatted for readability. Defaults to false.
      * @return int|false The number of bytes written, or false on failure.
+     * @throws Exception If JSON encoding fails.
      */
-    private function writeXML(SimpleXMLElement $element): int|false
+    private function writeJSON(mixed $data, bool $prettyPrint = false): int|false
     {
+        $jsonOptions = $prettyPrint ? JSON_PRETTY_PRINT : 0;
+        $jsonData = json_encode($data, $jsonOptions);
+        if ($jsonData === false) {
+            throw new Exception("JSON encoding failed: " . json_last_error_msg());
+        }
         $this->writeCount++;
-        return $this->file->fwrite($element->asXML() . PHP_EOL);
-    }
-
-    /**
-     * Writes a serialized representation of the given data to the file.
-     *
-     * The `serialize` function is used to convert the data into a string
-     * representation. The resulting string is then written to the file,
-     * followed by a newline.
-     *
-     * @param mixed $data The data to serialize and write.
-     * @return int|false The number of bytes written, or false on failure.
-     */
-    private function writeSerialized(mixed $data): int|false
-    {
-        $serializedData = serialize($data);
-        $this->writeCount++;
-        return $this->file->fwrite($serializedData . PHP_EOL);
+        return $this->file->fwrite($jsonData . PHP_EOL);
     }
 
     /**
@@ -324,145 +519,70 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
     }
 
     /**
-     * Tracks the number of times a write type is called.
+     * Writes a line of text to the file.
      *
-     * @param string $type The type of write (e.g. 'character', 'line', 'csv', etc.).
+     * This function takes a string of content and writes it to the file,
+     * appending a newline character at the end.
+     * The write count is incremented after writing the data.
+     *
+     * @param string $content The content to write to the file.
+     * @return int|false The number of bytes written, or false on failure.
      */
-    private function trackWriteType(string $type): void
+    private function writeLine(string $content): int|false
     {
-        $type = strtolower($type);
-        if (!isset($this->writeTypesCount[$type])) {
-            $this->writeTypesCount[$type] = 0;
+        $this->writeCount++;
+        return $this->file->fwrite($content . PHP_EOL);
+    }
+
+    /**
+     * Writes the given content to the file if it matches the specified pattern.
+     *
+     * This function checks if the provided content matches the given regex pattern.
+     * If a match is found, the content is written to the file with a newline appended.
+     * The write count is incremented each time content is successfully written.
+     *
+     * @param string $content The content to be checked and potentially written.
+     * @param string $pattern The regex pattern to match against the content.
+     * @return int|false The number of bytes written, or false on failure.
+     */
+    private function writePatternMatch(string $content, string $pattern): int|false
+    {
+        if (preg_match($pattern, $content)) {
+            $this->writeCount++;
+            return $this->file->fwrite($content . PHP_EOL);
         }
-        $this->writeTypesCount[$type]++;
+        return false;
     }
 
     /**
-     * Flushes the output to the file.
+     * Writes a serialized representation of the given data to the file.
      *
-     * This method forces any buffered output to be written to the underlying
-     * file resource, ensuring that all data is physically stored on the disk.
+     * The `serialize` function is used to convert the data into a string
+     * representation. The resulting string is then written to the file,
+     * followed by a newline.
+     *
+     * @param mixed $data The data to serialize and write.
+     * @return int|false The number of bytes written, or false on failure.
      */
-    public function flush(): void
+    private function writeSerialized(mixed $data): int|false
     {
-        $this->file->fflush();
+        $serializedData = serialize($data);
+        $this->writeCount++;
+        return $this->file->fwrite($serializedData . PHP_EOL);
     }
 
     /**
-     * Truncates the file to the specified size.
+     * Writes an XML element to the file.
      *
-     * If the size is not specified, the file is truncated to 0 bytes.
-     * @param int $size The size to truncate to. Defaults to 0.
+     * This function takes a SimpleXMLElement, converts it to an XML string,
+     * and writes it to the file, appending a newline character.
+     *
+     * @param SimpleXMLElement $element The XML element to write.
+     * @return int|false The number of bytes written, or false on failure.
      */
-    public function truncate(int $size = 0): void
+    private function writeXML(SimpleXMLElement $element): int|false
     {
-        $this->file->ftruncate($size);
-    }
-
-    /**
-     * Closes the file handle.
-     *
-     * This method releases the lock on the file if it has not already been
-     * released, and then unsets the file handle to free up resources.
-     * @throws FileAccessException
-     */
-    public function close(): void
-    {
-        $this->unlock();
-        unset($this->file);
-    }
-
-    /**
-     * Gets the size of the file in bytes.
-     *
-     * @return int The size of the file in bytes.
-     */
-    public function getSize(): int
-    {
-        return filesize($this->filename);
-    }
-
-    /**
-     * Gets the last modification date of the file.
-     *
-     * @return DateTime The last modification date of the file.
-     */
-    public function getModificationDate(): DateTime
-    {
-        return new DateTime('@' . filemtime($this->filename));
-    }
-
-    /**
-     * Gets the creation date of the file.
-     *
-     * @return DateTime The creation date of the file.
-     */
-    public function getCreationDate(): DateTime
-    {
-        return new DateTime('@' . filectime($this->filename));
-    }
-
-    /**
-     * Closes the file and releases any system resources associated with it.
-     *
-     * Called automatically when the object is no longer referenced.
-     * @throws FileAccessException
-     */
-    public function __destruct()
-    {
-        $this->close();
-    }
-
-    /**
-     * Returns the total number of write operations performed.
-     *
-     * @return int The total number of write operations performed.
-     */
-    public function count(): int
-    {
-        return $this->writeCount;
-    }
-
-    /**
-     * Converts the SafeFileWriter object to a string representation.
-     *
-     * This method returns a string that includes the filename, current file size in bytes,
-     * and the total number of write operations performed.
-     *
-     * @return string A descriptive string of the SafeFileWriter object.
-     */
-    public function __toString(): string
-    {
-        return sprintf(
-            "SafeFileWriter [File: %s, Size: %d bytes, Writes: %d]",
-            $this->filename,
-            $this->getSize(),
-            $this->writeCount,
-        );
-    }
-
-    /**
-     * {@inheritDoc}
-     *
-     * Returns an associative array with the following keys:
-     * - `filename`: The name of the file being written.
-     * - `size`: The size of the file in bytes.
-     * - `writes`: The total number of writes executed.
-     * - `writeTypesCount`: An associative array with counts of each type of write.
-     * - `modificationDate`: The last modification date in ISO 8601 format.
-     * - `creationDate`: The creation date in ISO 8601 format.
-     *
-     * @return array The associative array to be JSON serialized.
-     */
-    public function jsonSerialize(): array
-    {
-        return [
-            'filename' => $this->filename,
-            'size' => $this->getSize(),
-            'writes' => $this->writeCount,
-            'writeTypesCount' => $this->writeTypesCount,
-            'modificationDate' => $this->getModificationDate()->format(DateTimeInterface::ATOM),
-            'creationDate' => $this->getCreationDate()->format(DateTimeInterface::ATOM),
-        ];
+        $this->writeCount++;
+        return $this->file->fwrite($element->asXML() . PHP_EOL);
     }
 }

@@ -151,3 +151,25 @@ test('it converts to string and JSON serializes', function () {
         ->toContain($this->tempFilePath)
         ->and(json_encode($writer))->toContain('"filename"');
 });
+
+test('it supports atomic write mode', function () {
+    file_put_contents($this->tempFilePath, 'before');
+
+    $writer = (new SafeFileWriter($this->tempFilePath))
+        ->enableAtomicWrite();
+
+    $writer->line('after');
+    expect(file_get_contents($this->tempFilePath))->toBe('before');
+
+    $writer->close();
+    $normalizedContent = str_replace(["\r\n", "\r"], "\n", file_get_contents($this->tempFilePath));
+    expect($normalizedContent)->toBe("after\n");
+});
+
+test('it verifies checksum after writing', function () {
+    $writer = new SafeFileWriter($this->tempFilePath);
+    $ok = $writer->writeAndVerify('checksum-content');
+
+    expect($ok)->toBeTrue()
+        ->and($writer->verifyChecksum(hash('sha256', 'checksum-content')))->toBeTrue();
+});

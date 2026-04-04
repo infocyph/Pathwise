@@ -9,61 +9,17 @@ class PermissionsHelper
     private static array $permissionCache = [];
 
     /**
-     * Determines if the current system supports POSIX-style ownership
-     * functions.
+     * Checks if the specified path is executable.
      *
-     * This method checks if the 'posix_getpwuid' and 'posix_getgrgid' functions
-     * are available. If they are, it returns true, indicating that
-     * POSIX-style ownership functions are supported on the current system. If
-     * they are not available, it returns false.
+     * This method determines whether the file or directory at the given
+     * path has executable permissions for the current user.
      *
-     * @return bool True if POSIX-style ownership functions are supported,
-     *     false otherwise.
+     * @param string $path The path to the file or directory to check.
+     * @return bool True if the path is executable, false otherwise.
      */
-    private static function isPosixSupported(): bool
+    public static function canExecute(string $path): bool
     {
-        return function_exists('posix_getpwuid') && function_exists('posix_getgrgid');
-    }
-
-    /**
-     * Retrieves the permissions of the specified file or directory.
-     *
-     * This method returns the file or directory permissions as a string
-     * representation of an octal number, e.g., '0755'. If the file or
-     * directory does not exist, it returns null.
-     *
-     * @param string $path The path to the file or directory.
-     * @return string|null The permissions as an octal string, or null if the
-     *         path does not exist.
-     */
-    public static function getPermissions(string $path): ?string
-    {
-        if (!file_exists($path)) {
-            return null;
-        }
-
-        return self::$permissionCache[$path]['permissions'] ??= substr(sprintf('%04o', fileperms($path)), -4);
-    }
-
-
-    /**
-     * Sets the permissions of the file or directory at the given path.
-     *
-     * This method changes the permissions of the file or directory at the
-     * given path to the given value. The value should be an octal number,
-     * e.g. 0755.
-     *
-     * @param string $path The path to the file or directory to set permissions on.
-     * @param int $permissions The new permissions for the file or directory.
-     * @return $this
-     * @throws RuntimeException If the operation fails.
-     */
-    public static function setPermissions(string $path, int $permissions): self
-    {
-        if (!chmod($path, $permissions)) {
-            throw new RuntimeException("Failed to set permissions on {$path}");
-        }
-        return new self();
+        return is_executable($path);
     }
 
 
@@ -98,17 +54,58 @@ class PermissionsHelper
     }
 
     /**
-     * Checks if the specified path is executable.
+     * Formats an integer representing file permissions into a human-readable string.
      *
-     * This method determines whether the file or directory at the given
-     * path has executable permissions for the current user.
+     * This method converts a numerical representation of file permissions
+     * into the traditional 'rwx' format, indicating read, write, and execute
+     * permissions for the owner, group, and others. It also handles special
+     * permissions like setuid, setgid, and sticky bit by converting them to
+     * 's' or 't' where applicable.
      *
-     * @param string $path The path to the file or directory to check.
-     * @return bool True if the path is executable, false otherwise.
+     * @param int $permissions The numeric representation of the file permissions.
+     * @return string The formatted string representing the permissions.
      */
-    public static function canExecute(string $path): bool
+    public static function formatPermissions(int $permissions): string
     {
-        return is_executable($path);
+        $flags = [
+            // Owner permissions
+            0x0100 => 'r',
+            0x0080 => 'w',
+            0x0040 => ($permissions & 0x0800) ? 's' : 'x',
+            // Group permissions
+            0x0020 => 'r',
+            0x0010 => 'w',
+            0x0008 => ($permissions & 0x0400) ? 's' : 'x',
+            // Others permissions
+            0x0004 => 'r',
+            0x0002 => 'w',
+            0x0001 => ($permissions & 0x0200) ? 't' : 'x',
+        ];
+
+        return array_reduce(array_keys($flags), fn ($info, $flag) => $info . (($permissions & $flag) ? $flags[$flag] : '-'), '');
+    }
+
+
+    /**
+     * Converts the permissions of a file or directory into a human-readable string.
+     *
+     * This method takes a file or directory path and returns a string
+     * representation of its permissions in the traditional 'rwx' format.
+     * The result is a string like 'rwxr-x--' or 'rw-r--r--', indicating
+     * read, write, and execute permissions for the owner, group, and others.
+     *
+     * If the file or directory does not exist, this method returns null.
+     *
+     * @param string $path The path to the file or directory to format permissions for.
+     * @return string|null The human-readable permissions string, or null if the path does not exist.
+     */
+    public static function getHumanReadablePermissions(string $path): ?string
+    {
+        if (!file_exists($path)) {
+            return null;
+        }
+
+        return self::formatPermissions(fileperms($path));
     }
 
     /**
@@ -142,6 +139,37 @@ class PermissionsHelper
     }
 
     /**
+     * Retrieves the permissions of the specified file or directory.
+     *
+     * This method returns the file or directory permissions as a string
+     * representation of an octal number, e.g., '0755'. If the file or
+     * directory does not exist, it returns null.
+     *
+     * @param string $path The path to the file or directory.
+     * @return string|null The permissions as an octal string, or null if the
+     *         path does not exist.
+     */
+    public static function getPermissions(string $path): ?string
+    {
+        if (!file_exists($path)) {
+            return null;
+        }
+
+        return self::$permissionCache[$path]['permissions'] ??= substr(sprintf('%04o', fileperms($path)), -4);
+    }
+
+    /**
+     * Determines if the given path is owned by the current user.
+     *
+     * @param string $path The path to the file or directory to check ownership on.
+     * @return bool True if the path is owned by the current user, false otherwise.
+     */
+    public static function isOwnedByCurrentUser(string $path): bool
+    {
+        return self::isPosixSupported() && fileowner($path) === posix_geteuid();
+    }
+
+    /**
      * Sets the ownership of the file or directory at the given path.
      *
      * @param string $path The path to the file or directory to set ownership on.
@@ -168,69 +196,41 @@ class PermissionsHelper
         return new self();
     }
 
-    /**
-     * Determines if the given path is owned by the current user.
-     *
-     * @param string $path The path to the file or directory to check ownership on.
-     * @return bool True if the path is owned by the current user, false otherwise.
-     */
-    public static function isOwnedByCurrentUser(string $path): bool
-    {
-        return self::isPosixSupported() && fileowner($path) === posix_geteuid();
-    }
-
 
     /**
-     * Converts the permissions of a file or directory into a human-readable string.
+     * Sets the permissions of the file or directory at the given path.
      *
-     * This method takes a file or directory path and returns a string
-     * representation of its permissions in the traditional 'rwx' format.
-     * The result is a string like 'rwxr-x--' or 'rw-r--r--', indicating
-     * read, write, and execute permissions for the owner, group, and others.
+     * This method changes the permissions of the file or directory at the
+     * given path to the given value. The value should be an octal number,
+     * e.g. 0755.
      *
-     * If the file or directory does not exist, this method returns null.
-     *
-     * @param string $path The path to the file or directory to format permissions for.
-     * @return string|null The human-readable permissions string, or null if the path does not exist.
+     * @param string $path The path to the file or directory to set permissions on.
+     * @param int $permissions The new permissions for the file or directory.
+     * @return $this
+     * @throws RuntimeException If the operation fails.
      */
-    public static function getHumanReadablePermissions(string $path): ?string
+    public static function setPermissions(string $path, int $permissions): self
     {
-        if (!file_exists($path)) {
-            return null;
+        if (!chmod($path, $permissions)) {
+            throw new RuntimeException("Failed to set permissions on {$path}");
         }
-
-        return self::formatPermissions(fileperms($path));
+        return new self();
     }
 
     /**
-     * Formats an integer representing file permissions into a human-readable string.
+     * Determines if the current system supports POSIX-style ownership
+     * functions.
      *
-     * This method converts a numerical representation of file permissions
-     * into the traditional 'rwx' format, indicating read, write, and execute
-     * permissions for the owner, group, and others. It also handles special
-     * permissions like setuid, setgid, and sticky bit by converting them to
-     * 's' or 't' where applicable.
+     * This method checks if the 'posix_getpwuid' and 'posix_getgrgid' functions
+     * are available. If they are, it returns true, indicating that
+     * POSIX-style ownership functions are supported on the current system. If
+     * they are not available, it returns false.
      *
-     * @param int $permissions The numeric representation of the file permissions.
-     * @return string The formatted string representing the permissions.
+     * @return bool True if POSIX-style ownership functions are supported,
+     *     false otherwise.
      */
-    public static function formatPermissions(int $permissions): string
+    private static function isPosixSupported(): bool
     {
-        $flags = [
-            // Owner permissions
-            0x0100 => 'r',
-            0x0080 => 'w',
-            0x0040 => ($permissions & 0x0800) ? 's' : 'x',
-            // Group permissions
-            0x0020 => 'r',
-            0x0010 => 'w',
-            0x0008 => ($permissions & 0x0400) ? 's' : 'x',
-            // Others permissions
-            0x0004 => 'r',
-            0x0002 => 'w',
-            0x0001 => ($permissions & 0x0200) ? 't' : 'x',
-        ];
-
-        return array_reduce(array_keys($flags), fn ($info, $flag) => $info . (($permissions & $flag) ? $flags[$flag] : '-'), '');
+        return function_exists('posix_getpwuid') && function_exists('posix_getgrgid');
     }
 }

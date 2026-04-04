@@ -2,4 +2,6 @@
 
 namespace Infocyph\Pathwise\Exceptions;
 
-class FileSizeExceededException extends \Exception {}
+class FileSizeExceededException extends \Exception
+{
+}

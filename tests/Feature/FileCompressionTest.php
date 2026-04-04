@@ -1,5 +1,6 @@
 <?php
 
+use Infocyph\Pathwise\Exceptions\CompressionException;
 use Infocyph\Pathwise\FileManager\FileCompression;
 
 beforeEach(function () {
@@ -15,7 +16,12 @@ beforeEach(function () {
 });
 
 afterEach(function () {
-    array_map('unlink', glob($this->tempDir . DIRECTORY_SEPARATOR . '*'));
+    foreach (array_diff(scandir($this->tempDir), ['.', '..']) as $item) {
+        $path = $this->tempDir . DIRECTORY_SEPARATOR . $item;
+        if (is_file($path)) {
+            unlink($path);
+        }
+    }
     rmdir($this->tempDir);
     if (file_exists($this->zipFilePath)) {
         unlink($this->zipFilePath);
@@ -75,7 +81,7 @@ test('it fails to decompress with an incorrect password', function () {
     $failedDecompressor->setPassword('wrongpassword');
 
     expect(fn () => $failedDecompressor->decompress($decompressDir))
-        ->toThrow(Exception::class, 'Failed to extract ZIP archive');
+        ->toThrow(CompressionException::class, 'Failed to extract ZIP archive');
 
     rmdir($decompressDir);
 });
@@ -126,4 +132,67 @@ test('it retrieves a file iterator for the ZIP archive', function () {
 
     $files = iterator_to_array($compressor->getFileIterator());
     expect($files)->toContain('file1.txt', 'file2.txt');
+});
+
+test('it throws compression exception for invalid source path', function () {
+    $compressor = new FileCompression($this->zipFilePath, true);
+
+    expect(fn () => $compressor->compress($this->tempDir . DIRECTORY_SEPARATOR . 'missing-source'))
+        ->toThrow(CompressionException::class, 'Source path does not exist');
+});
+
+test('it throws compression exception when adding missing file', function () {
+    $compressor = new FileCompression($this->zipFilePath, true);
+
+    expect(fn () => $compressor->addFile($this->tempDir . DIRECTORY_SEPARATOR . 'missing.txt'))
+        ->toThrow(CompressionException::class, 'File does not exist');
+});
+
+test('it supports include and exclude glob patterns', function () {
+    file_put_contents($this->tempDir . DIRECTORY_SEPARATOR . 'keep.log', 'keep');
+    file_put_contents($this->tempDir . DIRECTORY_SEPARATOR . 'skip.tmp', 'skip');
+
+    $compressor = new FileCompression($this->zipFilePath, true);
+    $compressor
+        ->setGlobPatterns(['*.txt', '*.log'], ['*.tmp'])
+        ->compress($this->tempDir)
+        ->save();
+
+    expect($compressor->listFiles())
+        ->toContain('file1.txt', 'file2.txt', 'keep.log')
+        ->not->toContain('skip.tmp');
+});
+
+test('it emits progress events during compress and decompress', function () {
+    $events = [];
+
+    $compressor = new FileCompression($this->zipFilePath, true);
+    $compressor
+        ->setProgressCallback(function (array $event) use (&$events) {
+            $events[] = $event;
+        })
+        ->compress($this->tempDir)
+        ->save();
+
+    $decompressDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('decompress_progress_', true);
+    mkdir($decompressDir);
+
+    try {
+        $compressor->decompress($decompressDir);
+        expect($events)->not->toBeEmpty();
+        expect(array_column($events, 'operation'))->toContain('compress', 'decompress');
+    } finally {
+        array_map('unlink', glob($decompressDir . DIRECTORY_SEPARATOR . '*'));
+        rmdir($decompressDir);
+    }
+});
+
+test('it respects ignore file patterns from source root', function () {
+    file_put_contents($this->tempDir . DIRECTORY_SEPARATOR . '.pathwiseignore', "*.tmp\n");
+    file_put_contents($this->tempDir . DIRECTORY_SEPARATOR . 'ignored.tmp', 'ignore me');
+
+    $compressor = new FileCompression($this->zipFilePath, true);
+    $compressor->compress($this->tempDir)->save();
+
+    expect($compressor->listFiles())->not->toContain('ignored.tmp');
 });

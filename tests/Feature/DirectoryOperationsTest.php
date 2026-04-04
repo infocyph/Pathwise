@@ -1,6 +1,7 @@
 <?php
 
 use Infocyph\Pathwise\DirectoryManager\DirectoryOperations;
+use Infocyph\Pathwise\Exceptions\DirectoryOperationException;
 
 // Helper function to create a temporary directory for testing
 function createTempDirectory(): string
@@ -30,6 +31,13 @@ test('can create a directory', function () {
         ->and(is_dir($newDir))->toBeTrue();
 });
 
+test('create is idempotent when directory already exists', function () {
+    expect($this->directoryOperations->create())
+        ->toBeTrue()
+        ->and($this->directoryOperations->create())->toBeTrue()
+        ->and(is_dir($this->tempDir))->toBeTrue();
+});
+
 test('can delete a directory', function () {
 //    $this->directoryOperations->create();
     expect($this->directoryOperations->delete())
@@ -48,6 +56,24 @@ test('can copy a directory', function () {
         ->toBeTrue()
         ->and(file_exists($destDir . '/' . $fileName))->toBeTrue()
         ->and(file_get_contents($destDir . '/' . $fileName))->toBe('sample content');
+});
+
+test('copy emits progress callback events', function () {
+    $destDir = createTempDirectory();
+    file_put_contents($this->tempDir . '/' . uniqid('a_', true) . '.txt', 'A');
+    file_put_contents($this->tempDir . '/' . uniqid('b_', true) . '.txt', 'B');
+
+    $events = [];
+    try {
+        $this->directoryOperations->copy($destDir, function (array $event) use (&$events) {
+            $events[] = $event;
+        });
+
+        expect($events)->not->toBeEmpty()
+            ->and($events[count($events) - 1]['operation'])->toBe('copy');
+    } finally {
+        (new DirectoryOperations($destDir))->delete(true);
+    }
 });
 
 test('can move a directory', function () {
@@ -170,4 +196,38 @@ test('finds files based on criteria', function () {
     expect($foundFiles)
         ->toHaveCount(1)
         ->and($foundFiles[0])->toEndWith(basename($file1));
+});
+
+test('it syncs directory and returns diff report', function () {
+    $sourceFile = $this->tempDir . '/' . 'sync.txt';
+    file_put_contents($sourceFile, 'v1');
+
+    $destDir = createTempDirectory();
+    file_put_contents($destDir . '/' . 'old.txt', 'old');
+
+    $events = [];
+    $report = $this->directoryOperations->syncTo($destDir, true, function (array $event) use (&$events) {
+        $events[] = $event;
+    });
+
+    expect($report)->toHaveKeys(['created', 'updated', 'deleted', 'unchanged'])
+        ->and($report['created'])->toContain('sync.txt')
+        ->and($report['deleted'])->toContain('old.txt')
+        ->and($events)->not->toBeEmpty();
+
+    unlink($destDir . '/' . 'sync.txt');
+    rmdir($destDir);
+});
+
+test('zip throws when source directory does not exist', function () {
+    $missing = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('missing_', true);
+    $ops = new DirectoryOperations($missing);
+
+    expect(fn () => $ops->zip($this->tempDir . DIRECTORY_SEPARATOR . 'out.zip'))
+        ->toThrow(DirectoryOperationException::class);
+});
+
+test('unzip throws when source archive does not exist', function () {
+    expect(fn () => $this->directoryOperations->unzip($this->tempDir . DIRECTORY_SEPARATOR . 'missing.zip'))
+        ->toThrow(DirectoryOperationException::class);
 });

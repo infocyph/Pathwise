@@ -32,7 +32,7 @@ Pathwise is a robust PHP library designed for streamlined file and directory man
 10. [License](#license)
 
 ## **Prerequisites**
-- Language: PHP 8.2/+
+- Language: PHP 8.4/+
 
 
 
@@ -44,7 +44,7 @@ composer require infocyph/pathwise
 ```
 
 Requirements:
-- PHP 8.2 or higher
+- PHP 8.4 or higher
 - Optional Extensions:
     - `ext-zip`: Required for compression features.
     - `ext-posix`: Required for permission handling.

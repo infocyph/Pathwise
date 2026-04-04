@@ -21,6 +21,11 @@ test('it normalizes a path', function () {
     expect(PathHelper::normalize('path/./to/../file.txt'))->toBe('path' . DIRECTORY_SEPARATOR . 'file.txt');
 });
 
+test('it preserves root prefix when normalizing absolute paths', function () {
+    $normalized = PathHelper::normalize('/var/www/html');
+    expect(str_starts_with($normalized, DIRECTORY_SEPARATOR))->toBeTrue();
+});
+
 
 // Test PathHelper::isAbsolute
 test('it checks if path is absolute', function () {
@@ -29,6 +34,7 @@ test('it checks if path is absolute', function () {
 
     $relativePath = 'relative/path';
     expect(PathHelper::isAbsolute($relativePath))->toBeFalse();
+    expect(PathHelper::isAbsolute(''))->toBeFalse();
 });
 
 // Test PathHelper::toAbsolutePath
