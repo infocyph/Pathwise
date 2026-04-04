@@ -4,6 +4,7 @@ namespace Infocyph\Pathwise\StreamHandler;
 
 use Infocyph\Pathwise\Exceptions\FileSizeExceededException;
 use Infocyph\Pathwise\Exceptions\UploadException;
+use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\MetadataHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use Psr\Log\LoggerInterface;
@@ -75,7 +76,7 @@ class UploadProcessor
         $destination = $this->getUniqueDestination($fileName);
         $chunkDirectory = $this->getChunkDirectory($uploadId);
 
-        $output = fopen($destination, 'wb');
+        $output = fopen('php://temp', 'rb+');
         if ($output === false) {
             throw new UploadException('Failed to create destination file for chunk merge.');
         }
@@ -87,27 +88,27 @@ class UploadProcessor
                     throw new UploadException("Missing chunk index {$i}.");
                 }
 
-                $chunkPath = $chunkDirectory . DIRECTORY_SEPARATOR . $chunkName;
-                if (!is_file($chunkPath)) {
+                $chunkPath = PathHelper::join($chunkDirectory, $chunkName);
+                if (!FlysystemHelper::fileExists($chunkPath)) {
                     throw new UploadException("Missing chunk file for index {$i}.");
                 }
 
-                $input = fopen($chunkPath, 'rb');
-                if ($input === false) {
+                $input = FlysystemHelper::readStream($chunkPath);
+                if (!is_resource($input)) {
                     throw new UploadException("Failed to read chunk index {$i}.");
                 }
 
                 stream_copy_to_stream($input, $output);
                 fclose($input);
             }
+
+            rewind($output);
+            FlysystemHelper::writeStream($destination, $output);
         } finally {
             fclose($output);
         }
 
-        $finalSize = filesize($destination);
-        if ($finalSize === false) {
-            throw new UploadException('Failed to determine merged file size.');
-        }
+        $finalSize = FlysystemHelper::size($destination);
         $this->validateFileSize($finalSize);
 
         $fileType = $this->getFileMimeType($destination);
@@ -118,17 +119,17 @@ class UploadProcessor
         $this->scanForMalware($destination, $fileType);
 
         foreach ($received as $chunkName) {
-            $chunkPath = $chunkDirectory . DIRECTORY_SEPARATOR . $chunkName;
-            if (is_file($chunkPath)) {
-                unlink($chunkPath);
+            $chunkPath = PathHelper::join($chunkDirectory, (string) $chunkName);
+            if (FlysystemHelper::fileExists($chunkPath)) {
+                FlysystemHelper::delete($chunkPath);
             }
         }
         $manifestPath = $this->getChunkManifestPath($uploadId);
-        if (is_file($manifestPath)) {
-            unlink($manifestPath);
+        if (FlysystemHelper::fileExists($manifestPath)) {
+            FlysystemHelper::delete($manifestPath);
         }
-        if (is_dir($chunkDirectory)) {
-            rmdir($chunkDirectory);
+        if (FlysystemHelper::directoryExists($chunkDirectory)) {
+            FlysystemHelper::deleteDirectory($chunkDirectory);
         }
 
         return $destination;
@@ -176,11 +177,11 @@ class UploadProcessor
         $this->validateFile($chunkFile);
 
         $chunkDirectory = $this->getChunkDirectory($uploadId);
-        if (!is_dir($chunkDirectory) && !mkdir($chunkDirectory, 0755, true)) {
-            throw new UploadException('Failed to create chunk directory.');
+        if (!FlysystemHelper::directoryExists($chunkDirectory)) {
+            FlysystemHelper::createDirectory($chunkDirectory);
         }
 
-        $chunkPath = $chunkDirectory . DIRECTORY_SEPARATOR . sprintf('chunk_%06d.part', $chunkIndex);
+        $chunkPath = PathHelper::join($chunkDirectory, sprintf('chunk_%06d.part', $chunkIndex));
         $this->moveIncomingFile($chunkFile['tmp_name'], $chunkPath);
 
         $manifest = $this->loadChunkManifest($uploadId) ?? [
@@ -228,7 +229,18 @@ class UploadProcessor
             $destination = $this->getUniqueDestination($fileName);
 
             if (!move_uploaded_file($file['tmp_name'], $destination)) {
-                throw new UploadException('Failed to move uploaded file.');
+                $stream = fopen($file['tmp_name'], 'rb');
+                if (!is_resource($stream)) {
+                    throw new UploadException('Failed to move uploaded file.');
+                }
+
+                try {
+                    FlysystemHelper::writeStream($destination, $stream);
+                } finally {
+                    fclose($stream);
+                }
+
+                @unlink($file['tmp_name']);
             }
 
             // Log upload metadata
@@ -266,10 +278,10 @@ class UploadProcessor
      */
     public function setDirectorySettings(string $uploadDir, bool $useDateDirectories = false, ?string $tempDir = null): void
     {
-        $this->uploadDir = rtrim(PathHelper::normalize($this->sanitizePath($uploadDir)), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+        $this->uploadDir = PathHelper::normalize($this->sanitizePath($uploadDir));
         $this->useDateDirectories = $useDateDirectories;
         $this->tempDir = $tempDir
-            ? rtrim(PathHelper::normalize($this->sanitizePath($tempDir)), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR
+            ? PathHelper::normalize($this->sanitizePath($tempDir))
             : sys_get_temp_dir();
         $this->ensureUploadDirectoryExists();
     }
@@ -341,8 +353,8 @@ class UploadProcessor
      */
     private function ensureUploadDirectoryExists(): void
     {
-        if (!is_dir($this->uploadDir) && !mkdir($this->uploadDir, 0755, true)) {
-            throw new UploadException('Failed to create upload directory.');
+        if (!FlysystemHelper::directoryExists($this->uploadDir)) {
+            FlysystemHelper::createDirectory($this->uploadDir);
         }
     }
 
@@ -379,13 +391,13 @@ class UploadProcessor
     private function getChunkDirectory(string $uploadId): string
     {
         $safeUploadId = preg_replace('/[^A-Za-z0-9_\-]/', '', $uploadId) ?: 'upload';
-        $baseTemp = $this->tempDir ? rtrim($this->tempDir, DIRECTORY_SEPARATOR) : sys_get_temp_dir();
+        $baseTemp = $this->tempDir ? rtrim($this->tempDir, '/\\') : sys_get_temp_dir();
         return PathHelper::join($baseTemp, 'pathwise_chunks', $safeUploadId);
     }
 
     private function getChunkManifestPath(string $uploadId): string
     {
-        return $this->getChunkDirectory($uploadId) . DIRECTORY_SEPARATOR . 'manifest.json';
+        return PathHelper::join($this->getChunkDirectory($uploadId), 'manifest.json');
     }
 
     /**
@@ -406,16 +418,18 @@ class UploadProcessor
      */
     private function getUniqueDestination(string $fileName): string
     {
-        $subDir = $this->useDateDirectories ? date('Y/m/d/') : '';
-        $destinationDir = $this->uploadDir . $subDir;
+        $subDir = $this->useDateDirectories ? date('Y/m/d') : '';
+        $destinationDir = $subDir !== ''
+            ? PathHelper::join($this->uploadDir, $subDir)
+            : $this->uploadDir;
 
-        if (!is_dir($destinationDir) && !mkdir($destinationDir, 0755, true)) {
-            throw new UploadException('Failed to create upload subdirectory.');
+        if (!FlysystemHelper::directoryExists($destinationDir)) {
+            FlysystemHelper::createDirectory($destinationDir);
         }
 
-        $destination = $destinationDir . $fileName;
+        $destination = PathHelper::join($destinationDir, $fileName);
 
-        if (file_exists($destination)) {
+        if (FlysystemHelper::fileExists($destination)) {
             throw new UploadException('File with the same name already exists.');
         }
 
@@ -433,14 +447,11 @@ class UploadProcessor
     private function loadChunkManifest(string $uploadId): ?array
     {
         $path = $this->getChunkManifestPath($uploadId);
-        if (!is_file($path)) {
+        if (!FlysystemHelper::fileExists($path)) {
             return null;
         }
 
-        $content = file_get_contents($path);
-        if ($content === false) {
-            throw new UploadException('Failed to read chunk manifest.');
-        }
+        $content = FlysystemHelper::read($path);
 
         $manifest = json_decode($content, true);
         if (!is_array($manifest)) {
@@ -453,17 +464,33 @@ class UploadProcessor
     private function moveIncomingFile(string $source, string $destination): void
     {
         if (is_uploaded_file($source)) {
-            if (!move_uploaded_file($source, $destination)) {
-                throw new UploadException('Failed to move uploaded file.');
+            if (move_uploaded_file($source, $destination)) {
+                return;
             }
-            return;
+
+            $stream = fopen($source, 'rb');
+            if (is_resource($stream)) {
+                try {
+                    FlysystemHelper::writeStream($destination, $stream);
+                } finally {
+                    fclose($stream);
+                }
+
+                @unlink($source);
+
+                return;
+            }
+
+            throw new UploadException('Failed to move uploaded file.');
         }
 
         if (!@rename($source, $destination)) {
-            if (!@copy($source, $destination)) {
+            try {
+                FlysystemHelper::copy($source, $destination);
+            } catch (\Throwable) {
                 throw new UploadException('Failed to move incoming file.');
             }
-            @unlink($source);
+            FlysystemHelper::delete($source);
         }
     }
 
@@ -480,9 +507,11 @@ class UploadProcessor
     {
         $path = $this->getChunkManifestPath($uploadId);
         $json = json_encode($manifest, JSON_PRETTY_PRINT);
-        if ($json === false || file_put_contents($path, $json) === false) {
+        if ($json === false) {
             throw new UploadException('Failed to persist chunk manifest.');
         }
+
+        FlysystemHelper::write($path, $json);
     }
 
     private function scanForMalware(string $filePath, string $fileType): void
@@ -554,7 +583,45 @@ class UploadProcessor
      */
     private function validateImageDimensions(string $filePath): void
     {
-        [$width, $height] = getimagesize($filePath);
+        $pathForInspection = $filePath;
+        $cleanup = false;
+
+        if (PathHelper::hasScheme($filePath) || !is_file($filePath)) {
+            $tempFile = tempnam(sys_get_temp_dir(), 'pathwise_img_');
+            if ($tempFile === false) {
+                throw new UploadException('Unable to create temporary file for image validation.');
+            }
+
+            $stream = FlysystemHelper::readStream($filePath);
+            $target = fopen($tempFile, 'wb');
+            if (!is_resource($stream) || !is_resource($target)) {
+                if (is_resource($stream)) {
+                    fclose($stream);
+                }
+                if (is_resource($target)) {
+                    fclose($target);
+                }
+                @unlink($tempFile);
+                throw new UploadException('Unable to inspect image dimensions.');
+            }
+
+            stream_copy_to_stream($stream, $target);
+            fclose($stream);
+            fclose($target);
+
+            $pathForInspection = $tempFile;
+            $cleanup = true;
+        }
+
+        $dimensions = getimagesize($pathForInspection);
+        if ($cleanup && is_file($pathForInspection)) {
+            @unlink($pathForInspection);
+        }
+        if (!is_array($dimensions) || count($dimensions) < 2) {
+            throw new UploadException('Unable to inspect image dimensions.');
+        }
+
+        [$width, $height] = $dimensions;
         if ($this->maxImageWidth > 0 && $width > $this->maxImageWidth) {
             throw new UploadException('Image width exceeds the maximum allowed.');
         }

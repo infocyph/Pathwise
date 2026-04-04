@@ -40,7 +40,17 @@ class PathHelper
      */
     public static function createDirectory(string $path, int $permissions = 0755): bool
     {
-        return is_dir($path) || mkdir($path, $permissions, true);
+        $isLocalDirectory = !self::hasScheme($path) && is_dir($path);
+        if (FlysystemHelper::directoryExists($path) || $isLocalDirectory) {
+            return true;
+        }
+
+        FlysystemHelper::createDirectory($path);
+        if (!self::hasScheme($path)) {
+            @chmod($path, $permissions);
+        }
+
+        return true;
     }
 
     /**
@@ -74,16 +84,14 @@ class PathHelper
      */
     public static function deleteDirectory(string $directory): bool
     {
-        if (!is_dir($directory)) {
+        $isLocalDirectory = !self::hasScheme($directory) && is_dir($directory);
+        if (!$isLocalDirectory && !FlysystemHelper::directoryExists($directory)) {
             return false;
         }
 
-        $files = array_diff(scandir($directory), ['.', '..']);
-        foreach ($files as $file) {
-            $filePath = $directory . DIRECTORY_SEPARATOR . $file;
-            is_dir($filePath) ? self::deleteDirectory($filePath) : unlink($filePath);
-        }
-        return rmdir($directory);
+        FlysystemHelper::deleteDirectory($directory);
+
+        return !FlysystemHelper::directoryExists($directory);
     }
 
     /**
@@ -94,7 +102,14 @@ class PathHelper
      */
     public static function deleteFile(string $file): bool
     {
-        return is_file($file) && unlink($file);
+        $isLocalFile = !self::hasScheme($file) && is_file($file);
+        if (!$isLocalFile && !FlysystemHelper::fileExists($file)) {
+            return false;
+        }
+
+        FlysystemHelper::delete($file);
+
+        return !FlysystemHelper::fileExists($file);
     }
 
     /**
@@ -131,7 +146,20 @@ class PathHelper
      */
     public static function getPathType(string $path): ?string
     {
-        return is_file($path) ? 'file' : (is_dir($path) ? 'directory' : (is_link($path) ? 'link' : null));
+        if (FlysystemHelper::fileExists($path)) {
+            return 'file';
+        }
+
+        if (FlysystemHelper::directoryExists($path)) {
+            return 'directory';
+        }
+
+        return is_link($path) ? 'link' : null;
+    }
+
+    public static function hasScheme(string $path): bool
+    {
+        return preg_match('/^[a-zA-Z0-9._-]+:\/\//', $path) === 1;
     }
 
     /**
@@ -148,6 +176,10 @@ class PathHelper
     {
         if ($path === '') {
             return false;
+        }
+
+        if (self::hasScheme($path)) {
+            return true;
         }
 
         if (DIRECTORY_SEPARATOR === '/') {
@@ -195,6 +227,30 @@ class PathHelper
 
         $path = array_shift($segments) ?? '';
         foreach ($segments as $segment) {
+            if ($segment === '') {
+                continue;
+            }
+
+            if (self::hasScheme($path)) {
+                if (preg_match('/^([a-zA-Z0-9._-]+):\/\/(.*)$/', $path, $matches) === 1) {
+                    $scheme = strtolower($matches[1]);
+                    $base = trim(str_replace('\\', '/', $matches[2]), '/');
+                    $next = trim(str_replace('\\', '/', $segment), '/');
+
+                    if ($next === '') {
+                        $path = $scheme . '://' . $base;
+                        continue;
+                    }
+
+                    $base = $base === '' ? $next : $base . '/' . $next;
+                    $path = $scheme . '://' . $base;
+                    continue;
+                }
+
+                $path = rtrim(str_replace('\\', '/', $path), '/') . '/' . ltrim(str_replace('\\', '/', $segment), '/');
+                continue;
+            }
+
             $path = rtrim($path, '/\\') . DIRECTORY_SEPARATOR . ltrim($segment, '/\\');
         }
 
@@ -219,6 +275,10 @@ class PathHelper
 
         if ($path === '') {
             return self::$cache[$originalPath] = '';
+        }
+
+        if (self::hasScheme($path)) {
+            return self::$cache[$originalPath] = self::normalizeSchemePath($path);
         }
 
         $path = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $path);
@@ -266,7 +326,15 @@ class PathHelper
      */
     public static function pathExists(string $path): bool
     {
-        return file_exists($path);
+        if (file_exists($path)) {
+            return true;
+        }
+
+        try {
+            return FlysystemHelper::has($path);
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     /**
@@ -324,5 +392,42 @@ class PathHelper
         }
         $base ??= getcwd() ?: '.';
         return self::normalize(self::join($base, $path));
+    }
+
+    private static function normalizeSchemePath(string $path): string
+    {
+        if (preg_match('/^([a-zA-Z0-9._-]+):\/\/(.*)$/', $path, $matches) !== 1) {
+            return $path;
+        }
+
+        $scheme = strtolower($matches[1]);
+        $location = str_replace('\\', '/', $matches[2]);
+        $leadingSlash = str_starts_with($location, '/');
+
+        $parts = preg_split('/\/+/', trim($location, '/'), -1, PREG_SPLIT_NO_EMPTY);
+        $stack = [];
+
+        foreach ($parts as $part) {
+            if ($part === '.' || $part === '') {
+                continue;
+            }
+
+            if ($part === '..') {
+                if ($stack !== []) {
+                    array_pop($stack);
+                }
+
+                continue;
+            }
+
+            $stack[] = $part;
+        }
+
+        $normalized = implode('/', $stack);
+        if ($leadingSlash && $normalized !== '') {
+            $normalized = '/' . $normalized;
+        }
+
+        return $scheme . '://' . $normalized;
     }
 }

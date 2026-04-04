@@ -18,11 +18,13 @@
         }
     },
     "require": {
-        "php": ">=8.4",
-        "league/flysystem": "^3.33"
+        "ext-fileinfo": "*",
+        "league/flysystem": "^3.33",
+        "php": ">=8.4"
     },
     "suggest": {
         "ext-zip": "required if you want to use compression.",
+        "ext-pcntl": "required if you want to use long-running watch loops.",
         "ext-posix": "required if you want to use permissions.",
         "ext-xmlreader": "required if you want to use XML parsing.",
         "ext-simplexml": "required if you want to use XML parsing."

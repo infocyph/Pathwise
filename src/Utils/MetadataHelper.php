@@ -2,11 +2,8 @@
 
 namespace Infocyph\Pathwise\Utils;
 
-use FilesystemIterator;
 use Infocyph\Pathwise\Utils\Ownership\OwnershipResolverFactory;
 use Infocyph\Pathwise\Utils\Ownership\OwnershipResolverInterface;
-use RecursiveDirectoryIterator;
-use RecursiveIteratorIterator;
 
 class MetadataHelper
 {
@@ -27,17 +24,20 @@ class MetadataHelper
      */
     public static function getAllMetadata(string $path, bool $humanReadableSize = false): ?array
     {
-        if (!file_exists($path)) {
+        if (!PathHelper::pathExists($path)) {
             return null;
         }
 
+        $type = self::getPathType($path);
+        $isDirectory = $type === 'directory';
+
         return [
-            'size' => is_dir($path) ? self::getDirectorySize($path) : self::getFileSize($path, $humanReadableSize),
-            'file_count' => is_dir($path) ? self::getFileCount($path) : null,
+            'size' => $isDirectory ? self::getDirectorySize($path) : self::getFileSize($path, $humanReadableSize),
+            'file_count' => $isDirectory ? self::getFileCount($path) : null,
             'timestamps' => self::getTimestamps($path),
             'human_readable_timestamps' => self::getHumanReadableTimestamps($path),
             'mime_type' => self::getMimeType($path),
-            'type' => self::getPathType($path),
+            'type' => $type,
             'ownership' => self::getOwnershipDetails($path),
             'last_modified_by' => self::getLastModifiedBy($path),
             'extension' => self::getFileExtension($path),
@@ -63,12 +63,11 @@ class MetadataHelper
      */
     public static function getChecksum(string $path, string $algorithm = 'md5'): ?string
     {
-        if (!is_file($path) || !in_array($algorithm, hash_algos())) {
+        if (!FlysystemHelper::fileExists($path) || !in_array($algorithm, hash_algos(), true)) {
             return null;
         }
 
-        $checksum = hash_file($algorithm, $path);
-        return is_string($checksum) ? $checksum : null;
+        return FlysystemHelper::checksum($path, $algorithm);
     }
 
     /**
@@ -82,18 +81,19 @@ class MetadataHelper
      */
     public static function getDirectorySize(string $directory): ?int
     {
-        if (!is_dir($directory)) {
+        if (!FlysystemHelper::directoryExists($directory) && !is_dir($directory)) {
             return null;
         }
 
         $size = 0;
-        foreach (
-            new RecursiveIteratorIterator(
-                new RecursiveDirectoryIterator($directory, FilesystemIterator::SKIP_DOTS),
-            ) as $file
-        ) {
-            $size += $file->getSize();
+        foreach (FlysystemHelper::listContents($directory, true) as $item) {
+            if (($item['type'] ?? null) !== 'file') {
+                continue;
+            }
+
+            $size += (int) ($item['file_size'] ?? 0);
         }
+
         return $size;
     }
 
@@ -115,17 +115,18 @@ class MetadataHelper
      */
     public static function getFileCount(string $directory, bool $recursive = true): ?int
     {
-        if (!is_dir($directory)) {
+        if (!FlysystemHelper::directoryExists($directory) && !is_dir($directory)) {
             return null;
         }
 
-        $iterator = $recursive
-            ? new RecursiveIteratorIterator(
-                new RecursiveDirectoryIterator($directory, FilesystemIterator::SKIP_DOTS),
-            )
-            : new FilesystemIterator($directory, FilesystemIterator::SKIP_DOTS);
+        $count = 0;
+        foreach (FlysystemHelper::listContents($directory, $recursive) as $item) {
+            if (($item['type'] ?? null) === 'file') {
+                $count++;
+            }
+        }
 
-        return iterator_count($iterator);
+        return $count;
     }
 
     /**
@@ -139,7 +140,7 @@ class MetadataHelper
      */
     public static function getFileExtension(string $path): ?string
     {
-        return is_file($path) ? pathinfo($path, PATHINFO_EXTENSION) : null;
+        return FlysystemHelper::fileExists($path) ? pathinfo($path, PATHINFO_EXTENSION) : null;
     }
 
     /**
@@ -154,11 +155,12 @@ class MetadataHelper
      */
     public static function getFileSize(string $path, bool $humanReadable = false): string|int|null
     {
-        if (!is_file($path)) {
+        if (!FlysystemHelper::fileExists($path)) {
             return null;
         }
 
-        $size = filesize($path);
+        $size = FlysystemHelper::size($path);
+
         return $humanReadable ? self::formatSize($size) : $size;
     }
 
@@ -200,28 +202,30 @@ class MetadataHelper
     /**
      * Retrieves the MIME type of the file at the given path.
      *
-     * If the `mime_content_type` function is available, this method returns the
-     * MIME type of the file at the given path. If the function is not available or
-     * the path does not point to a file, it returns null.
+     * This method first asks Flysystem for MIME metadata. For local paths, it
+     * falls back to ``finfo``. If neither strategy can determine the type, null
+     * is returned.
      *
      * @param string $path The path to the file to retrieve the MIME type for.
-     * @return string|null The MIME type of the file, or null if the function is
-     *     not available or the path does not point to a file.
+     * @return string|null The MIME type of the file, or null if the path does not
+     *     point to a file or metadata cannot be determined.
      */
     public static function getMimeType(string $path): ?string
     {
-        if (!is_file($path)) {
+        if (!FlysystemHelper::fileExists($path)) {
             return null;
         }
 
-        if (function_exists('mime_content_type')) {
-            $mime = mime_content_type($path);
+        try {
+            $mime = FlysystemHelper::mimeType($path);
             if (is_string($mime) && $mime !== '') {
                 return $mime;
             }
+        } catch (\Throwable) {
+            // Fall back to non-Flysystem detection chain.
         }
 
-        if (class_exists(\finfo::class)) {
+        if (!PathHelper::hasScheme($path) && is_file($path) && class_exists(\finfo::class)) {
             $finfo = new \finfo(FILEINFO_MIME_TYPE);
             $mime = $finfo->file($path);
             if (is_string($mime) && $mime !== '') {
@@ -229,19 +233,7 @@ class MetadataHelper
             }
         }
 
-        $extension = strtolower((string) pathinfo($path, PATHINFO_EXTENSION));
-        return match ($extension) {
-            'txt', 'log' => 'text/plain',
-            'csv' => 'text/csv',
-            'json' => 'application/json',
-            'xml' => 'application/xml',
-            'html', 'htm' => 'text/html',
-            'jpg', 'jpeg' => 'image/jpeg',
-            'png' => 'image/png',
-            'gif' => 'image/gif',
-            'pdf' => 'application/pdf',
-            default => null,
-        };
+        return null;
     }
 
     /**
@@ -275,7 +267,15 @@ class MetadataHelper
      */
     public static function getPathType(string $path): ?string
     {
-        return is_file($path) ? 'file' : (is_dir($path) ? 'directory' : (is_link($path) ? 'link' : null));
+        if (FlysystemHelper::fileExists($path)) {
+            return 'file';
+        }
+
+        if (FlysystemHelper::directoryExists($path)) {
+            return 'directory';
+        }
+
+        return is_link($path) ? 'link' : null;
     }
 
     /**
@@ -309,15 +309,25 @@ class MetadataHelper
      */
     public static function getTimestamps(string $path): ?array
     {
-        if (!file_exists($path)) {
+        if (file_exists($path)) {
+            return [
+                'created' => filectime($path),
+                'modified' => filemtime($path),
+                'accessed' => fileatime($path),
+            ];
+        }
+
+        if (!PathHelper::pathExists($path)) {
             return null;
         }
 
-        return [
-            'created' => filectime($path),
-            'modified' => filemtime($path),
-            'accessed' => fileatime($path),
-        ];
+        try {
+            $modified = FlysystemHelper::lastModified($path);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return ['created' => $modified, 'modified' => $modified, 'accessed' => $modified];
     }
 
     /**

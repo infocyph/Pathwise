@@ -2,12 +2,14 @@
 
 namespace Infocyph\Pathwise\FileManager;
 
+use DateTimeInterface;
 use Infocyph\Pathwise\Core\ExecutionStrategy;
 use Infocyph\Pathwise\Exceptions\FileAccessException;
 use Infocyph\Pathwise\Exceptions\FileNotFoundException;
 use Infocyph\Pathwise\Native\NativeOperationsAdapter;
 use Infocyph\Pathwise\Observability\AuditTrail;
 use Infocyph\Pathwise\Security\PolicyEngine;
+use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use SplFileInfo;
 use SplFileObject;
@@ -46,11 +48,10 @@ class FileOperations
             if ($previousContent === null) {
                 return;
             }
-            file_put_contents($this->filePath, $previousContent);
+            FlysystemHelper::write($this->filePath, $previousContent);
         });
-
-        $this->initFile('a');
-        $this->file->fwrite($content);
+        $newContent = ($previousContent ?? '') . $content;
+        FlysystemHelper::write($this->filePath, $newContent);
         $this->audit('append', ['path' => $this->filePath, 'bytes' => strlen($content)]);
         return $this;
     }
@@ -97,12 +98,16 @@ class FileOperations
             $copied = $native['success'];
         }
 
-        if (!$copied && !copy($this->filePath, $destination)) {
-            throw new FileAccessException("Unable to copy file to $destination.");
+        if (!$copied) {
+            try {
+                FlysystemHelper::copy($this->filePath, $destination);
+            } catch (\Throwable $e) {
+                throw new FileAccessException("Unable to copy file to $destination.", 0, $e);
+            }
         }
         $this->recordRollback(function () use ($destination): void {
-            if (is_file($destination)) {
-                unlink($destination);
+            if (FlysystemHelper::fileExists($destination)) {
+                FlysystemHelper::delete($destination);
             }
         });
 
@@ -132,8 +137,8 @@ class FileOperations
             throw new FileAccessException("Unsupported checksum algorithm: {$algorithm}");
         }
 
-        $sourceHash = hash_file($algorithm, $this->filePath);
-        $destinationHash = hash_file($algorithm, $destination);
+        $sourceHash = FlysystemHelper::checksum($this->filePath, $algorithm);
+        $destinationHash = FlysystemHelper::checksum($destination, $algorithm);
         if (!is_string($sourceHash) || !is_string($destinationHash) || !hash_equals($sourceHash, $destinationHash)) {
             throw new FileAccessException("Checksum verification failed after copying to {$destination}.");
         }
@@ -154,16 +159,12 @@ class FileOperations
         $previousContent = $hadFile ? $this->read() : null;
         $this->recordRollback(function () use ($hadFile, $previousContent): void {
             if ($hadFile) {
-                file_put_contents($this->filePath, (string) $previousContent);
-            } elseif (is_file($this->filePath)) {
-                unlink($this->filePath);
+                FlysystemHelper::write($this->filePath, (string) $previousContent);
+            } elseif (FlysystemHelper::fileExists($this->filePath)) {
+                FlysystemHelper::delete($this->filePath);
             }
         });
-
-        $this->initFile('w');
-        if ($content) {
-            $this->file->fwrite($content);
-        }
+        FlysystemHelper::write($this->filePath, (string) $content);
         $this->audit('create', ['path' => $this->filePath]);
         return $this;
     }
@@ -181,10 +182,12 @@ class FileOperations
         }
         $content = $this->read();
         $this->recordRollback(function () use ($content): void {
-            file_put_contents($this->filePath, $content);
+            FlysystemHelper::write($this->filePath, $content);
         });
-        if (!unlink($this->filePath)) {
-            throw new FileAccessException("Unable to delete file at $this->filePath.");
+        try {
+            FlysystemHelper::delete($this->filePath);
+        } catch (\Throwable $e) {
+            throw new FileAccessException("Unable to delete file at $this->filePath.", 0, $e);
         }
         $this->audit('delete', ['path' => $this->filePath]);
         return $this;
@@ -197,7 +200,7 @@ class FileOperations
      */
     public function exists(): bool
     {
-        return file_exists($this->filePath);
+        return FlysystemHelper::fileExists($this->filePath);
     }
 
     /**
@@ -223,8 +226,8 @@ class FileOperations
 
         return [
             'permissions' => substr(sprintf('%o', $info->getPerms()), -4),
-            'size' => $info->getSize(),
-            'last_modified' => $info->getMTime(),
+            'size' => FlysystemHelper::size($this->filePath),
+            'last_modified' => FlysystemHelper::lastModified($this->filePath),
             'owner' => $info->getOwner(),
             'group' => $info->getGroup(),
             'type' => $info->getType(),
@@ -273,6 +276,15 @@ class FileOperations
         return $this;
     }
 
+    public function publicUrl(array $config = []): string
+    {
+        if (!$this->exists()) {
+            throw new FileNotFoundException("File not found at $this->filePath.");
+        }
+
+        return FlysystemHelper::publicUrl($this->filePath, $config);
+    }
+
     /**
      * Read content from the file.
      *
@@ -282,13 +294,14 @@ class FileOperations
     public function read(): string
     {
         $this->isReadable();
-        $this->initFile();
-        $size = $this->file->getSize();
-        if ($size === 0) {
-            return '';
-        }
+        return FlysystemHelper::read($this->filePath);
+    }
 
-        return $this->file->fread($size);
+    public function readStream(): mixed
+    {
+        $this->isReadable();
+
+        return FlysystemHelper::readStream($this->filePath);
     }
 
     /**
@@ -300,13 +313,16 @@ class FileOperations
     public function rename(string $newPath): self
     {
         $this->assertPolicy('rename', $this->filePath, ['destination' => $newPath]);
-        if (!rename($this->filePath, $newPath)) {
-            throw new FileAccessException("Unable to rename or move file to $newPath.");
+        $newPath = PathHelper::normalize($newPath);
+        try {
+            FlysystemHelper::move($this->filePath, $newPath);
+        } catch (\Throwable $e) {
+            throw new FileAccessException("Unable to rename or move file to $newPath.", 0, $e);
         }
         $oldPath = $this->filePath;
         $this->recordRollback(function () use ($oldPath, $newPath): void {
-            if (is_file($newPath)) {
-                rename($newPath, $oldPath);
+            if (FlysystemHelper::fileExists($newPath)) {
+                FlysystemHelper::move($newPath, $oldPath);
             }
         });
         $this->filePath = $newPath;
@@ -431,6 +447,24 @@ class FileOperations
         return $this;
     }
 
+    public function setVisibility(string $visibility): self
+    {
+        $this->assertPolicy('set-visibility', $this->filePath, ['visibility' => $visibility]);
+        FlysystemHelper::setVisibility($this->filePath, $visibility);
+        $this->audit('set-visibility', ['path' => $this->filePath, 'visibility' => $visibility]);
+
+        return $this;
+    }
+
+    public function temporaryUrl(DateTimeInterface $expiresAt, array $config = []): string
+    {
+        if (!$this->exists()) {
+            throw new FileNotFoundException("File not found at $this->filePath.");
+        }
+
+        return FlysystemHelper::temporaryUrl($this->filePath, $expiresAt, $config);
+    }
+
     public function transaction(callable $callback): mixed
     {
         $this->beginTransaction();
@@ -471,10 +505,9 @@ class FileOperations
             if ($previous === null) {
                 return;
             }
-            file_put_contents($this->filePath, $previous);
+            FlysystemHelper::write($this->filePath, $previous);
         });
-        $this->initFile('w');
-        $this->file->fwrite($content);
+        FlysystemHelper::write($this->filePath, $content);
         $this->audit('update', ['path' => $this->filePath, 'bytes' => strlen($content)]);
         return $this;
     }
@@ -488,9 +521,18 @@ class FileOperations
             throw new FileNotFoundException("File not found at $this->filePath.");
         }
 
-        $fileHash = hash_file($algorithm, $this->filePath);
+        $fileHash = FlysystemHelper::checksum($this->filePath, $algorithm);
 
         return is_string($fileHash) && hash_equals($expectedChecksum, $fileHash);
+    }
+
+    public function visibility(): ?string
+    {
+        if (!$this->exists()) {
+            throw new FileNotFoundException("File not found at $this->filePath.");
+        }
+
+        return FlysystemHelper::visibility($this->filePath);
     }
 
     /**
@@ -507,6 +549,15 @@ class FileOperations
         if (!$this->verifyChecksum($expected, $algorithm)) {
             throw new FileAccessException("Checksum verification failed for {$this->filePath}.");
         }
+
+        return $this;
+    }
+
+    public function writeStream(mixed $stream, array $config = []): self
+    {
+        $this->assertPolicy('write-stream', $this->filePath);
+        FlysystemHelper::writeStream($this->filePath, $stream, $config);
+        $this->audit('write-stream', ['path' => $this->filePath]);
 
         return $this;
     }
@@ -539,14 +590,16 @@ class FileOperations
      */
     private function determineMimeType(): ?string
     {
-        if (function_exists('mime_content_type')) {
-            $mime = mime_content_type($this->filePath);
+        try {
+            $mime = FlysystemHelper::mimeType($this->filePath);
             if (is_string($mime) && $mime !== '') {
                 return $mime;
             }
+        } catch (\Throwable) {
+            // Fall back to built-in detectors below.
         }
 
-        if (class_exists(\finfo::class)) {
+        if (!PathHelper::hasScheme($this->filePath) && is_file($this->filePath) && class_exists(\finfo::class)) {
             $finfo = new \finfo(FILEINFO_MIME_TYPE);
             $mime = $finfo->file($this->filePath);
             if (is_string($mime) && $mime !== '') {
@@ -554,19 +607,7 @@ class FileOperations
             }
         }
 
-        $extension = strtolower((string) pathinfo($this->filePath, PATHINFO_EXTENSION));
-        return match ($extension) {
-            'txt', 'log' => 'text/plain',
-            'csv' => 'text/csv',
-            'json' => 'application/json',
-            'xml' => 'application/xml',
-            'html', 'htm' => 'text/html',
-            'jpg', 'jpeg' => 'image/jpeg',
-            'png' => 'image/png',
-            'gif' => 'image/gif',
-            'pdf' => 'application/pdf',
-            default => null,
-        };
+        return null;
     }
 
     private function recordRollback(callable $rollbackAction): void

@@ -6,6 +6,8 @@ use Countable;
 use Exception;
 use Generator;
 use Infocyph\Pathwise\Exceptions\FileAccessException;
+use Infocyph\Pathwise\Utils\FlysystemHelper;
+use Infocyph\Pathwise\Utils\PathHelper;
 use Iterator;
 use NoRewindIterator;
 use SeekableIterator;
@@ -29,11 +31,13 @@ use XMLReader;
  */
 final class SafeFileReader implements Countable, Iterator, SeekableIterator
 {
+    private bool $cleanupLocalWorkingPath = false;
     private int $count = 0;
     private ?Generator $currentIterator = null;
     private SplFileObject $file;
     private int $fileSize;
     private bool $isLocked = false;
+    private ?string $localWorkingPath = null;
     private int $position = 0;
 
     /**
@@ -61,6 +65,9 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
     public function __destruct()
     {
         $this->releaseLock();
+        if ($this->cleanupLocalWorkingPath && is_string($this->localWorkingPath) && is_file($this->localWorkingPath)) {
+            @unlink($this->localWorkingPath);
+        }
     }
 
     /**
@@ -329,10 +336,12 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
     private function initiate(): void
     {
         if (!isset($this->file)) {
-            if (!is_readable($this->filename)) {
+            $workingPath = $this->resolveReadablePath();
+            if (!is_readable($workingPath)) {
                 throw new FileAccessException("Cannot access file at path: {$this->filename}");
             }
-            $this->file = new SplFileObject($this->filename, $this->mode);
+
+            $this->file = new SplFileObject($workingPath, $this->mode);
             $this->fileSize = $this->file->getSize();
             $this->applyLock();
             $this->resetPosition();
@@ -462,6 +471,50 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
         $this->position = 0;
     }
 
+    private function resolveReadablePath(): string
+    {
+        $normalized = PathHelper::normalize($this->filename);
+        $preferFlysystem = FlysystemHelper::hasDefaultFilesystem() && !PathHelper::isAbsolute($normalized);
+        if (!$preferFlysystem && !PathHelper::hasScheme($normalized) && is_file($normalized)) {
+            return $normalized;
+        }
+
+        if (!FlysystemHelper::fileExists($normalized)) {
+            throw new FileAccessException("Cannot access file at path: {$this->filename}");
+        }
+
+        if ($this->localWorkingPath !== null && is_file($this->localWorkingPath)) {
+            return $this->localWorkingPath;
+        }
+
+        $stream = FlysystemHelper::readStream($normalized);
+        if (!is_resource($stream)) {
+            throw new FileAccessException("Cannot access file at path: {$this->filename}");
+        }
+
+        $tempFile = tempnam(sys_get_temp_dir(), 'pathwise_reader_');
+        if ($tempFile === false) {
+            fclose($stream);
+            throw new FileAccessException("Cannot access file at path: {$this->filename}");
+        }
+
+        $target = fopen($tempFile, 'wb');
+        if (!is_resource($target)) {
+            fclose($stream);
+            @unlink($tempFile);
+            throw new FileAccessException("Cannot access file at path: {$this->filename}");
+        }
+
+        stream_copy_to_stream($stream, $target);
+        fclose($stream);
+        fclose($target);
+
+        $this->localWorkingPath = PathHelper::normalize($tempFile);
+        $this->cleanupLocalWorkingPath = true;
+
+        return $this->localWorkingPath;
+    }
+
     /**
      * Iterates over the file as a sequence of serialized PHP values.
      *
@@ -502,7 +555,7 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
     private function xmlIterator(string $element): Generator
     {
         $reader = new XMLReader();
-        if (!$reader->open($this->filename)) {
+        if (!$reader->open($this->localWorkingPath ?? $this->filename)) {
             throw new Exception("Failed to open XML file: {$this->filename}");
         }
 

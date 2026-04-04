@@ -43,6 +43,7 @@ final class FileWatcher
             'deleted' => $deleted,
         ];
     }
+
     /**
      * Build a snapshot map for a file or directory.
      *
@@ -51,17 +52,27 @@ final class FileWatcher
     public static function snapshot(string $path, bool $recursive = true): array
     {
         $normalized = PathHelper::normalize($path);
-        if (is_file($normalized)) {
+        if (FlysystemHelper::fileExists($normalized)) {
+            try {
+                $mtime = FlysystemHelper::lastModified($normalized);
+            } catch (\Throwable) {
+                $mtime = 0;
+            }
+
             return [
                 $normalized => [
-                    'mtime' => (int) (filemtime($normalized) ?: 0),
-                    'size' => (int) (filesize($normalized) ?: 0),
+                    'mtime' => (int) $mtime,
+                    'size' => (int) (FlysystemHelper::size($normalized) ?: 0),
                 ],
             ];
         }
 
-        if (!is_dir($normalized)) {
+        if (!FlysystemHelper::directoryExists($normalized)) {
             return [];
+        }
+
+        if (PathHelper::hasScheme($normalized) || (FlysystemHelper::hasDefaultFilesystem() && !PathHelper::isAbsolute($normalized))) {
+            return self::snapshotViaFlysystem($normalized, $recursive);
         }
 
         $entries = [];
@@ -114,5 +125,44 @@ final class FileWatcher
         }
 
         return $snapshot;
+    }
+
+    /**
+     * @return array<string, array{mtime: int, size: int}>
+     */
+    private static function snapshotViaFlysystem(string $path, bool $recursive): array
+    {
+        $entries = [];
+        [, $baseLocation] = FlysystemHelper::resolveDirectory($path);
+        $base = trim(str_replace('\\', '/', $baseLocation), '/');
+
+        foreach (FlysystemHelper::listContents($path, $recursive) as $item) {
+            if (($item['type'] ?? null) !== 'file') {
+                continue;
+            }
+
+            $itemPath = trim((string) ($item['path'] ?? ''), '/');
+            if ($itemPath === '') {
+                continue;
+            }
+
+            $relative = $base !== '' && str_starts_with($itemPath, $base . '/')
+                ? substr($itemPath, strlen($base) + 1)
+                : ($itemPath === $base ? '' : $itemPath);
+            if ($relative === '') {
+                continue;
+            }
+
+            $resolved = PathHelper::join($path, $relative);
+
+            $entries[$resolved] = [
+                'mtime' => (int) ($item['last_modified'] ?? 0),
+                'size' => (int) ($item['file_size'] ?? 0),
+            ];
+        }
+
+        ksort($entries);
+
+        return $entries;
     }
 }

@@ -1,13 +1,21 @@
 <?php
 
 use Infocyph\Pathwise\Utils\FileWatcher;
+use Infocyph\Pathwise\Utils\FlysystemHelper;
+use League\Flysystem\Filesystem;
+use League\Flysystem\Local\LocalFilesystemAdapter;
 
 beforeEach(function () {
     $this->watchDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('watch_dir_', true);
     mkdir($this->watchDir);
+    $this->mountRoot = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('watch_mount_', true);
+    mkdir($this->mountRoot);
+    FlysystemHelper::mount('watch', new Filesystem(new LocalFilesystemAdapter($this->mountRoot)));
 });
 
 afterEach(function () {
+    FlysystemHelper::reset();
+
     if (is_dir($this->watchDir)) {
         foreach (glob($this->watchDir . DIRECTORY_SEPARATOR . '*') as $item) {
             if (is_file($item)) {
@@ -15,6 +23,15 @@ afterEach(function () {
             }
         }
         rmdir($this->watchDir);
+    }
+
+    if (is_dir($this->mountRoot)) {
+        foreach (glob($this->mountRoot . DIRECTORY_SEPARATOR . '*') as $item) {
+            if (is_file($item)) {
+                unlink($item);
+            }
+        }
+        rmdir($this->mountRoot);
     }
 });
 
@@ -58,4 +75,18 @@ test('it watches directory changes with callback', function () {
     pcntl_waitpid($pid, $status);
 
     expect($events)->not->toBeEmpty();
+});
+
+test('it supports snapshots for mounted paths', function () {
+    FlysystemHelper::write('watch://a.txt', 'a');
+    $snapshotA = FileWatcher::snapshot('watch://');
+
+    usleep(150000);
+    FlysystemHelper::write('watch://a.txt', 'a-modified');
+    FlysystemHelper::write('watch://b.txt', 'b');
+    $snapshotB = FileWatcher::snapshot('watch://');
+    $diff = FileWatcher::diff($snapshotA, $snapshotB);
+
+    expect($diff['created'])->toContain('watch://b.txt')
+        ->and($diff['modified'])->toContain('watch://a.txt');
 });

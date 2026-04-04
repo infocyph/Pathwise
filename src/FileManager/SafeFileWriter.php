@@ -7,6 +7,7 @@ use DateTime;
 use DateTimeInterface;
 use Exception;
 use Infocyph\Pathwise\Exceptions\FileAccessException;
+use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use JsonSerializable;
 use SimpleXMLElement;
@@ -29,8 +30,11 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
 {
     private ?string $atomicTempFilePath = null;
     private bool $atomicWriteEnabled = false;
+    private bool $cleanupLocalWorkingPath = false;
     private ?SplFileObject $file = null;
     private bool $isLocked = false;
+    private ?string $localWorkingPath = null;
+    private bool $syncBackOnClose = false;
     private int $writeCount = 0;
     private array $writeTypesCount = [];
 
@@ -56,6 +60,10 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
             $this->close();
         } catch (\Throwable) {
             // Never throw from destructors.
+        } finally {
+            if ($this->cleanupLocalWorkingPath && is_string($this->localWorkingPath) && is_file($this->localWorkingPath)) {
+                @unlink($this->localWorkingPath);
+            }
         }
     }
 
@@ -126,6 +134,7 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
         $this->unlock();
         $this->file = null;
         $this->finalizeAtomicWrite();
+        $this->syncWorkingCopyBack();
     }
 
     /**
@@ -168,7 +177,16 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      */
     public function getCreationDate(): DateTime
     {
-        return new DateTime('@' . filectime($this->getActiveOrFinalPath()));
+        $target = $this->getActiveOrFinalPath();
+        if (is_file($target)) {
+            return new DateTime('@' . filectime($target));
+        }
+
+        if (FlysystemHelper::fileExists($this->filename)) {
+            return new DateTime('@' . FlysystemHelper::lastModified($this->filename));
+        }
+
+        return new DateTime();
     }
 
     /**
@@ -178,7 +196,16 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      */
     public function getModificationDate(): DateTime
     {
-        return new DateTime('@' . filemtime($this->getActiveOrFinalPath()));
+        $target = $this->getActiveOrFinalPath();
+        if (is_file($target)) {
+            return new DateTime('@' . filemtime($target));
+        }
+
+        if (FlysystemHelper::fileExists($this->filename)) {
+            return new DateTime('@' . FlysystemHelper::lastModified($this->filename));
+        }
+
+        return new DateTime();
     }
 
     /**
@@ -189,8 +216,17 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
     public function getSize(): int
     {
         $target = $this->getActiveOrFinalPath();
-        $size = filesize($target);
-        return is_int($size) ? $size : 0;
+        if (is_file($target)) {
+            $size = filesize($target);
+
+            return is_int($size) ? $size : 0;
+        }
+
+        if (FlysystemHelper::fileExists($this->filename)) {
+            return FlysystemHelper::size($this->filename);
+        }
+
+        return 0;
     }
 
     /**
@@ -280,7 +316,13 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
         }
 
         $path = $this->getActiveOrFinalPath();
-        $fileHash = hash_file($algorithm, $path);
+        if (is_file($path)) {
+            $fileHash = hash_file($algorithm, $path);
+
+            return is_string($fileHash) && hash_equals($expectedChecksum, $fileHash);
+        }
+
+        $fileHash = FlysystemHelper::checksum($this->filename, $algorithm);
 
         return is_string($fileHash) && hash_equals($expectedChecksum, $fileHash);
     }
@@ -303,14 +345,28 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
 
         if ($this->atomicWriteEnabled) {
             $this->close();
+        } elseif ($this->isRemoteTarget()) {
+            $this->syncWorkingCopyBack();
         }
 
-        $fileHash = hash_file($algorithm, $this->filename);
+        $fileHash = $this->isRemoteTarget()
+            ? FlysystemHelper::checksum($this->filename, $algorithm)
+            : hash_file($algorithm, $this->filename);
         if (!is_string($fileHash)) {
             return false;
         }
 
         return hash_equals(hash($algorithm, $content), $fileHash);
+    }
+
+    private function createLocalTempFile(string $prefix): string
+    {
+        $tempFile = tempnam(sys_get_temp_dir(), $prefix);
+        if ($tempFile === false) {
+            throw new FileAccessException("Unable to create temporary file for {$this->filename}");
+        }
+
+        return PathHelper::normalize($tempFile);
     }
 
     private function finalizeAtomicWrite(): void
@@ -321,6 +377,20 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
 
         if (!is_file($this->atomicTempFilePath)) {
             $this->atomicTempFilePath = null;
+            return;
+        }
+
+        if ($this->isRemoteTarget()) {
+            $this->localWorkingPath ??= $this->createLocalTempFile('pathwise_writer_sync_');
+            if (!@rename($this->atomicTempFilePath, $this->localWorkingPath)) {
+                if (!@copy($this->atomicTempFilePath, $this->localWorkingPath)) {
+                    throw new FileAccessException("Failed to finalize atomic write for {$this->filename}");
+                }
+                @unlink($this->atomicTempFilePath);
+            }
+            $this->syncBackOnClose = true;
+            $this->atomicTempFilePath = null;
+
             return;
         }
 
@@ -340,6 +410,10 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
             return $this->atomicTempFilePath;
         }
 
+        if ($this->localWorkingPath !== null && is_file($this->localWorkingPath)) {
+            return $this->localWorkingPath;
+        }
+
         return $this->filename;
     }
 
@@ -356,16 +430,51 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
     {
         if (!$this->file) {
             $targetFile = $this->resolveTargetFilePath();
-            if (!is_writable(dirname($targetFile)) && !file_exists($targetFile)) {
+            if (!$this->isRemoteTarget() && !is_writable(dirname($targetFile)) && !file_exists($targetFile)) {
                 throw new FileAccessException("Cannot write to directory: " . dirname($targetFile));
             }
             $this->file = new SplFileObject($targetFile, $mode);
         }
     }
 
+    private function isRemoteTarget(): bool
+    {
+        return PathHelper::hasScheme($this->filename) || (FlysystemHelper::hasDefaultFilesystem() && !PathHelper::isAbsolute($this->filename));
+    }
+
     private function resolveTargetFilePath(): string
     {
         if (!$this->atomicWriteEnabled) {
+            if ($this->isRemoteTarget()) {
+                if ($this->localWorkingPath !== null) {
+                    return $this->localWorkingPath;
+                }
+
+                $this->localWorkingPath = $this->createLocalTempFile('pathwise_writer_');
+                $this->cleanupLocalWorkingPath = true;
+                $this->syncBackOnClose = true;
+
+                if ($this->append && FlysystemHelper::fileExists($this->filename)) {
+                    $source = FlysystemHelper::readStream($this->filename);
+                    $target = fopen($this->localWorkingPath, 'wb');
+                    if (!is_resource($source) || !is_resource($target)) {
+                        if (is_resource($source)) {
+                            fclose($source);
+                        }
+                        if (is_resource($target)) {
+                            fclose($target);
+                        }
+                        throw new FileAccessException("Cannot write to file: {$this->filename}");
+                    }
+
+                    stream_copy_to_stream($source, $target);
+                    fclose($source);
+                    fclose($target);
+                }
+
+                return $this->localWorkingPath;
+            }
+
             return $this->filename;
         }
 
@@ -373,16 +482,38 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
             return $this->atomicTempFilePath;
         }
 
-        $directory = dirname($this->filename);
-        $prefix = basename($this->filename) . '.tmp_';
-        $tempFile = tempnam($directory, $prefix);
-        if ($tempFile === false) {
-            throw new FileAccessException("Unable to create temporary file for atomic write: {$this->filename}");
+        if ($this->isRemoteTarget()) {
+            $tempFile = $this->createLocalTempFile('pathwise_writer_atomic_');
+        } else {
+            $directory = dirname($this->filename);
+            $prefix = basename($this->filename) . '.tmp_';
+            $tempFile = tempnam($directory, $prefix);
+            if ($tempFile === false) {
+                throw new FileAccessException("Unable to create temporary file for atomic write: {$this->filename}");
+            }
         }
 
         $this->atomicTempFilePath = PathHelper::normalize($tempFile);
 
         return $this->atomicTempFilePath;
+    }
+
+    private function syncWorkingCopyBack(): void
+    {
+        if (!$this->syncBackOnClose || !is_string($this->localWorkingPath) || !is_file($this->localWorkingPath)) {
+            return;
+        }
+
+        $stream = fopen($this->localWorkingPath, 'rb');
+        if (!is_resource($stream)) {
+            throw new FileAccessException("Cannot write to file: {$this->filename}");
+        }
+
+        try {
+            FlysystemHelper::writeStream($this->filename, $stream);
+        } finally {
+            fclose($stream);
+        }
     }
 
     /**

@@ -2,6 +2,9 @@
 
 use Infocyph\Pathwise\Exceptions\CompressionException;
 use Infocyph\Pathwise\FileManager\FileCompression;
+use Infocyph\Pathwise\Utils\FlysystemHelper;
+use League\Flysystem\Filesystem;
+use League\Flysystem\Local\LocalFilesystemAdapter;
 
 beforeEach(function () {
     $this->tempDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('test_dir_', true);
@@ -13,9 +16,14 @@ beforeEach(function () {
     file_put_contents($this->file2, 'This is the second test file.');
 
     $this->zipFilePath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('test_zip_', true) . '.zip';
+    $this->mountRoot = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('compress_mount_', true);
+    mkdir($this->mountRoot, 0755, true);
+    FlysystemHelper::mount('zipmnt', new Filesystem(new LocalFilesystemAdapter($this->mountRoot)));
 });
 
 afterEach(function () {
+    FlysystemHelper::reset();
+
     foreach (array_diff(scandir($this->tempDir), ['.', '..']) as $item) {
         $path = $this->tempDir . DIRECTORY_SEPARATOR . $item;
         if (is_file($path)) {
@@ -25,6 +33,17 @@ afterEach(function () {
     rmdir($this->tempDir);
     if (file_exists($this->zipFilePath)) {
         unlink($this->zipFilePath);
+    }
+
+    if (is_dir($this->mountRoot)) {
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($this->mountRoot, FilesystemIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::CHILD_FIRST,
+        );
+        foreach ($iterator as $item) {
+            $item->isDir() ? rmdir($item->getPathname()) : unlink($item->getPathname());
+        }
+        rmdir($this->mountRoot);
     }
 });
 
@@ -195,4 +214,20 @@ test('it respects ignore file patterns from source root', function () {
     $compressor->compress($this->tempDir)->save();
 
     expect($compressor->listFiles())->not->toContain('ignored.tmp');
+});
+
+test('it supports mounted zip and source paths', function () {
+    FlysystemHelper::createDirectory('zipmnt://src');
+    FlysystemHelper::write('zipmnt://src/a.txt', 'A');
+    FlysystemHelper::createDirectory('zipmnt://src/nested');
+    FlysystemHelper::write('zipmnt://src/nested/b.txt', 'B');
+
+    $compressor = new FileCompression('zipmnt://archives/mounted.zip', true);
+    $compressor->compress('zipmnt://src')->save();
+
+    $extractor = new FileCompression('zipmnt://archives/mounted.zip');
+    $extractor->decompress('zipmnt://dst');
+
+    expect(FlysystemHelper::read('zipmnt://dst/a.txt'))->toBe('A')
+        ->and(FlysystemHelper::read('zipmnt://dst/nested/b.txt'))->toBe('B');
 });

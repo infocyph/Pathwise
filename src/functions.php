@@ -1,5 +1,9 @@
 <?php
 
+use Infocyph\Pathwise\Utils\FlysystemHelper;
+use Infocyph\Pathwise\Utils\PathHelper;
+use League\Flysystem\FileAttributes;
+
 if (!function_exists('getHumanReadableFileSize')) {
     /**
      * Format the given size (in bytes) into a human-readable string.
@@ -29,10 +33,13 @@ if (!function_exists('isDirectoryEmpty')) {
      */
     function isDirectoryEmpty(string $directoryPath): bool
     {
-        if (!is_dir($directoryPath)) {
+        $isLocalDirectory = !PathHelper::hasScheme($directoryPath) && is_dir($directoryPath);
+        if (!$isLocalDirectory && !FlysystemHelper::directoryExists($directoryPath)) {
             throw new InvalidArgumentException("The provided path is not a directory.");
         }
-        return count(scandir($directoryPath)) === 2; // '.' and '..'
+        $contents = FlysystemHelper::listContents($directoryPath, false);
+
+        return count($contents) === 0;
     }
 }
 
@@ -45,15 +52,14 @@ if (!function_exists('deleteDirectory')) {
      */
     function deleteDirectory(string $directoryPath): bool
     {
-        if (!is_dir($directoryPath)) {
+        $isLocalDirectory = !PathHelper::hasScheme($directoryPath) && is_dir($directoryPath);
+        if (!$isLocalDirectory && !FlysystemHelper::directoryExists($directoryPath)) {
             return false;
         }
-        $items = array_diff(scandir($directoryPath), ['.', '..']);
-        foreach ($items as $item) {
-            $itemPath = $directoryPath . DIRECTORY_SEPARATOR . $item;
-            is_dir($itemPath) ? deleteDirectory($itemPath) : unlink($itemPath);
-        }
-        return rmdir($directoryPath);
+
+        FlysystemHelper::deleteDirectory($directoryPath);
+
+        return !FlysystemHelper::directoryExists($directoryPath);
     }
 }
 
@@ -66,13 +72,26 @@ if (!function_exists('getDirectorySize')) {
      */
     function getDirectorySize(string $directoryPath): int
     {
-        if (!is_dir($directoryPath)) {
+        $isLocalDirectory = !PathHelper::hasScheme($directoryPath) && is_dir($directoryPath);
+        if (!$isLocalDirectory && !FlysystemHelper::directoryExists($directoryPath)) {
             throw new InvalidArgumentException("The provided path is not a directory.");
         }
+
         $size = 0;
-        foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($directoryPath, FilesystemIterator::SKIP_DOTS)) as $file) {
-            $size += $file->getSize();
+        foreach (FlysystemHelper::listContentsListing($directoryPath, true) as $item) {
+            if (!$item->isFile()) {
+                continue;
+            }
+
+            if ($item instanceof FileAttributes && is_int($item->fileSize())) {
+                $size += $item->fileSize();
+                continue;
+            }
+
+            $extra = $item->extraMetadata();
+            $size += (int) ($extra['file_size'] ?? $extra['filesize'] ?? 0);
         }
+
         return $size;
     }
 }
@@ -87,7 +106,17 @@ if (!function_exists('createDirectory')) {
      */
     function createDirectory(string $directoryPath, int $permissions = 0755): bool
     {
-        return is_dir($directoryPath) || mkdir($directoryPath, $permissions, true);
+        $isLocalDirectory = !PathHelper::hasScheme($directoryPath) && is_dir($directoryPath);
+        if ($isLocalDirectory || FlysystemHelper::directoryExists($directoryPath)) {
+            return true;
+        }
+
+        FlysystemHelper::createDirectory($directoryPath);
+        if (!PathHelper::hasScheme($directoryPath)) {
+            @chmod($directoryPath, $permissions);
+        }
+
+        return true;
     }
 }
 
@@ -100,10 +129,19 @@ if (!function_exists('listFiles')) {
      */
     function listFiles(string $directoryPath): array
     {
-        if (!is_dir($directoryPath)) {
+        $isLocalDirectory = !PathHelper::hasScheme($directoryPath) && is_dir($directoryPath);
+        if (!$isLocalDirectory && !FlysystemHelper::directoryExists($directoryPath)) {
             throw new InvalidArgumentException("The provided path is not a directory.");
         }
-        $files = array_filter(scandir($directoryPath), fn ($item) => is_file($directoryPath . DIRECTORY_SEPARATOR . $item));
+        $items = FlysystemHelper::listContents($directoryPath, false);
+        $files = [];
+
+        foreach ($items as $item) {
+            if (($item['type'] ?? null) === 'file') {
+                $files[] = basename((string) ($item['path'] ?? ''));
+            }
+        }
+
         return array_values($files);
     }
 }
@@ -118,20 +156,13 @@ if (!function_exists('copyDirectory')) {
      */
     function copyDirectory(string $source, string $destination): bool
     {
-        if (!is_dir($source)) {
+        $isLocalSource = !PathHelper::hasScheme($source) && is_dir($source);
+        if (!$isLocalSource && !FlysystemHelper::directoryExists($source)) {
             return false;
         }
-        if (!is_dir($destination)) {
-            mkdir($destination, 0755, true);
-        }
-        foreach (scandir($source) as $item) {
-            if ($item === '.' || $item === '..') {
-                continue;
-            }
-            $src = $source . DIRECTORY_SEPARATOR . $item;
-            $dest = $destination . DIRECTORY_SEPARATOR . $item;
-            is_dir($src) ? copyDirectory($src, $dest) : copy($src, $dest);
-        }
+
+        FlysystemHelper::copyDirectory($source, $destination);
+
         return true;
     }
 }

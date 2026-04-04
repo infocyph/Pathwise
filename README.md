@@ -8,28 +8,29 @@
 ![Packagist PHP Version Support](https://img.shields.io/packagist/php-v/infocyph/pathwise)
 ![GitHub code size in bytes](https://img.shields.io/github/languages/code-size/infocyph/pathwise)
 
-Pathwise is a robust PHP library designed for streamlined file and directory management. With features like safe reading/writing, metadata extraction, path utilities, compression, and permission management, it ensures a developer-friendly experience while handling complex file operations.
+Pathwise is a robust PHP library designed as **Flysystem + more** for streamlined file and directory management. It combines Flysystem-backed storage operations with higher-level workflows like safe reading/writing, metadata extraction, compression, upload pipelines, policy enforcement, and observability.
 
 ## **Table of Contents**
 1. [Introduction](#pathwise-file-management-made-simple)
 2. [Prerequisites](#prerequisites)
 3. [Installation](#installation)
 4. [Features Overview](#features-overview)
-5. [FileManager](#filemanager)
+5. [Documentation Map](#documentation-map)
+6. [FileManager](#filemanager)
     - [SafeFileReader](#safefilereader)
     - [SafeFileWriter](#safefilewriter)
     - [FileOperations](#fileoperations)
     - [FileCompression](#filecompression)
-6. [DirectoryManager](#directorymanager)
+7. [DirectoryManager](#directorymanager)
     - [DirectoryOperations](#directoryoperations)
-7. [Utils](#utils)
+8. [Utils](#utils)
     - [PathHelper](#pathhelper)
     - [PermissionsHelper](#permissionshelper)
     - [MetadataHelper](#metadatahelper)
-8. [Handy Functions](#handy-functions)
+9. [Handy Functions](#handy-functions)
     - [File and Directory Utilities](#file-and-directory-utilities)
-9. [Support](#support)
-10. [License](#license)
+10. [Support](#support)
+11. [License](#license)
 
 ## **Prerequisites**
 - Language: PHP 8.4/+
@@ -45,14 +46,46 @@ composer require infocyph/pathwise
 
 Requirements:
 - PHP 8.4 or higher
+- `league/flysystem` 3.x
+- `ext-fileinfo`
 - Optional Extensions:
     - `ext-zip`: Required for compression features.
+    - `ext-pcntl`: Required for long-running watch loops.
     - `ext-posix`: Required for permission handling.
     - `ext-xmlreader` and `ext-simplexml`: Required for XML parsing.
 
 ---
 
 ## **Features Overview**
+
+- Flysystem-first filesystem operations across core modules.
+- Mount support with scheme paths (`name://path`) and default filesystem support for relative paths.
+- Advanced file APIs: checksum verification, visibility controls, URL passthrough (`publicUrl`, `temporaryUrl`).
+- Directory automation: sync with diff report, recursive copy/move/delete, mounted-path ZIP/unzip bridging.
+- Upload pipelines: chunked/resumable uploads, validation profiles (image/video/document), malware-scan hook.
+- Compression workflows: include/exclude glob patterns, ignore files, progress callbacks, hooks, optional native acceleration.
+- Operational tooling: `AuditTrail`, `FileJobQueue`, `FileWatcher`, `RetentionManager`, and policy engine support.
+
+## **Documentation Map**
+
+If you are new to Pathwise, read in this order:
+
+1. [Overview](docs/overview.rst)
+2. [Capabilities](docs/capabilities.rst)
+3. [Quickstart](docs/quickstart.rst)
+4. [Recipes](docs/recipes.rst)
+
+Then use module pages for details:
+
+- [File Manager](docs/file-manager.rst)
+- [Directory Manager](docs/directory-manager.rst)
+- [Upload Processing](docs/upload-processing.rst)
+- [Security](docs/security.rst)
+- [Queue](docs/queue.rst)
+- [Observability](docs/observability.rst)
+- [Indexing](docs/indexing.rst)
+- [Retention](docs/retention.rst)
+- [Utilities](docs/utilities.rst)
 
 ## **FileManager**
 

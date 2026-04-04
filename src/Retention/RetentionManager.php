@@ -3,6 +3,7 @@
 namespace Infocyph\Pathwise\Retention;
 
 use FilesystemIterator;
+use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
@@ -21,8 +22,57 @@ final class RetentionManager
         string $sortBy = 'mtime'
     ): array {
         $directory = PathHelper::normalize($directory);
-        if (!is_dir($directory)) {
+        if (!FlysystemHelper::directoryExists($directory)) {
             return ['deleted' => [], 'kept' => []];
+        }
+
+        $files = self::collectFiles($directory);
+        usort($files, function (array $a, array $b) use ($sortBy): int {
+            return ($b[$sortBy] ?? 0) <=> ($a[$sortBy] ?? 0);
+        });
+
+        $kept = [];
+        $deleted = [];
+        $cutoff = $maxAgeDays !== null ? (time() - ($maxAgeDays * 86400)) : null;
+
+        foreach ($files as $index => $file) {
+            $shouldDeleteByCount = $keepLast !== null && $index >= $keepLast;
+            $shouldDeleteByAge = $cutoff !== null && ($file[$sortBy] ?? 0) < $cutoff;
+            $path = (string) $file['path'];
+
+            if (($shouldDeleteByCount || $shouldDeleteByAge) && FlysystemHelper::fileExists($path)) {
+                FlysystemHelper::delete($path);
+                $deleted[] = $path;
+            } else {
+                $kept[] = $path;
+            }
+        }
+
+        return [
+            'deleted' => $deleted,
+            'kept' => $kept,
+        ];
+    }
+
+    /**
+     * @return array<int, array{path: string, mtime: int, ctime: int}>
+     */
+    private static function collectFiles(string $directory): array
+    {
+        if (PathHelper::hasScheme($directory) || (FlysystemHelper::hasDefaultFilesystem() && !PathHelper::isAbsolute($directory))) {
+            return self::collectFilesViaFlysystem($directory);
+        }
+
+        return self::collectFilesLocal($directory);
+    }
+
+    /**
+     * @return array<int, array{path: string, mtime: int, ctime: int}>
+     */
+    private static function collectFilesLocal(string $directory): array
+    {
+        if (!is_dir($directory)) {
+            return [];
         }
 
         $files = [];
@@ -35,37 +85,53 @@ final class RetentionManager
             if ($item->isDir()) {
                 continue;
             }
+
             $files[] = [
                 'path' => $item->getPathname(),
-                'mtime' => $item->getMTime(),
-                'ctime' => $item->getCTime(),
+                'mtime' => (int) $item->getMTime(),
+                'ctime' => (int) $item->getCTime(),
             ];
         }
 
-        usort($files, function (array $a, array $b) use ($sortBy): int {
-            return $b[$sortBy] <=> $a[$sortBy];
-        });
+        return $files;
+    }
 
-        $kept = [];
-        $deleted = [];
-        $cutoff = $maxAgeDays !== null ? (time() - ($maxAgeDays * 86400)) : null;
+    /**
+     * @return array<int, array{path: string, mtime: int, ctime: int}>
+     */
+    private static function collectFilesViaFlysystem(string $directory): array
+    {
+        $files = [];
+        [, $baseLocation] = FlysystemHelper::resolveDirectory($directory);
+        $base = trim(str_replace('\\', '/', $baseLocation), '/');
 
-        foreach ($files as $index => $file) {
-            $shouldDeleteByCount = $keepLast !== null && $index >= $keepLast;
-            $shouldDeleteByAge = $cutoff !== null && $file[$sortBy] < $cutoff;
-            $path = $file['path'];
-
-            if (($shouldDeleteByCount || $shouldDeleteByAge) && is_file($path)) {
-                unlink($path);
-                $deleted[] = $path;
-            } else {
-                $kept[] = $path;
+        foreach (FlysystemHelper::listContents($directory, true) as $item) {
+            if (($item['type'] ?? null) !== 'file') {
+                continue;
             }
+
+            $itemPath = trim((string) ($item['path'] ?? ''), '/');
+            if ($itemPath === '') {
+                continue;
+            }
+
+            $relative = $base !== '' && str_starts_with($itemPath, $base . '/')
+                ? substr($itemPath, strlen($base) + 1)
+                : ($itemPath === $base ? '' : $itemPath);
+            if ($relative === '') {
+                continue;
+            }
+
+            $resolved = PathHelper::join($directory, $relative);
+            $mtime = (int) ($item['last_modified'] ?? 0);
+
+            $files[] = [
+                'path' => $resolved,
+                'mtime' => $mtime,
+                'ctime' => $mtime,
+            ];
         }
 
-        return [
-            'deleted' => $deleted,
-            'kept' => $kept,
-        ];
+        return $files;
     }
 }

@@ -2,6 +2,7 @@
 
 namespace Infocyph\Pathwise\Queue;
 
+use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 
 final class FileJobQueue
@@ -9,11 +10,11 @@ final class FileJobQueue
     public function __construct(private readonly string $queueFilePath)
     {
         $directory = dirname($this->queueFilePath);
-        if (!is_dir($directory)) {
-            mkdir($directory, 0755, true);
+        if (!FlysystemHelper::directoryExists($directory)) {
+            FlysystemHelper::createDirectory($directory);
         }
-        if (!file_exists($this->queueFilePath)) {
-            file_put_contents($this->queueFilePath, json_encode(['pending' => [], 'processing' => [], 'failed' => []], JSON_PRETTY_PRINT));
+        if (!FlysystemHelper::fileExists($this->queueFilePath)) {
+            FlysystemHelper::write($this->queueFilePath, (string) json_encode(['pending' => [], 'processing' => [], 'failed' => []], JSON_PRETTY_PRINT));
         }
     }
 
@@ -97,8 +98,12 @@ final class FileJobQueue
 
     private function readQueueData(): array
     {
-        $content = file_get_contents($this->queueFilePath);
-        if (!is_string($content)) {
+        if (!FlysystemHelper::fileExists($this->queueFilePath)) {
+            return ['pending' => [], 'processing' => [], 'failed' => []];
+        }
+
+        $content = FlysystemHelper::read($this->queueFilePath);
+        if ($content === '') {
             return ['pending' => [], 'processing' => [], 'failed' => []];
         }
 
@@ -116,6 +121,6 @@ final class FileJobQueue
 
     private function writeQueueData(array $data): void
     {
-        file_put_contents($this->queueFilePath, json_encode($data, JSON_PRETTY_PRINT));
+        FlysystemHelper::write($this->queueFilePath, (string) json_encode($data, JSON_PRETTY_PRINT));
     }
 }

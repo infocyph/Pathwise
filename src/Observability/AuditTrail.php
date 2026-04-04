@@ -3,6 +3,7 @@
 namespace Infocyph\Pathwise\Observability;
 
 use DateTimeInterface;
+use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 
 final class AuditTrail
@@ -10,8 +11,8 @@ final class AuditTrail
     public function __construct(private readonly string $logFilePath)
     {
         $directory = dirname($this->logFilePath);
-        if (!is_dir($directory)) {
-            mkdir($directory, 0755, true);
+        if (!FlysystemHelper::directoryExists($directory)) {
+            FlysystemHelper::createDirectory($directory);
         }
     }
 
@@ -28,6 +29,10 @@ final class AuditTrail
             'context' => $context,
         ];
 
-        file_put_contents($this->logFilePath, json_encode($record) . PHP_EOL, FILE_APPEND);
+        $existing = FlysystemHelper::fileExists($this->logFilePath)
+            ? FlysystemHelper::read($this->logFilePath)
+            : '';
+
+        FlysystemHelper::write($this->logFilePath, $existing . json_encode($record) . PHP_EOL);
     }
 }
