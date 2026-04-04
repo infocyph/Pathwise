@@ -1,68 +1,73 @@
 {
-  "name": "infocyph/pathwise",
-  "description": "File management made simple.",
-  "type": "library",
-  "license": "MIT",
-  "authors": [
-    {
-      "name": "abmmhasan",
-      "email": "abmmhasan@gmail.com"
-    }
-  ],
-  "autoload": {
-    "files": [
-      "src/functions.php"
+    "name": "infocyph/pathwise",
+    "description": "File management made simple.",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "abmmhasan",
+            "email": "abmmhasan@gmail.com"
+        }
     ],
-    "psr-4": {
-      "Infocyph\\Pathwise\\": "src/"
+    "autoload": {
+        "files": [
+            "src/functions.php"
+        ],
+        "psr-4": {
+            "Infocyph\\Pathwise\\": "src/"
+        }
+    },
+    "require": {
+        "php": ">=8.4"
+    },
+    "suggest": {
+        "ext-zip": "required if you want to use compression.",
+        "ext-posix": "required if you want to use permissions.",
+        "ext-xmlreader": "required if you want to use XML parsing.",
+        "ext-simplexml": "required if you want to use XML parsing."
+    },
+    "require-dev": {
+        "captainhook/captainhook": "^5.29.2",
+        "laravel/pint": "^1.29",
+        "pestphp/pest": "^4.4.3",
+        "pestphp/pest-plugin-drift": "^4.1",
+        "rector/rector": "^2.3.9",
+        "symfony/var-dumper": "^7.3 || ^8.0.8",
+        "vimeo/psalm": "^6.16.1"
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "config": {
+        "sort-packages": true,
+        "optimize-autoloader": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "scripts": {
+        "test:code": "@php vendor/bin/pest --parallel --processes=10",
+        "test:security": "@php vendor/bin/psalm --config=psalm.xml --security-analysis --show-info=false --no-progress --threads=1",
+        "test:refactor": "@php vendor/bin/rector process --dry-run",
+        "test:lint": "@php vendor/bin/pint --test",
+        "test:hook": [
+            "captainhook hook:post-checkout",
+            "captainhook hook:pre-commit",
+            "captainhook hook:post-commit",
+            "captainhook hook:post-merge",
+            "captainhook hook:post-rewrite",
+            "captainhook hook:pre-push"
+        ],
+        "tests": [
+            "@test:code",
+            "@test:lint",
+            "@test:refactor",
+            "@test:security"
+        ],
+        "git:hook": "captainhook install --only-enabled -nf",
+        "test": "@php vendor/bin/pest",
+        "refactor": "@php vendor/bin/rector process",
+        "lint": "@php vendor/bin/pint",
+        "security:scan": "@test:security",
+        "post-autoload-dump": "captainhook install --only-enabled -nf"
     }
-  },
-  "require": {
-    "php": ">=8.2"
-  },
-  "suggest": {
-    "ext-zip": "required if you want to use compression.",
-    "ext-posix": "required if you want to use permissions.",
-    "ext-xmlreader": "required if you want to use XML parsing.",
-    "ext-simplexml": "required if you want to use XML parsing."
-  },
-  "require-dev": {
-    "captainhook/captainhook": "^5.23",
-    "laravel/pint": "^1.18",
-    "pestphp/pest": "^3.5",
-    "rector/rector": "^1.2",
-    "symfony/var-dumper": "^7.1"
-  },
-  "minimum-stability": "stable",
-  "prefer-stable": true,
-  "config": {
-    "sort-packages": true,
-    "optimize-autoloader": true,
-    "allow-plugins": {
-      "pestphp/pest-plugin": true
-    }
-  },
-  "scripts": {
-    "test:code": "pest --parallel --processes=10",
-    "test:refactor": "rector process --dry-run",
-    "test:lint": "pint --test",
-    "test:hook": [
-      "captainhook hook:post-checkout",
-      "captainhook hook:pre-commit",
-      "captainhook hook:post-commit",
-      "captainhook hook:post-merge",
-      "captainhook hook:post-rewrite",
-      "captainhook hook:pre-push"
-    ],
-    "tests": [
-      "@test:code",
-      "@test:lint",
-      "@test:refactor"
-    ],
-    "git:hook": "captainhook install --only-enabled -nf",
-    "test": "pest",
-    "refactor": "rector process",
-    "lint": "pint",
-    "post-autoload-dump": "@git:hook"
-  }
 }
