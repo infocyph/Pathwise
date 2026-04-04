@@ -229,7 +229,7 @@ trait FsConcern
 
         return array_all(
             array_merge($this->excludePatterns, $this->ignorePatterns),
-            fn($pattern) => !fnmatch($pattern, $relativePath)
+            fn ($pattern) => !fnmatch($pattern, $relativePath)
         );
     }
 
