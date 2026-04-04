@@ -56,12 +56,25 @@ final class NativeOperationsAdapter
         }
 
         if (NativeCommandRunner::commandExists('zip')) {
-            $command = sprintf(
-                'zip -r %s %s',
-                escapeshellarg($zipPath),
-                escapeshellarg(basename($source)),
-            );
+            $zipArg = escapeshellarg($zipPath);
             $cwd = dirname($source);
+
+            if (is_dir($source)) {
+                $cwd = $source;
+                $command = sprintf('zip -r %s .', $zipArg);
+
+                $zipParent = PathHelper::normalize(dirname($zipPath));
+                if ($zipParent === PathHelper::normalize($source)) {
+                    $command .= ' -x ' . escapeshellarg(basename($zipPath));
+                }
+            } else {
+                $command = sprintf(
+                    'zip -r %s %s',
+                    $zipArg,
+                    escapeshellarg(basename($source)),
+                );
+            }
+
             $wrapped = sprintf('cd %s && %s', escapeshellarg($cwd), $command);
             $result = NativeCommandRunner::run($wrapped);
 

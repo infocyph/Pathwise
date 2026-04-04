@@ -11,7 +11,6 @@ queue/audit tooling, and operational helpers.
 
    overview
    installation
-   quality-gates
    capabilities
    quickstart
    recipes
