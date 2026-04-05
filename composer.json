@@ -65,6 +65,7 @@
         "test": "@php vendor/bin/pest",
         "refactor": "@php vendor/bin/rector process",
         "lint": "@php vendor/bin/pint",
+        "security:scan": "@test:security",
         "post-autoload-dump": "@php vendor/bin/captainhook install --only-enabled -nf"
     }
 }
