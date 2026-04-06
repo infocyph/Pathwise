@@ -50,8 +50,8 @@
     },
     "scripts": {
         "test:code": "@php vendor/bin/pest --parallel --processes=10",
-        "test:security": "@php vendor/bin/psalm --config=psalm.xml --security-analysis --show-info=false --no-progress --threads=1",
-        "test:static": "@php vendor/bin/phpstan analyse --configuration=phpstan.neon.dist --memory-limit=1G --no-progress",
+        "test:security": "@php -d error_reporting=24575 vendor/bin/psalm --config=psalm.xml --security-analysis --show-info=false --no-progress --threads=1",
+        "test:static": "@php -d error_reporting=24575 vendor/bin/phpstan analyse --configuration=phpstan.neon.dist --memory-limit=1G --no-progress",
         "test:refactor": "@php vendor/bin/rector process --dry-run",
         "test:lint": "@php vendor/bin/pint --test",
         "tests": [

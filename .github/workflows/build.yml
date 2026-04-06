@@ -56,15 +56,9 @@ jobs:
         run: |
           composer test:code
           composer test:lint
-          # Skip cognitive complexity gate on prefer-lowest to keep matrix runtime stable.
-          if [ "${{ matrix.dependency-version }}" != "prefer-lowest" ]; then
-            composer test:static
-          fi
+          composer test:static
           composer test:refactor
-          # Skip Psalm on prefer-lowest: older transitive amphp versions can trigger PHP 8.4+ deprecations at startup.
-          if [ "${{ matrix.dependency-version }}" != "prefer-lowest" ]; then
-            composer test:security
-          fi
+          composer test:security
 
   analyze:
     needs: prepare
