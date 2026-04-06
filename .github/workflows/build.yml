@@ -56,13 +56,13 @@ jobs:
         run: |
           composer test:code
           composer test:lint
+          composer test:refactor
           if [ "${{ matrix.dependency-version }}" != "prefer-lowest" ]; then
             composer test:static
           fi
           if [ "${{ matrix.dependency-version }}" != "prefer-lowest" ]; then
             composer test:security
           fi
-          composer test:security
 
   analyze:
     needs: prepare
