@@ -29,13 +29,13 @@ This quickstart shows the fastest way to understand what Pathwise can do.
 
 .. code-block:: php
 
+   use Infocyph\Pathwise\Storage\StorageFactory;
    use Infocyph\Pathwise\Utils\FlysystemHelper;
-   use League\Flysystem\Filesystem;
-   use League\Flysystem\Local\LocalFilesystemAdapter;
 
-   FlysystemHelper::mount('assets', new Filesystem(
-       new LocalFilesystemAdapter('/srv/storage/assets')
-   ));
+   StorageFactory::mount('assets', [
+       'driver' => 'local',
+       'root' => '/srv/storage/assets',
+   ]);
 
    FlysystemHelper::write('assets://reports/a.txt', "hello\n");
    $text = FlysystemHelper::read('assets://reports/a.txt');

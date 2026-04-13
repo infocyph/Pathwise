@@ -12,11 +12,13 @@ queue/audit tooling, and operational helpers.
    overview
    installation
    capabilities
+   storage-adapters
    quickstart
    recipes
    file-manager
    directory-manager
    upload-processing
+   download-processing
    security
    queue
    observability

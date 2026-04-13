@@ -27,7 +27,20 @@
         "ext-pcntl": "required if you want to use long-running watch loops.",
         "ext-posix": "required if you want to use permissions.",
         "ext-xmlreader": "required if you want to use XML parsing.",
-        "ext-simplexml": "required if you want to use XML parsing."
+        "ext-simplexml": "required if you want to use XML parsing.",
+        "league/flysystem-aws-s3-v3": "required for AWS S3 adapter support.",
+        "league/flysystem-async-aws-s3": "required for AsyncAWS S3 adapter support.",
+        "league/flysystem-azure-blob-storage": "required for Azure Blob Storage adapter support.",
+        "league/flysystem-google-cloud-storage": "required for Google Cloud Storage adapter support.",
+        "league/flysystem-gridfs": "required for MongoDB GridFS adapter support.",
+        "league/flysystem-sftp-v3": "required for SFTP (v3) adapter support.",
+        "league/flysystem-sftp-v2": "required for SFTP (v2) adapter support.",
+        "league/flysystem-ftp": "required for FTP adapter support.",
+        "league/flysystem-webdav": "required for WebDAV adapter support.",
+        "league/flysystem-ziparchive": "required for ZipArchive adapter support.",
+        "league/flysystem-memory": "required for in-memory adapter support.",
+        "league/flysystem-read-only": "required for read-only adapter wrapper support.",
+        "league/flysystem-path-prefixing": "required for path-prefixing adapter wrapper support."
     },
     "require-dev": {
         "captainhook/captainhook": "^5.29.2",

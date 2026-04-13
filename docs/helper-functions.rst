@@ -12,6 +12,9 @@ Available helpers (brief):
 * ``createDirectory(string $directoryPath, int $permissions = 0755): bool``
 * ``listFiles(string $directoryPath): array``
 * ``copyDirectory(string $source, string $destination): bool``
+* ``createFilesystem(array $config): FilesystemOperator``
+* ``mountStorage(string $name, array $config): FilesystemOperator``
+* ``mountStorages(array $mounts): void``
 
 Notes:
 
@@ -28,3 +31,12 @@ Example
 
    $size = getDirectorySize('/tmp/demo');
    $files = listFiles('/tmp/demo');
+
+Storage setup helper example:
+
+.. code-block:: php
+
+   mountStorage('assets', [
+       'driver' => 'local',
+       'root' => '/srv/storage/assets',
+   ]);

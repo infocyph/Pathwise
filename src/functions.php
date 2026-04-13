@@ -1,8 +1,10 @@
 <?php
 
+use Infocyph\Pathwise\Storage\StorageFactory;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use League\Flysystem\FileAttributes;
+use League\Flysystem\FilesystemOperator;
 
 if (!function_exists('getHumanReadableFileSize')) {
     /**
@@ -164,5 +166,47 @@ if (!function_exists('copyDirectory')) {
         FlysystemHelper::copyDirectory($source, $destination);
 
         return true;
+    }
+}
+
+if (!function_exists('createFilesystem')) {
+    /**
+     * Build a Flysystem filesystem from configuration.
+     *
+     * Supported inputs:
+     * - ['driver' => 'local', 'root' => '/path']
+     * - ['filesystem' => $filesystemOperator]
+     * - ['adapter' => $flysystemAdapter]
+     * - ['driver' => 'custom', ...] after StorageFactory::registerDriver()
+     *
+     * @param array<string, mixed> $config
+     */
+    function createFilesystem(array $config): FilesystemOperator
+    {
+        return StorageFactory::createFilesystem($config);
+    }
+}
+
+if (!function_exists('mountStorage')) {
+    /**
+     * Build and mount a filesystem under a scheme name.
+     *
+     * @param array<string, mixed> $config
+     */
+    function mountStorage(string $name, array $config): FilesystemOperator
+    {
+        return StorageFactory::mount($name, $config);
+    }
+}
+
+if (!function_exists('mountStorages')) {
+    /**
+     * Build and mount multiple filesystems.
+     *
+     * @param array<string, array<string, mixed>> $mounts
+     */
+    function mountStorages(array $mounts): void
+    {
+        StorageFactory::mountMany($mounts);
     }
 }

@@ -61,6 +61,22 @@ What you get:
 * Strict content checks (MIME-extension agreement and file signature checks).
 * Optional or required malware scan callback.
 
+Downloads (``Infocyph\Pathwise\StreamHandler``)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Class:
+
+* ``DownloadProcessor``
+
+What you get:
+
+* Secure download metadata generation for HTTP adapters.
+* Extension allowlist/blocklist controls.
+* Allowed-root restriction to prevent path breakout.
+* Hidden-file blocking and max-size limits.
+* Optional range request handling and partial-download metadata.
+* Stream copy into caller-provided output resources.
+
 Security and Operations
 ^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -83,6 +99,9 @@ Pathwise accepts:
 
 Mounting is done through ``FlysystemHelper::mount()``. Once mounted, most
 high-level modules can use the scheme path directly.
+
+For config-driven adapter bootstrap, use
+``Infocyph\Pathwise\Storage\StorageFactory`` (see ``storage-adapters``).
 
 Runtime and Extensions
 ----------------------

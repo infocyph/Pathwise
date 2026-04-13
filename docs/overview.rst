@@ -18,6 +18,7 @@ Main namespaces:
 * ``Infocyph\Pathwise\FileManager``
 * ``Infocyph\Pathwise\DirectoryManager``
 * ``Infocyph\Pathwise\StreamHandler``
+* ``Infocyph\Pathwise\Storage``
 * ``Infocyph\Pathwise\Security``
 * ``Infocyph\Pathwise\Queue``
 * ``Infocyph\Pathwise\Observability``
