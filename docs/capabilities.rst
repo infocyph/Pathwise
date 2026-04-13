@@ -56,7 +56,10 @@ What you get:
 * Standard upload handling and destination strategy.
 * Validation presets (image/video/document), MIME and size rules.
 * Chunked/resumable upload flow.
-* Optional malware scan callback.
+* Extension allowlist/blocklist controls.
+* Upload ID validation for chunk/session identifiers.
+* Strict content checks (MIME-extension agreement and file signature checks).
+* Optional or required malware scan callback.
 
 Security and Operations
 ^^^^^^^^^^^^^^^^^^^^^^^

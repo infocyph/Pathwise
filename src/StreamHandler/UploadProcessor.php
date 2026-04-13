@@ -37,13 +37,19 @@ class UploadProcessor
             'maxImageHeight' => 0,
         ],
     ];
+    private array $allowedExtensions = [];
     private array $allowedFileTypes = [];
+    private array $blockedExtensions = ['php', 'phtml', 'phar', 'exe', 'sh', 'bat', 'cmd', 'com'];
     private LoggerInterface $logger;
     private mixed $malwareScanner = null;
+    private int $maxChunkCount = 0;
+    private int $maxChunkSize = 0;
     private int $maxFileSize = 30720;
     private int $maxImageHeight = 0;
     private int $maxImageWidth = 0;
     private string $namingStrategy = 'hash';
+    private bool $requireMalwareScan = false;
+    private bool $strictContentTypeValidation = false;
     private ?string $tempDir = null;
 
     private string $uploadDir;
@@ -59,9 +65,11 @@ class UploadProcessor
             throw new UploadException('Upload directory is not set.');
         }
 
+        $this->validateUploadId($uploadId);
         [$manifest, $totalChunks, $received] = $this->resolveCompleteChunkState($uploadId);
         $originalFilename = (string) ($manifest['originalFilename'] ?? 'upload.bin');
         $extension = pathinfo($originalFilename, PATHINFO_EXTENSION);
+        $this->validateFileExtension($extension);
         $fileName = $this->generateFileName(null, $extension);
         $destination = $this->getUniqueDestination($fileName);
         $chunkDirectory = $this->getChunkDirectory($uploadId);
@@ -83,10 +91,16 @@ class UploadProcessor
             'useDateDirectories' => $this->useDateDirectories,
             'tempDir' => $this->tempDir ?? sys_get_temp_dir(),
             'allowedFileTypes' => $this->allowedFileTypes,
+            'allowedExtensions' => $this->allowedExtensions,
+            'blockedExtensions' => $this->blockedExtensions,
             'maxFileSize' => $this->maxFileSize,
+            'maxChunkCount' => $this->maxChunkCount,
+            'maxChunkSize' => $this->maxChunkSize,
             'namingStrategy' => $this->namingStrategy,
             'validationProfile' => $this->validationProfile,
             'hasMalwareScanner' => is_callable($this->malwareScanner),
+            'requireMalwareScan' => $this->requireMalwareScan,
+            'strictContentTypeValidation' => $this->strictContentTypeValidation,
         ];
     }
 
@@ -108,10 +122,7 @@ class UploadProcessor
         if (empty($this->uploadDir)) {
             throw new UploadException('Upload directory is not set.');
         }
-        if ($chunkIndex < 0 || $totalChunks < 1 || $chunkIndex >= $totalChunks) {
-            throw new UploadException('Invalid chunk metadata.');
-        }
-
+        $this->validateChunkUploadRequest($chunkFile, $uploadId, $chunkIndex, $totalChunks, $originalFilename);
         $this->validateFile($chunkFile);
 
         $chunkDirectory = $this->getChunkDirectory($uploadId);
@@ -155,15 +166,19 @@ class UploadProcessor
             }
 
             $this->validateFile($file);
-            $fileType = $this->getFileMimeType($file['tmp_name']);
+            $extension = pathinfo((string) ($file['name'] ?? ''), PATHINFO_EXTENSION);
+            $this->validateFileExtension($extension);
+
+            $fileType = $this->getFileMimeType((string) $file['tmp_name']);
             $this->validateFileType($fileType);
+            $this->validateContentTypeIntegrity((string) $file['tmp_name'], $fileType, $extension);
 
             if ($this->isImage($fileType)) {
                 $this->validateImageDimensions($file['tmp_name']);
             }
             $this->scanForMalware($file['tmp_name'], $fileType);
 
-            $fileName = $this->generateFileName($file['tmp_name'], pathinfo((string) $file['name'], PATHINFO_EXTENSION));
+            $fileName = $this->generateFileName($file['tmp_name'], $extension);
             $destination = $this->getUniqueDestination($fileName);
 
             if (!move_uploaded_file($file['tmp_name'], $destination)) {
@@ -212,6 +227,15 @@ class UploadProcessor
     }
 
     /**
+     * Configure chunk upload constraints.
+     */
+    public function setChunkLimits(int $maxChunkCount = 0, int $maxChunkSize = 0): void
+    {
+        $this->maxChunkCount = max(0, $maxChunkCount);
+        $this->maxChunkSize = max(0, $maxChunkSize);
+    }
+
+    /**
      * Configure directory and path settings.
      */
     public function setDirectorySettings(string $uploadDir, bool $useDateDirectories = false, ?string $tempDir = null): void
@@ -222,6 +246,20 @@ class UploadProcessor
             ? PathHelper::normalize($this->sanitizePath($tempDir))
             : sys_get_temp_dir();
         $this->ensureUploadDirectoryExists();
+    }
+
+    /**
+     * Configure extension allow/block policy.
+     *
+     * @param array<int, string> $allowedExtensions
+     * @param array<int, string> $blockedExtensions
+     */
+    public function setExtensionPolicy(array $allowedExtensions = [], array $blockedExtensions = []): void
+    {
+        $this->allowedExtensions = $this->normalizeExtensions($allowedExtensions);
+        $this->blockedExtensions = $blockedExtensions === []
+            ? ['php', 'phtml', 'phar', 'exe', 'sh', 'bat', 'cmd', 'com']
+            : $this->normalizeExtensions($blockedExtensions);
     }
 
     /**
@@ -257,6 +295,22 @@ class UploadProcessor
             throw new UploadException("Invalid naming strategy: $namingStrategy.");
         }
         $this->namingStrategy = $namingStrategy;
+    }
+
+    /**
+     * Require malware scanning before upload acceptance.
+     */
+    public function setRequireMalwareScan(bool $required = true): void
+    {
+        $this->requireMalwareScan = $required;
+    }
+
+    /**
+     * Enable strict content checks (MIME-extension agreement + magic signature).
+     */
+    public function setStrictContentTypeValidation(bool $enabled = true): void
+    {
+        $this->strictContentTypeValidation = $enabled;
     }
 
     /**
@@ -504,6 +558,29 @@ class UploadProcessor
         }
     }
 
+    private function normalizeExtension(string $extension): string
+    {
+        return strtolower(ltrim(trim($extension), '.'));
+    }
+
+    /**
+     * @param array<int, string> $extensions
+     * @return array<int, string>
+     */
+    private function normalizeExtensions(array $extensions): array
+    {
+        $normalized = [];
+        foreach ($extensions as $extension) {
+            $candidate = $this->normalizeExtension($extension);
+            if ($candidate === '') {
+                continue;
+            }
+            $normalized[] = $candidate;
+        }
+
+        return array_values(array_unique($normalized));
+    }
+
     /**
      * @return array{string, bool}
      */
@@ -521,6 +598,22 @@ class UploadProcessor
         $this->copyImageToInspectionFile($filePath, $tempFile);
 
         return [$tempFile, true];
+    }
+
+    private function readHeaderBytes(string $filePath, int $length): ?string
+    {
+        $stream = FlysystemHelper::readStream($filePath);
+        if (!is_resource($stream)) {
+            return null;
+        }
+
+        try {
+            $bytes = fread($stream, $length);
+        } finally {
+            fclose($stream);
+        }
+
+        return is_string($bytes) ? $bytes : null;
     }
 
     private function resolveChunkPath(string $chunkDirectory, array $received, int $index): string
@@ -553,6 +646,9 @@ class UploadProcessor
         if ($totalChunks < 1 || count($received) !== $totalChunks) {
             throw new UploadException('Upload is not complete.');
         }
+        if ($this->maxChunkCount > 0 && $totalChunks > $this->maxChunkCount) {
+            throw new UploadException('Total chunks exceed configured limit.');
+        }
 
         ksort($received);
 
@@ -582,6 +678,10 @@ class UploadProcessor
     private function scanForMalware(string $filePath, string $fileType): void
     {
         if (!is_callable($this->malwareScanner)) {
+            if ($this->requireMalwareScan) {
+                throw new UploadException('Malware scanner is required but not configured.');
+            }
+
             return;
         }
 
@@ -594,6 +694,48 @@ class UploadProcessor
         if ($result === false) {
             throw new UploadException('Malware scan failed.');
         }
+    }
+
+    private function validateChunkLimits(array $chunkFile, int $totalChunks): void
+    {
+        if ($this->maxChunkCount > 0 && $totalChunks > $this->maxChunkCount) {
+            throw new UploadException('Total chunks exceed configured limit.');
+        }
+
+        if (!isset($chunkFile['size']) || !is_numeric($chunkFile['size'])) {
+            throw new UploadException('Invalid chunk metadata.');
+        }
+
+        if ($this->maxChunkSize > 0 && (int) $chunkFile['size'] > $this->maxChunkSize) {
+            throw new FileSizeExceededException('Chunk exceeds configured size limit.');
+        }
+    }
+
+    private function validateChunkUploadRequest(array $chunkFile, string $uploadId, int $chunkIndex, int $totalChunks, string $originalFilename): void
+    {
+        $this->validateUploadId($uploadId);
+
+        if ($chunkIndex < 0 || $totalChunks < 1 || $chunkIndex >= $totalChunks) {
+            throw new UploadException('Invalid chunk metadata.');
+        }
+
+        $this->validateChunkLimits($chunkFile, $totalChunks);
+        $this->validateFileExtension(pathinfo($originalFilename, PATHINFO_EXTENSION));
+    }
+
+    private function validateContentTypeIntegrity(string $filePath, string $fileType, string $extension): void
+    {
+        if (!$this->strictContentTypeValidation) {
+            return;
+        }
+
+        $normalizedExtension = $this->normalizeExtension($extension);
+        if ($normalizedExtension === '') {
+            return;
+        }
+
+        $this->validateMimeTypeMatchesExtension($fileType, $normalizedExtension);
+        $this->validateMagicSignatureForExtension($filePath, $normalizedExtension);
     }
 
     /**
@@ -618,6 +760,26 @@ class UploadProcessor
         }
 
         $this->validateFileSize($file['size']);
+    }
+
+    private function validateFileExtension(string $extension): void
+    {
+        $normalized = $this->normalizeExtension($extension);
+        if ($normalized === '') {
+            if ($this->allowedExtensions !== []) {
+                throw new UploadException('File extension is required.');
+            }
+
+            return;
+        }
+
+        if (in_array($normalized, $this->blockedExtensions, true)) {
+            throw new UploadException('Blocked file extension.');
+        }
+
+        if ($this->allowedExtensions !== [] && !in_array($normalized, $this->allowedExtensions, true)) {
+            throw new UploadException('File extension is not allowed.');
+        }
     }
 
     /**
@@ -649,7 +811,10 @@ class UploadProcessor
         $this->validateFileSize($finalSize);
 
         $fileType = $this->getFileMimeType($destination);
+        $extension = pathinfo($destination, PATHINFO_EXTENSION);
+        $this->validateFileExtension($extension);
         $this->validateFileType($fileType);
+        $this->validateContentTypeIntegrity($destination, $fileType, $extension);
         if ($this->isImage($fileType)) {
             $this->validateImageDimensions($destination);
         }
@@ -682,6 +847,66 @@ class UploadProcessor
         }
         if ($this->maxImageHeight > 0 && $height > $this->maxImageHeight) {
             throw new UploadException('Image height exceeds the maximum allowed.');
+        }
+    }
+
+    private function validateMagicSignatureForExtension(string $filePath, string $extension): void
+    {
+        $header = $this->readHeaderBytes($filePath, 16);
+        if ($header === null) {
+            throw new UploadException('Unable to inspect file signature.');
+        }
+
+        $matchesSignature = match ($extension) {
+            'jpg', 'jpeg' => str_starts_with($header, "\xFF\xD8\xFF"),
+            'png' => str_starts_with($header, "\x89PNG\r\n\x1A\n"),
+            'gif' => str_starts_with($header, "GIF87a") || str_starts_with($header, "GIF89a"),
+            'webp' => str_starts_with($header, 'RIFF') && substr($header, 8, 4) === 'WEBP',
+            'pdf' => str_starts_with($header, '%PDF-'),
+            'zip', 'docx' => str_starts_with($header, "PK\x03\x04")
+                || str_starts_with($header, "PK\x05\x06")
+                || str_starts_with($header, "PK\x07\x08"),
+            default => true,
+        };
+
+        if (!$matchesSignature) {
+            throw new UploadException('File signature does not match extension.');
+        }
+    }
+
+    private function validateMimeTypeMatchesExtension(string $fileType, string $extension): void
+    {
+        $allowedMimes = match ($extension) {
+            'jpg', 'jpeg' => ['image/jpeg'],
+            'png' => ['image/png'],
+            'gif' => ['image/gif'],
+            'webp' => ['image/webp'],
+            'pdf' => ['application/pdf'],
+            'txt' => ['text/plain', 'application/octet-stream'],
+            'csv' => ['text/csv', 'text/plain', 'application/vnd.ms-excel', 'application/octet-stream'],
+            'zip' => ['application/zip', 'application/x-zip-compressed', 'application/octet-stream'],
+            'doc' => ['application/msword', 'application/octet-stream'],
+            'docx' => ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/zip', 'application/octet-stream'],
+            'mp4' => ['video/mp4', 'application/octet-stream'],
+            'webm' => ['video/webm', 'application/octet-stream'],
+            'mov', 'qt' => ['video/quicktime', 'application/octet-stream'],
+            default => [],
+        };
+
+        if ($allowedMimes === []) {
+            return;
+        }
+
+        $normalizedMime = strtolower(trim(explode(';', $fileType, 2)[0]));
+        if (!in_array($normalizedMime, $allowedMimes, true)) {
+            throw new UploadException('File content type does not match extension.');
+        }
+    }
+
+    private function validateUploadId(string $uploadId): void
+    {
+        if ($uploadId === '' || strlen($uploadId) > 128 || preg_match('/^[A-Za-z0-9_-]+$/', $uploadId) !== 1) {
+            throw new UploadException('Invalid upload session id.');
         }
     }
 }
