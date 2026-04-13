@@ -3,8 +3,12 @@
 use Infocyph\Pathwise\Exceptions\FileSizeExceededException;
 use Infocyph\Pathwise\Exceptions\UploadException;
 use Infocyph\Pathwise\StreamHandler\UploadProcessor;
+use Infocyph\Pathwise\Utils\FlysystemHelper;
+use League\Flysystem\Filesystem;
+use League\Flysystem\Local\LocalFilesystemAdapter;
 
 beforeEach(function () {
+    FlysystemHelper::reset();
     $this->uploadProcessor = new UploadProcessor();
     $this->uploadDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('upload_dir_', true);
 });
@@ -20,6 +24,8 @@ afterEach(function () {
         }
         rmdir($this->uploadDir);
     }
+
+    FlysystemHelper::reset();
 });
 
 test('it throws when naming strategy is invalid', function () {
@@ -283,5 +289,113 @@ test('it rejects unsafe upload ids in chunk flow', function () {
         if (file_exists($tempChunkPath)) {
             unlink($tempChunkPath);
         }
+    }
+});
+
+test('it processes upload to a mounted filesystem path', function () {
+    $mountRoot = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('upload_mount_', true);
+    mkdir($mountRoot, 0755, true);
+    FlysystemHelper::mount('mnt', new Filesystem(new LocalFilesystemAdapter($mountRoot)));
+
+    $this->uploadProcessor->setDirectorySettings('mnt://uploads');
+    $this->uploadProcessor->setValidationSettings(['text/plain'], 1024 * 1024);
+
+    $tmpFile = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('upload_mount_file_', true) . '.txt';
+    file_put_contents($tmpFile, 'mounted-upload-content');
+
+    try {
+        $destination = $this->uploadProcessor->processUpload([
+            'error' => UPLOAD_ERR_OK,
+            'size' => filesize($tmpFile),
+            'tmp_name' => $tmpFile,
+            'name' => 'note.txt',
+        ]);
+
+        expect($destination)->toStartWith('mnt://uploads/')
+            ->and(FlysystemHelper::fileExists($destination))->toBeTrue()
+            ->and(FlysystemHelper::read($destination))->toBe('mounted-upload-content');
+    } finally {
+        if (file_exists($tmpFile)) {
+            unlink($tmpFile);
+        }
+
+        FlysystemHelper::unmount('mnt');
+        FlysystemHelper::deleteDirectory($mountRoot);
+    }
+});
+
+test('it finalizes chunk upload on a mounted filesystem path', function () {
+    $mountRoot = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('chunk_mount_', true);
+    mkdir($mountRoot, 0755, true);
+    FlysystemHelper::mount('mnt', new Filesystem(new LocalFilesystemAdapter($mountRoot)));
+
+    $this->uploadProcessor->setDirectorySettings('mnt://uploads', false, 'mnt://tmp');
+    $this->uploadProcessor->setValidationSettings(['text/plain'], 1024 * 1024);
+
+    $uploadId = 'session_mounted_chunks';
+    $parts = ['alpha ', 'beta ', 'gamma'];
+
+    $tempParts = [];
+
+    try {
+        foreach ($parts as $index => $content) {
+            $tmpPart = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid("chunk_mount_{$index}_", true) . '.part';
+            file_put_contents($tmpPart, $content);
+            $tempParts[] = $tmpPart;
+
+            $this->uploadProcessor->processChunkUpload([
+                'error' => UPLOAD_ERR_OK,
+                'size' => filesize($tmpPart),
+                'tmp_name' => $tmpPart,
+                'name' => "chunk_{$index}.part",
+            ], $uploadId, $index, count($parts), 'assembled.txt');
+        }
+
+        $destination = $this->uploadProcessor->finalizeChunkUpload($uploadId);
+
+        expect($destination)->toStartWith('mnt://uploads/')
+            ->and(FlysystemHelper::fileExists($destination))->toBeTrue()
+            ->and(FlysystemHelper::read($destination))->toBe('alpha beta gamma');
+    } finally {
+        foreach ($tempParts as $part) {
+            if (file_exists($part)) {
+                unlink($part);
+            }
+        }
+
+        FlysystemHelper::unmount('mnt');
+        FlysystemHelper::deleteDirectory($mountRoot);
+    }
+});
+
+test('it processes upload with default filesystem using relative paths', function () {
+    $defaultRoot = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('upload_default_', true);
+    mkdir($defaultRoot, 0755, true);
+    FlysystemHelper::setDefaultFilesystem(new Filesystem(new LocalFilesystemAdapter($defaultRoot)));
+
+    $this->uploadProcessor->setDirectorySettings('uploads');
+    $this->uploadProcessor->setValidationSettings(['text/plain'], 1024 * 1024);
+
+    $tmpFile = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('upload_default_file_', true) . '.txt';
+    file_put_contents($tmpFile, 'default-filesystem-content');
+
+    try {
+        $destination = $this->uploadProcessor->processUpload([
+            'error' => UPLOAD_ERR_OK,
+            'size' => filesize($tmpFile),
+            'tmp_name' => $tmpFile,
+            'name' => 'relative.txt',
+        ]);
+
+        expect(str_starts_with(str_replace('\\', '/', $destination), 'uploads/'))->toBeTrue()
+            ->and(FlysystemHelper::fileExists($destination))->toBeTrue()
+            ->and(FlysystemHelper::read($destination))->toBe('default-filesystem-content');
+    } finally {
+        if (file_exists($tmpFile)) {
+            unlink($tmpFile);
+        }
+
+        FlysystemHelper::clearDefaultFilesystem();
+        FlysystemHelper::deleteDirectory($defaultRoot);
     }
 });

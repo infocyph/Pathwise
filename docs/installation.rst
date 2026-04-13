@@ -20,6 +20,15 @@ Optional extensions:
 * ``ext-posix`` for richer Unix ownership details.
 * ``ext-xmlreader`` and ``ext-simplexml`` for XML helpers.
 
+Optional adapter packages (choose per driver):
+
+* AWS S3: ``league/flysystem-aws-s3-v3`` + ``aws/aws-sdk-php``
+* SFTP: ``league/flysystem-sftp-v3``
+* FTP: ``league/flysystem-ftp``
+* Async AWS S3: ``league/flysystem-async-aws-s3``
+
+See ``storage-adapters`` for setup patterns.
+
 Where to Use First
 ------------------
 

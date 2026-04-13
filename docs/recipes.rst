@@ -82,13 +82,13 @@ Goal:
 .. code-block:: php
 
    use Infocyph\Pathwise\FileManager\FileCompression;
+   use Infocyph\Pathwise\Storage\StorageFactory;
    use Infocyph\Pathwise\Utils\FlysystemHelper;
-   use League\Flysystem\Filesystem;
-   use League\Flysystem\Local\LocalFilesystemAdapter;
 
-   FlysystemHelper::mount('mnt', new Filesystem(
-       new LocalFilesystemAdapter('/srv/storage')
-   ));
+   StorageFactory::mount('mnt', [
+       'driver' => 'local',
+       'root' => '/srv/storage',
+   ]);
 
    FlysystemHelper::write('mnt://source/a.txt', 'A');
    FlysystemHelper::write('mnt://source/b.txt', 'B');

@@ -18,6 +18,7 @@ Where it fits:
 * Optional max download size enforcement.
 * Optional range requests with byte-range parsing and partial metadata.
 * Stream copy to caller-provided output resource.
+* Mounted/default filesystem paths (e.g. ``s3://...``) via Flysystem routing.
 
 Security controls
 -----------------
@@ -68,3 +69,17 @@ Stream output with range support:
    );
 
    // $manifest includes status, headers, rangeStart/rangeEnd and bytesSent.
+
+Mounted storage example:
+
+.. code-block:: php
+
+   use Infocyph\Pathwise\Storage\StorageFactory;
+   use Infocyph\Pathwise\StreamHandler\DownloadProcessor;
+
+   StorageFactory::mount('s3', ['adapter' => $myS3Adapter]);
+
+   $downloads = new DownloadProcessor();
+   $downloads->setAllowedRoots(['s3://downloads']);
+
+   $manifest = $downloads->prepareDownload('s3://downloads/report.pdf');

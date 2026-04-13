@@ -4,8 +4,12 @@ use Infocyph\Pathwise\Exceptions\DownloadException;
 use Infocyph\Pathwise\Exceptions\FileNotFoundException;
 use Infocyph\Pathwise\Exceptions\FileSizeExceededException;
 use Infocyph\Pathwise\StreamHandler\DownloadProcessor;
+use Infocyph\Pathwise\Utils\FlysystemHelper;
+use League\Flysystem\Filesystem;
+use League\Flysystem\Local\LocalFilesystemAdapter;
 
 beforeEach(function () {
+    FlysystemHelper::reset();
     $this->downloadProcessor = new DownloadProcessor();
     $this->workingDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('pathwise_download_', true);
     mkdir($this->workingDir, 0777, true);
@@ -26,6 +30,7 @@ afterEach(function () {
     }
 
     rmdir($this->workingDir);
+    FlysystemHelper::reset();
 });
 
 test('it prepares secure download metadata for a local file', function () {
@@ -193,4 +198,57 @@ test('it throws when file does not exist', function () {
 
     expect(fn() => $this->downloadProcessor->prepareDownload($path))
         ->toThrow(FileNotFoundException::class);
+});
+
+test('it prepares and streams downloads from a mounted filesystem path', function () {
+    $mountRoot = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('download_mount_', true);
+    mkdir($mountRoot, 0755, true);
+    FlysystemHelper::mount('mnt', new Filesystem(new LocalFilesystemAdapter($mountRoot)));
+
+    $path = 'mnt://downloads/report.txt';
+    FlysystemHelper::write($path, 'mounted-download-content');
+    $this->downloadProcessor->setAllowedRoots(['mnt://downloads']);
+
+    try {
+        $manifest = $this->downloadProcessor->prepareDownload($path, 'report.txt');
+
+        $output = fopen('php://temp', 'rb+');
+        $streamedManifest = $this->downloadProcessor->streamDownload($path, $output);
+        rewind($output);
+        $downloaded = stream_get_contents($output);
+        fclose($output);
+
+        expect($manifest['status'])->toBe(200)
+            ->and($manifest['contentLength'])->toBe(strlen('mounted-download-content'))
+            ->and($streamedManifest['bytesSent'])->toBe(strlen('mounted-download-content'))
+            ->and($downloaded)->toBe('mounted-download-content');
+    } finally {
+        FlysystemHelper::unmount('mnt');
+        FlysystemHelper::deleteDirectory($mountRoot);
+    }
+});
+
+test('it supports relative download paths with a default filesystem', function () {
+    $defaultRoot = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('download_default_', true);
+    mkdir($defaultRoot, 0755, true);
+    FlysystemHelper::setDefaultFilesystem(new Filesystem(new LocalFilesystemAdapter($defaultRoot)));
+
+    $path = 'docs/relative.txt';
+    FlysystemHelper::write($path, 'default-download-content');
+    $this->downloadProcessor->setAllowedRoots(['docs']);
+
+    try {
+        $output = fopen('php://temp', 'rb+');
+        $manifest = $this->downloadProcessor->streamDownload($path, $output);
+        rewind($output);
+        $downloaded = stream_get_contents($output);
+        fclose($output);
+
+        expect($manifest['status'])->toBe(200)
+            ->and($manifest['bytesSent'])->toBe(strlen('default-download-content'))
+            ->and($downloaded)->toBe('default-download-content');
+    } finally {
+        FlysystemHelper::clearDefaultFilesystem();
+        FlysystemHelper::deleteDirectory($defaultRoot);
+    }
 });

@@ -100,6 +100,9 @@ Pathwise accepts:
 Mounting is done through ``FlysystemHelper::mount()``. Once mounted, most
 high-level modules can use the scheme path directly.
 
+For config-driven adapter bootstrap, use
+``Infocyph\Pathwise\Storage\StorageFactory`` (see ``storage-adapters``).
+
 Runtime and Extensions
 ----------------------
 

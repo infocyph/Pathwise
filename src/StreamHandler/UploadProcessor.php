@@ -548,6 +548,18 @@ class UploadProcessor
             throw new UploadException('Failed to move uploaded file.');
         }
 
+        if (PathHelper::hasScheme($source) || PathHelper::hasScheme($destination)) {
+            try {
+                FlysystemHelper::copy($source, $destination);
+            } catch (\Throwable) {
+                throw new UploadException('Failed to move incoming file.');
+            }
+
+            FlysystemHelper::delete($source);
+
+            return;
+        }
+
         if (!@rename($source, $destination)) {
             try {
                 FlysystemHelper::copy($source, $destination);

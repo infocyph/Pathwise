@@ -27,10 +27,11 @@ Pathwise is a robust PHP library designed as streamlined file and directory mana
     - [PathHelper](#pathhelper)
     - [PermissionsHelper](#permissionshelper)
     - [MetadataHelper](#metadatahelper)
-9. [Handy Functions](#handy-functions)
+9. [Storage Adapter Setup](#storage-adapter-setup)
+10. [Handy Functions](#handy-functions)
    - [File and Directory Utilities](#file-and-directory-utilities)
-10. [Support](#support)
-11. [License](#license)
+11. [Support](#support)
+12. [License](#license)
 
 ## **Prerequisites**
 - Language: PHP 8.4/+
@@ -57,11 +58,70 @@ Requirements:
 
 - Filesystem operations across core modules.
 - Mount support with scheme paths (`name://path`) and default filesystem support for relative paths.
+- Config-driven storage bootstrap via `StorageFactory` for local/custom/adapter-based filesystems.
 - Advanced file APIs: checksum verification, visibility controls, URL passthrough (`publicUrl`, `temporaryUrl`).
 - Directory automation: sync with diff report, recursive copy/move/delete, mounted-path ZIP/unzip bridging.
 - Upload/download pipelines: chunked/resumable uploads, validation profiles (image/video/document), extension allow/deny controls, strict MIME/signature checks, upload-id safety validation, malware-scan hook, secure download metadata + range handling.
 - Compression workflows: include/exclude glob patterns, ignore files, progress callbacks, hooks, optional native acceleration.
 - Operational tooling: `AuditTrail`, `FileJobQueue`, `FileWatcher`, `RetentionManager` and policy engine support.
+
+## **Storage Adapter Setup**
+
+Pathwise supports any Flysystem adapter. You can mount storages through `StorageFactory` and use them with all modules (`UploadProcessor`, `DownloadProcessor`, `FileOperations`, etc.).
+
+### **Local Driver**
+
+```php
+use Infocyph\Pathwise\Storage\StorageFactory;
+use Infocyph\Pathwise\Utils\FlysystemHelper;
+
+StorageFactory::mount('assets', [
+    'driver' => 'local',
+    'root' => '/srv/storage/assets',
+]);
+
+FlysystemHelper::write('assets://reports/a.txt', 'hello');
+```
+
+### **Any Adapter (Example: S3)**
+
+```php
+use Aws\S3\S3Client;
+use Infocyph\Pathwise\Storage\StorageFactory;
+use League\Flysystem\AwsS3V3\AwsS3V3Adapter;
+
+$client = new S3Client([
+    'version' => 'latest',
+    'region' => 'us-east-1',
+    'credentials' => [
+        'key' => getenv('AWS_ACCESS_KEY_ID'),
+        'secret' => getenv('AWS_SECRET_ACCESS_KEY'),
+    ],
+]);
+
+$adapter = new AwsS3V3Adapter($client, 'my-bucket', 'app-prefix');
+
+StorageFactory::mount('s3', ['adapter' => $adapter]);
+// Use s3://... paths in processors and managers.
+```
+
+### **Custom Driver Registration**
+
+```php
+use Infocyph\Pathwise\Storage\StorageFactory;
+use League\Flysystem\Filesystem;
+use League\Flysystem\Local\LocalFilesystemAdapter;
+
+StorageFactory::registerDriver('tenant-local', function (array $config): Filesystem {
+    $tenant = (string) ($config['tenant'] ?? 'default');
+    return new Filesystem(new LocalFilesystemAdapter('/srv/tenants/' . $tenant));
+});
+
+StorageFactory::mount('tenant', [
+    'driver' => 'tenant-local',
+    'tenant' => 'acme',
+]);
+```
 
 ## **FileManager**
 

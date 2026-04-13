@@ -28,6 +28,7 @@ Storage notes:
 
 * Uses Flysystem operations for chunk manifests and destination writes.
 * Supports mounted/default filesystem routing through helper resolution.
+* For adapter setup (S3/SFTP/FTP/custom), see ``storage-adapters``.
 
 Security Hardening Controls
 ---------------------------
@@ -100,3 +101,18 @@ Hardened chunk upload:
        totalChunks: 4,
        originalFilename: 'video.mp4',
    );
+
+Mounted destination example:
+
+.. code-block:: php
+
+   use Infocyph\Pathwise\Storage\StorageFactory;
+   use Infocyph\Pathwise\StreamHandler\UploadProcessor;
+
+   StorageFactory::mount('s3', ['adapter' => $myS3Adapter]);
+
+   $uploader = new UploadProcessor();
+   $uploader->setDirectorySettings('s3://uploads', false, 's3://tmp');
+   $uploader->setValidationProfile('document');
+
+   $finalPath = $uploader->processUpload($_FILES['file']);
