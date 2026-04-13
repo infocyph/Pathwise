@@ -61,8 +61,8 @@ final class FileWatcher
 
             return [
                 $normalized => [
-                    'mtime' => (int) $mtime,
-                    'size' => (int) (FlysystemHelper::size($normalized) ?: 0),
+                    'mtime' => $mtime,
+                    'size' => FlysystemHelper::size($normalized),
                 ],
             ];
         }
@@ -107,7 +107,7 @@ final class FileWatcher
         callable $onChange,
         int $durationSeconds = 5,
         int $intervalMilliseconds = 500,
-        bool $recursive = true
+        bool $recursive = true,
     ): array {
         $snapshot = self::snapshot($path, $recursive);
         $endAt = microtime(true) + max(1, $durationSeconds);

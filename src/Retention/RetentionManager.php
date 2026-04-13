@@ -19,7 +19,7 @@ final class RetentionManager
         string $directory,
         ?int $keepLast = null,
         ?int $maxAgeDays = null,
-        string $sortBy = 'mtime'
+        string $sortBy = 'mtime',
     ): array {
         $directory = PathHelper::normalize($directory);
         if (!FlysystemHelper::directoryExists($directory)) {
@@ -27,9 +27,7 @@ final class RetentionManager
         }
 
         $files = self::collectFiles($directory);
-        usort($files, function (array $a, array $b) use ($sortBy): int {
-            return ($b[$sortBy] ?? 0) <=> ($a[$sortBy] ?? 0);
-        });
+        usort($files, fn(array $a, array $b): int => ($b[$sortBy] ?? 0) <=> ($a[$sortBy] ?? 0));
 
         $kept = [];
         $deleted = [];

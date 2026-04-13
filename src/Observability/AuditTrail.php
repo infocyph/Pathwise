@@ -6,9 +6,9 @@ use DateTimeInterface;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 
-final class AuditTrail
+final readonly class AuditTrail
 {
-    public function __construct(private readonly string $logFilePath)
+    public function __construct(private string $logFilePath)
     {
         $directory = dirname($this->logFilePath);
         if (!FlysystemHelper::directoryExists($directory)) {

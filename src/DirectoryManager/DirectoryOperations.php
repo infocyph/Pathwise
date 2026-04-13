@@ -48,59 +48,15 @@ class DirectoryOperations
             FlysystemHelper::createDirectory($destination);
         }
 
-        if (
-            $this->executionStrategy !== ExecutionStrategy::PHP
-            && NativeOperationsAdapter::canUseNativeDirectoryCopy()
-            && $this->isLocalPath($this->path)
-            && $this->isLocalPath($destination)
-        ) {
-            if (is_callable($progress)) {
-                $progress([
-                    'operation' => 'copy',
-                    'path' => $this->path,
-                    'current' => 0,
-                    'total' => 1,
-                ]);
-            }
-
-            $native = NativeOperationsAdapter::copyDirectory($this->path, $destination, false);
-            if ($native['success']) {
-                if (is_callable($progress)) {
-                    $progress([
-                        'operation' => 'copy',
-                        'path' => $this->path,
-                        'current' => 1,
-                        'total' => 1,
-                    ]);
-                }
-
-                return true;
-            }
-
-            if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
-                throw new DirectoryOperationException("Native directory copy failed for '{$this->path}' to '{$destination}'.");
-            }
+        if ($this->attemptNativeCopy($destination, $progress)) {
+            return true;
         }
 
-        if (is_callable($progress)) {
-            $progress([
-                'operation' => 'copy',
-                'path' => $this->path,
-                'current' => 0,
-                'total' => 1,
-            ]);
-        }
+        $this->emitCopyProgress($progress, 0);
 
         FlysystemHelper::copyDirectory($this->path, $destination);
 
-        if (is_callable($progress)) {
-            $progress([
-                'operation' => 'copy',
-                'path' => $this->path,
-                'current' => 1,
-                'total' => 1,
-            ]);
-        }
+        $this->emitCopyProgress($progress, 1);
 
         return true;
     }
@@ -198,26 +154,7 @@ class DirectoryOperations
             $resolvedPath = $this->buildPath($this->path, $relative);
             $size = (int) ($item['file_size'] ?? 0);
 
-            $permissionsMatch = true;
-            if (!empty($criteria['permissions']) && !$isWindows) {
-                $permissionsMatch = false;
-                if ($this->isLocalPath($resolvedPath) && file_exists($resolvedPath)) {
-                    $permissions = fileperms($resolvedPath);
-                    if (is_int($permissions)) {
-                        $permissionsMatch = ($permissions & 0777) === $criteria['permissions'];
-                    }
-                }
-            }
-
-            $conditions = [
-                empty($criteria['name']) || str_contains(basename($resolvedPath), (string) $criteria['name']),
-                empty($criteria['extension']) || pathinfo($resolvedPath, PATHINFO_EXTENSION) === $criteria['extension'],
-                $permissionsMatch,
-                empty($criteria['minSize']) || $size >= $criteria['minSize'],
-                empty($criteria['maxSize']) || $size <= $criteria['maxSize'],
-            ];
-
-            if (in_array(false, $conditions, true)) {
+            if (!$this->matchesFindCriteria($criteria, $resolvedPath, $size, $isWindows)) {
                 continue;
             }
 
@@ -681,6 +618,27 @@ class DirectoryOperations
         }
     }
 
+    private function attemptNativeCopy(string $destination, ?callable $progress): bool
+    {
+        if (!$this->canAttemptNativeCopy($destination)) {
+            return false;
+        }
+
+        $this->emitCopyProgress($progress, 0);
+        $native = NativeOperationsAdapter::copyDirectory($this->path, $destination, false);
+        if ($native['success']) {
+            $this->emitCopyProgress($progress, 1);
+
+            return true;
+        }
+
+        if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
+            throw new DirectoryOperationException("Native directory copy failed for '{$this->path}' to '{$destination}'.");
+        }
+
+        return false;
+    }
+
     private function buildPath(string $basePath, string $relativePath): string
     {
         $relativePath = trim(str_replace('\\', '/', $relativePath), '/');
@@ -693,6 +651,14 @@ class DirectoryOperations
         }
 
         return PathHelper::join($basePath, $relativePath);
+    }
+
+    private function canAttemptNativeCopy(string $destination): bool
+    {
+        return $this->executionStrategy !== ExecutionStrategy::PHP
+            && NativeOperationsAdapter::canUseNativeDirectoryCopy()
+            && $this->isLocalPath($this->path)
+            && $this->isLocalPath($destination);
     }
 
     private function cleanupTemporaryFile(bool $shouldCleanup, string $path): void
@@ -728,7 +694,7 @@ class DirectoryOperations
 
         usort(
             $destinationItems,
-            static fn (array $a, array $b): int => strlen((string) ($b['path'] ?? '')) <=> strlen((string) ($a['path'] ?? '')),
+            static fn(array $a, array $b): int => strlen((string) ($b['path'] ?? '')) <=> strlen((string) ($a['path'] ?? '')),
         );
 
         foreach ($destinationItems as $item) {
@@ -747,6 +713,20 @@ class DirectoryOperations
             FlysystemHelper::delete($targetPath);
             $report['deleted'][] = $relative;
         }
+    }
+
+    private function emitCopyProgress(?callable $progress, int $current): void
+    {
+        if (!is_callable($progress)) {
+            return;
+        }
+
+        $progress([
+            'operation' => 'copy',
+            'path' => $this->path,
+            'current' => $current,
+            'total' => 1,
+        ]);
     }
 
     private function emitSyncProgress(?callable $progress, string $relative, int $current, int $total): void
@@ -788,8 +768,7 @@ class DirectoryOperations
 
     private function extractSingleZipEntry(ZipArchive $zip, int $index): void
     {
-        $entry = (string) $zip->getNameIndex($index);
-        $entry = ltrim(str_replace('\\', '/', $entry), '/');
+        $entry = $this->sanitizeZipEntryPath((string) $zip->getNameIndex($index));
         if ($entry === '') {
             return;
         }
@@ -841,6 +820,30 @@ class DirectoryOperations
     private function isLocalPath(string $path): bool
     {
         return !PathHelper::hasScheme($path) && PathHelper::isAbsolute($path);
+    }
+
+    private function matchesFindCriteria(array $criteria, string $resolvedPath, int $size, bool $isWindows): bool
+    {
+        return (empty($criteria['name']) || str_contains(basename($resolvedPath), (string) $criteria['name']))
+            && (empty($criteria['extension']) || pathinfo($resolvedPath, PATHINFO_EXTENSION) === (string) $criteria['extension'])
+            && $this->matchesPermissionsCriteria($criteria, $resolvedPath, $isWindows)
+            && (empty($criteria['minSize']) || $size >= (int) $criteria['minSize'])
+            && (empty($criteria['maxSize']) || $size <= (int) $criteria['maxSize']);
+    }
+
+    private function matchesPermissionsCriteria(array $criteria, string $resolvedPath, bool $isWindows): bool
+    {
+        if (empty($criteria['permissions']) || $isWindows) {
+            return true;
+        }
+
+        if (!$this->isLocalPath($resolvedPath) || !file_exists($resolvedPath)) {
+            return false;
+        }
+
+        $permissions = fileperms($resolvedPath);
+
+        return is_int($permissions) && ($permissions & 0777) === (int) $criteria['permissions'];
     }
 
     /**
@@ -963,6 +966,33 @@ class DirectoryOperations
         }
 
         return $normalizedPath;
+    }
+
+    private function sanitizeZipEntryPath(string $entry): string
+    {
+        $normalized = str_replace('\\', '/', $entry);
+        $trimmed = ltrim($normalized, '/');
+        if ($trimmed === '') {
+            return '';
+        }
+
+        $safePath = preg_replace('#/+#', '/', $trimmed) ?? '';
+        $safePath = preg_replace('#(^|/)\./#', '$1', $safePath) ?? $safePath;
+        $trimmedSafePath = rtrim($safePath, '/');
+
+        if (
+            str_contains($trimmedSafePath, "\0")
+            || preg_match('#(^|/)\.\.(/|$)#', $trimmedSafePath) === 1
+            || preg_match('/^[A-Za-z]:($|\/)/', $trimmedSafePath) === 1
+        ) {
+            throw new DirectoryOperationException("Unsafe ZIP entry path detected: {$entry}");
+        }
+
+        if ($trimmedSafePath === '') {
+            return '';
+        }
+
+        return str_ends_with($normalized, '/') ? $trimmedSafePath . '/' : $trimmedSafePath;
     }
 
     private function storageLocation(string $directoryPath): string

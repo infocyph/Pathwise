@@ -2,6 +2,4 @@
 
 namespace Infocyph\Pathwise\Exceptions;
 
-class DirectoryOperationException extends \RuntimeException
-{
-}
+class DirectoryOperationException extends \RuntimeException {}

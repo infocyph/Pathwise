@@ -2,6 +2,4 @@
 
 namespace Infocyph\Pathwise\Exceptions;
 
-class CompressionException extends \RuntimeException
-{
-}
+class CompressionException extends \RuntimeException {}

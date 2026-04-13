@@ -2,6 +2,4 @@
 
 namespace Infocyph\Pathwise\Exceptions;
 
-class UploadException extends \Exception
-{
-}
+class UploadException extends \Exception {}

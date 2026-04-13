@@ -83,7 +83,7 @@ final class ChecksumIndexer
     {
         $index = self::buildIndex($directory, $algorithm);
 
-        return array_filter($index, static fn (array $paths): bool => count($paths) > 1);
+        return array_filter($index, static fn(array $paths): bool => count($paths) > 1);
     }
 
     private static function hashPath(string $path, string $algorithm): ?string

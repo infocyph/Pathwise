@@ -98,6 +98,15 @@ test('it reads serialized data', function () {
     expect($serializedObjects)->toBe([['key' => 'value'], ['key' => 'value']]);
 });
 
+test('it rejects serialized objects for safety', function () {
+    $data = serialize((object) ['key' => 'value']);
+    file_put_contents($this->tempFilePath, $data);
+    $reader = new SafeFileReader($this->tempFilePath);
+
+    expect(fn() => iterator_to_array($reader->serialized(), false))
+        ->toThrow(Exception::class, 'Serialized objects are not allowed');
+});
+
 test('it reads fixed-width data', function () {
     file_put_contents($this->tempFilePath, '1234JohnDoe    ');
     $reader = new SafeFileReader($this->tempFilePath);

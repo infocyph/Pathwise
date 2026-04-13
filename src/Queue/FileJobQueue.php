@@ -5,9 +5,9 @@ namespace Infocyph\Pathwise\Queue;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 
-final class FileJobQueue
+final readonly class FileJobQueue
 {
-    public function __construct(private readonly string $queueFilePath)
+    public function __construct(private string $queueFilePath)
     {
         $directory = dirname($this->queueFilePath);
         if (!FlysystemHelper::directoryExists($directory)) {
@@ -30,7 +30,7 @@ final class FileJobQueue
             'createdAt' => time(),
         ];
 
-        usort($data['pending'], static fn (array $a, array $b): int => $b['priority'] <=> $a['priority']);
+        usort($data['pending'], static fn(array $a, array $b): int => $b['priority'] <=> $a['priority']);
         $this->writeQueueData($data);
 
         return $jobId;
@@ -69,7 +69,7 @@ final class FileJobQueue
             $data = $this->readQueueData();
             $data['processing'] = array_values(array_filter(
                 $data['processing'],
-                static fn (array $processingJob): bool => $processingJob['id'] !== $job['id'],
+                static fn(array $processingJob): bool => $processingJob['id'] !== $job['id'],
             ));
 
             if (isset($job['error'])) {

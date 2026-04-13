@@ -11,7 +11,7 @@ use Psr\Log\LoggerInterface;
 
 class UploadProcessor
 {
-    private const VALIDATION_PROFILES = [
+    private const array VALIDATION_PROFILES = [
         'image' => [
             'allowedFileTypes' => ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
             'maxFileSize' => 10 * 1024 * 1024,
@@ -59,78 +59,16 @@ class UploadProcessor
             throw new UploadException('Upload directory is not set.');
         }
 
-        $manifest = $this->loadChunkManifest($uploadId);
-        if ($manifest === null) {
-            throw new UploadException("Upload session not found: {$uploadId}");
-        }
-
-        $totalChunks = (int) ($manifest['totalChunks'] ?? 0);
-        $received = (array) ($manifest['received'] ?? []);
-        if ($totalChunks < 1 || count($received) !== $totalChunks) {
-            throw new UploadException('Upload is not complete.');
-        }
-
+        [$manifest, $totalChunks, $received] = $this->resolveCompleteChunkState($uploadId);
         $originalFilename = (string) ($manifest['originalFilename'] ?? 'upload.bin');
-        $extension = (string) pathinfo($originalFilename, PATHINFO_EXTENSION);
+        $extension = pathinfo($originalFilename, PATHINFO_EXTENSION);
         $fileName = $this->generateFileName(null, $extension);
         $destination = $this->getUniqueDestination($fileName);
         $chunkDirectory = $this->getChunkDirectory($uploadId);
 
-        $output = fopen('php://temp', 'rb+');
-        if ($output === false) {
-            throw new UploadException('Failed to create destination file for chunk merge.');
-        }
-
-        try {
-            for ($i = 0; $i < $totalChunks; $i++) {
-                $chunkName = $received[(string) $i] ?? null;
-                if (!is_string($chunkName)) {
-                    throw new UploadException("Missing chunk index {$i}.");
-                }
-
-                $chunkPath = PathHelper::join($chunkDirectory, $chunkName);
-                if (!FlysystemHelper::fileExists($chunkPath)) {
-                    throw new UploadException("Missing chunk file for index {$i}.");
-                }
-
-                $input = FlysystemHelper::readStream($chunkPath);
-                if (!is_resource($input)) {
-                    throw new UploadException("Failed to read chunk index {$i}.");
-                }
-
-                stream_copy_to_stream($input, $output);
-                fclose($input);
-            }
-
-            rewind($output);
-            FlysystemHelper::writeStream($destination, $output);
-        } finally {
-            fclose($output);
-        }
-
-        $finalSize = FlysystemHelper::size($destination);
-        $this->validateFileSize($finalSize);
-
-        $fileType = $this->getFileMimeType($destination);
-        $this->validateFileType($fileType);
-        if ($this->isImage($fileType)) {
-            $this->validateImageDimensions($destination);
-        }
-        $this->scanForMalware($destination, $fileType);
-
-        foreach ($received as $chunkName) {
-            $chunkPath = PathHelper::join($chunkDirectory, (string) $chunkName);
-            if (FlysystemHelper::fileExists($chunkPath)) {
-                FlysystemHelper::delete($chunkPath);
-            }
-        }
-        $manifestPath = $this->getChunkManifestPath($uploadId);
-        if (FlysystemHelper::fileExists($manifestPath)) {
-            FlysystemHelper::delete($manifestPath);
-        }
-        if (FlysystemHelper::directoryExists($chunkDirectory)) {
-            FlysystemHelper::deleteDirectory($chunkDirectory);
-        }
+        $this->mergeChunksToDestination($chunkDirectory, $received, $totalChunks, $destination);
+        $this->validateFinalizedUpload($destination);
+        $this->cleanupChunkUploadArtifacts($uploadId, $chunkDirectory, $received);
 
         return $destination;
     }
@@ -225,7 +163,7 @@ class UploadProcessor
             }
             $this->scanForMalware($file['tmp_name'], $fileType);
 
-            $fileName = $this->generateFileName($file['tmp_name'], pathinfo($file['name'], PATHINFO_EXTENSION));
+            $fileName = $this->generateFileName($file['tmp_name'], pathinfo((string) $file['name'], PATHINFO_EXTENSION));
             $destination = $this->getUniqueDestination($fileName);
 
             if (!move_uploaded_file($file['tmp_name'], $destination)) {
@@ -348,6 +286,58 @@ class UploadProcessor
         $this->validationProfile = null;
     }
 
+    private function appendChunkToStream(string $chunkPath, mixed $output, int $index): void
+    {
+        $input = FlysystemHelper::readStream($chunkPath);
+        if (!is_resource($input)) {
+            throw new UploadException("Failed to read chunk index {$index}.");
+        }
+
+        try {
+            stream_copy_to_stream($input, $output);
+        } finally {
+            fclose($input);
+        }
+    }
+
+    private function cleanupChunkUploadArtifacts(string $uploadId, string $chunkDirectory, array $received): void
+    {
+        foreach ($received as $chunkName) {
+            $chunkPath = PathHelper::join($chunkDirectory, (string) $chunkName);
+            if (FlysystemHelper::fileExists($chunkPath)) {
+                FlysystemHelper::delete($chunkPath);
+            }
+        }
+
+        $manifestPath = $this->getChunkManifestPath($uploadId);
+        if (FlysystemHelper::fileExists($manifestPath)) {
+            FlysystemHelper::delete($manifestPath);
+        }
+        if (FlysystemHelper::directoryExists($chunkDirectory)) {
+            FlysystemHelper::deleteDirectory($chunkDirectory);
+        }
+    }
+
+    private function copyImageToInspectionFile(string $filePath, string $tempFile): void
+    {
+        $stream = FlysystemHelper::readStream($filePath);
+        $target = fopen($tempFile, 'wb');
+        if (!is_resource($stream) || !is_resource($target)) {
+            if (is_resource($stream)) {
+                fclose($stream);
+            }
+            if (is_resource($target)) {
+                fclose($target);
+            }
+            @unlink($tempFile);
+            throw new UploadException('Unable to inspect image dimensions.');
+        }
+
+        stream_copy_to_stream($stream, $target);
+        fclose($stream);
+        fclose($target);
+    }
+
     /**
      * Ensure the upload directory exists.
      */
@@ -368,7 +358,7 @@ class UploadProcessor
         $callingMethod = $backtrace[1]['function'] ?? null;
 
         $shortClass = is_string($callingClass)
-            ? (strrchr($callingClass, '\\') !== false ? substr((string) strrchr($callingClass, '\\'), 1) : $callingClass)
+            ? (strrchr($callingClass, '\\') !== false ? substr(strrchr($callingClass, '\\'), 1) : $callingClass)
             : 'Upload';
         $classPrefix = strtolower(preg_replace('/[^A-Za-z0-9]/', '', $shortClass) ?: 'upload');
 
@@ -461,6 +451,26 @@ class UploadProcessor
         return $manifest;
     }
 
+    private function mergeChunksToDestination(string $chunkDirectory, array $received, int $totalChunks, string $destination): void
+    {
+        $output = fopen('php://temp', 'rb+');
+        if ($output === false) {
+            throw new UploadException('Failed to create destination file for chunk merge.');
+        }
+
+        try {
+            for ($i = 0; $i < $totalChunks; $i++) {
+                $chunkPath = $this->resolveChunkPath($chunkDirectory, $received, $i);
+                $this->appendChunkToStream($chunkPath, $output, $i);
+            }
+
+            rewind($output);
+            FlysystemHelper::writeStream($destination, $output);
+        } finally {
+            fclose($output);
+        }
+    }
+
     private function moveIncomingFile(string $source, string $destination): void
     {
         if (is_uploaded_file($source)) {
@@ -492,6 +502,61 @@ class UploadProcessor
             }
             FlysystemHelper::delete($source);
         }
+    }
+
+    /**
+     * @return array{string, bool}
+     */
+    private function prepareImagePathForInspection(string $filePath): array
+    {
+        if (!PathHelper::hasScheme($filePath) && is_file($filePath)) {
+            return [$filePath, false];
+        }
+
+        $tempFile = tempnam(sys_get_temp_dir(), 'pathwise_img_');
+        if ($tempFile === false) {
+            throw new UploadException('Unable to create temporary file for image validation.');
+        }
+
+        $this->copyImageToInspectionFile($filePath, $tempFile);
+
+        return [$tempFile, true];
+    }
+
+    private function resolveChunkPath(string $chunkDirectory, array $received, int $index): string
+    {
+        $chunkName = $received[(string) $index] ?? null;
+        if (!is_string($chunkName)) {
+            throw new UploadException("Missing chunk index {$index}.");
+        }
+
+        $chunkPath = PathHelper::join($chunkDirectory, $chunkName);
+        if (!FlysystemHelper::fileExists($chunkPath)) {
+            throw new UploadException("Missing chunk file for index {$index}.");
+        }
+
+        return $chunkPath;
+    }
+
+    /**
+     * @return array{array, int, array}
+     */
+    private function resolveCompleteChunkState(string $uploadId): array
+    {
+        $manifest = $this->loadChunkManifest($uploadId);
+        if ($manifest === null) {
+            throw new UploadException("Upload session not found: {$uploadId}");
+        }
+
+        $totalChunks = (int) ($manifest['totalChunks'] ?? 0);
+        $received = (array) ($manifest['received'] ?? []);
+        if ($totalChunks < 1 || count($received) !== $totalChunks) {
+            throw new UploadException('Upload is not complete.');
+        }
+
+        ksort($received);
+
+        return [$manifest, $totalChunks, $received];
     }
 
     /**
@@ -578,45 +643,35 @@ class UploadProcessor
         }
     }
 
+    private function validateFinalizedUpload(string $destination): void
+    {
+        $finalSize = FlysystemHelper::size($destination);
+        $this->validateFileSize($finalSize);
+
+        $fileType = $this->getFileMimeType($destination);
+        $this->validateFileType($fileType);
+        if ($this->isImage($fileType)) {
+            $this->validateImageDimensions($destination);
+        }
+
+        $this->scanForMalware($destination, $fileType);
+    }
+
     /**
      * Validate image dimensions.
      */
     private function validateImageDimensions(string $filePath): void
     {
-        $pathForInspection = $filePath;
-        $cleanup = false;
+        [$pathForInspection, $cleanup] = $this->prepareImagePathForInspection($filePath);
 
-        if (PathHelper::hasScheme($filePath) || !is_file($filePath)) {
-            $tempFile = tempnam(sys_get_temp_dir(), 'pathwise_img_');
-            if ($tempFile === false) {
-                throw new UploadException('Unable to create temporary file for image validation.');
+        try {
+            $dimensions = getimagesize($pathForInspection);
+        } finally {
+            if ($cleanup && is_file($pathForInspection)) {
+                @unlink($pathForInspection);
             }
-
-            $stream = FlysystemHelper::readStream($filePath);
-            $target = fopen($tempFile, 'wb');
-            if (!is_resource($stream) || !is_resource($target)) {
-                if (is_resource($stream)) {
-                    fclose($stream);
-                }
-                if (is_resource($target)) {
-                    fclose($target);
-                }
-                @unlink($tempFile);
-                throw new UploadException('Unable to inspect image dimensions.');
-            }
-
-            stream_copy_to_stream($stream, $target);
-            fclose($stream);
-            fclose($target);
-
-            $pathForInspection = $tempFile;
-            $cleanup = true;
         }
 
-        $dimensions = getimagesize($pathForInspection);
-        if ($cleanup && is_file($pathForInspection)) {
-            @unlink($pathForInspection);
-        }
         if (!is_array($dimensions) || count($dimensions) < 2) {
             throw new UploadException('Unable to inspect image dimensions.');
         }

@@ -129,7 +129,6 @@ class FileCompression
      * @param array $files An associative array mapping ZIP paths to local paths.
      * @param string $destination The destination directory to extract to.
      *
-     * @return self
      *
      * @throws Exception If any of the files fail to extract.
      */
@@ -379,8 +378,6 @@ class FileCompression
      * Close the ZIP archive.
      *
      * This method is a no-op if the archive is already closed.
-     *
-     * @return self
      */
     public function save(): self
     {
@@ -413,7 +410,6 @@ class FileCompression
      *
      * @param int $algorithm The encryption algorithm to set. Must be one of
      *     ZipArchive::EM_AES_256 or ZipArchive::EM_AES_128.
-     * @return self
      * @throws CompressionException If an invalid encryption algorithm is specified.
      */
     public function setEncryptionAlgorithm(int $algorithm): self
@@ -438,8 +434,8 @@ class FileCompression
      */
     public function setGlobPatterns(array $includePatterns = [], array $excludePatterns = []): self
     {
-        $this->includePatterns = array_values(array_filter(array_map('trim', $includePatterns), fn ($v) => $v !== ''));
-        $this->excludePatterns = array_values(array_filter(array_map('trim', $excludePatterns), fn ($v) => $v !== ''));
+        $this->includePatterns = array_values(array_filter(array_map(trim(...), $includePatterns), fn($v) => $v !== ''));
+        $this->excludePatterns = array_values(array_filter(array_map(trim(...), $excludePatterns), fn($v) => $v !== ''));
 
         return $this;
     }
@@ -449,7 +445,7 @@ class FileCompression
      */
     public function setIgnoreFileNames(array $ignoreFileNames): self
     {
-        $this->ignoreFileNames = array_values(array_filter(array_map('trim', $ignoreFileNames), fn ($v) => $v !== ''));
+        $this->ignoreFileNames = array_values(array_filter(array_map(trim(...), $ignoreFileNames), fn($v) => $v !== ''));
 
         return $this;
     }
@@ -464,8 +460,6 @@ class FileCompression
      * @param callable $logger The logger callable. The callable should accept
      *   two arguments: the first is a string message, and the second is the
      *   ZipArchive object.
-     *
-     * @return self
      */
     public function setLogger(callable $logger): self
     {
@@ -478,7 +472,6 @@ class FileCompression
      * Set the password for the ZIP archive.
      *
      * @param string $password The password to encrypt the ZIP archive with.
-     * @return self
      */
     public function setPassword(string $password): self
     {
@@ -751,11 +744,6 @@ class FileCompression
         $this->cleanupDeferredLocalizedPaths();
     }
 
-    private function copyFlysystemFileToLocal(string $sourcePath, string $localTarget): void
-    {
-        $this->doCopyFlysystemFileToLocal($sourcePath, $localTarget);
-    }
-
     private function copyLocalDirectoryToFlysystem(string $localSource, string $destination): void
     {
         $iterator = new \RecursiveIteratorIterator(
@@ -815,7 +803,7 @@ class FileCompression
             }
 
             $relative = $this->getRelativePath($item->getPathname(), $source);
-            if (!empty($extensions) && !in_array(pathinfo($item->getPathname(), PATHINFO_EXTENSION), $extensions, true)) {
+            if (!empty($extensions) && !in_array(pathinfo((string) $item->getPathname(), PATHINFO_EXTENSION), $extensions, true)) {
                 continue;
             }
             if ($this->shouldIncludePath($relative)) {
@@ -860,11 +848,6 @@ class FileCompression
                 'total' => $total,
             ]);
         }
-    }
-
-    private function ensureLocalDirectoryExists(string $path): void
-    {
-        $this->doEnsureLocalDirectoryExists($path);
     }
 
     private function extractArchive(string $extractDestination, string $destination, bool $isRemoteDestination): void
@@ -937,11 +920,6 @@ class FileCompression
         if (is_callable($this->logger)) {
             ($this->logger)($message);
         }
-    }
-
-    private function materializeDirectoryToLocal(string $sourcePath, string $localDirectory): void
-    {
-        $this->doMaterializeDirectoryToLocal($sourcePath, $localDirectory);
     }
 
     private function normalizeZipPath(string $path): string
@@ -1026,16 +1004,6 @@ class FileCompression
         }
 
         return PathHelper::normalize($destination);
-    }
-
-    private function resolveMaterializationBase(string $sourcePath): string
-    {
-        return $this->doResolveMaterializationBase($sourcePath);
-    }
-
-    private function resolveMaterializedRelativePath(array $item, string $base): ?string
-    {
-        return $this->doResolveMaterializedRelativePath($item, $base);
     }
 
     private function resolveWorkingZipPath(bool $create): string

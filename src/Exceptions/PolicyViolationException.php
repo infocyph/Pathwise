@@ -2,6 +2,4 @@
 
 namespace Infocyph\Pathwise\Exceptions;
 
-class PolicyViolationException extends \RuntimeException
-{
-}
+class PolicyViolationException extends \RuntimeException {}

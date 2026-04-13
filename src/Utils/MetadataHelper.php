@@ -181,7 +181,7 @@ class MetadataHelper
             return null;
         }
 
-        return array_map(fn ($time) => date('Y-m-d H:i:s', $time), $timestamps);
+        return array_map(fn($time) => date('Y-m-d H:i:s', $time), $timestamps);
     }
 
     /**
