@@ -23,9 +23,18 @@ Optional extensions:
 Optional adapter packages (choose per driver):
 
 * AWS S3: ``league/flysystem-aws-s3-v3`` + ``aws/aws-sdk-php``
+* Async AWS S3: ``league/flysystem-async-aws-s3`` + ``async-aws/s3``
+* Azure Blob Storage: ``league/flysystem-azure-blob-storage``
+* Google Cloud Storage: ``league/flysystem-google-cloud-storage``
+* MongoDB GridFS: ``league/flysystem-gridfs``
 * SFTP: ``league/flysystem-sftp-v3``
+* SFTP (V2): ``league/flysystem-sftp-v2``
 * FTP: ``league/flysystem-ftp``
-* Async AWS S3: ``league/flysystem-async-aws-s3``
+* WebDAV: ``league/flysystem-webdav``
+* ZIP archive: ``league/flysystem-ziparchive``
+* In-memory: ``league/flysystem-memory``
+* Read-only wrapper: ``league/flysystem-read-only``
+* Path prefixing wrapper: ``league/flysystem-path-prefixing``
 
 See ``storage-adapters`` for setup patterns.
 

@@ -110,6 +110,30 @@ test('it supports custom registered drivers', function () {
     }
 });
 
+test('it exposes official adapter metadata and package lookup', function () {
+    $official = StorageFactory::officialDrivers();
+
+    expect($official)->toHaveKeys([
+        'local',
+        'ftp',
+        'inmemory',
+        'read-only',
+        'path-prefixing',
+        'aws-s3',
+        'async-aws-s3',
+        'azure-blob-storage',
+        'google-cloud-storage',
+        'mongodb-gridfs',
+        'sftp-v2',
+        'sftp-v3',
+        'webdav',
+        'ziparchive',
+    ])
+        ->and(StorageFactory::suggestedPackage('s3'))->toBe('league/flysystem-aws-s3-v3')
+        ->and(StorageFactory::suggestedPackage('in-memory'))->toBe('league/flysystem-memory')
+        ->and(StorageFactory::suggestedPackage('zip'))->toBe('league/flysystem-ziparchive');
+});
+
 test('it mounts multiple storages from config map', function () {
     $rootA = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('storage_many_a_', true);
     $rootB = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('storage_many_b_', true);
@@ -136,11 +160,42 @@ test('it mounts multiple storages from config map', function () {
 });
 
 test('it throws for unsupported driver', function () {
-    expect(fn () => StorageFactory::createFilesystem(['driver' => 's3']))
+    expect(fn () => StorageFactory::createFilesystem(['driver' => 'made-up-driver']))
         ->toThrow(InvalidArgumentException::class, 'Unsupported storage driver');
 });
 
 test('it throws for local driver without root', function () {
     expect(fn () => StorageFactory::createFilesystem(['driver' => 'local']))
         ->toThrow(InvalidArgumentException::class, 'Local driver requires a non-empty "root" path');
+});
+
+test('it provides package guidance for missing official drivers', function () {
+    $adapterClass = StorageFactory::officialDrivers()['aws-s3']['adapter_class'];
+
+    if (!class_exists($adapterClass)) {
+        expect(fn () => StorageFactory::createFilesystem(['driver' => 's3']))
+            ->toThrow(InvalidArgumentException::class, 'league/flysystem-aws-s3-v3');
+
+        return;
+    }
+
+    expect(fn () => StorageFactory::createFilesystem(['driver' => 's3']))
+        ->toThrow(InvalidArgumentException::class, "requires either 'adapter' or 'constructor'");
+});
+
+test('it supports in-memory driver when adapter package exists', function () {
+    $metadata = StorageFactory::officialDrivers()['inmemory'];
+    $adapterClass = $metadata['adapter_class'];
+
+    if (!class_exists($adapterClass)) {
+        expect(fn () => StorageFactory::createFilesystem(['driver' => 'in-memory']))
+            ->toThrow(InvalidArgumentException::class, $metadata['package']);
+
+        return;
+    }
+
+    $filesystem = StorageFactory::createFilesystem(['driver' => 'in-memory']);
+    $filesystem->write('memory.txt', 'memory-data');
+
+    expect($filesystem->read('memory.txt'))->toBe('memory-data');
 });

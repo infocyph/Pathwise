@@ -20,6 +20,40 @@ What ``StorageFactory`` Supports
 
 ``StorageFactory::mountMany(array $mounts)`` mounts multiple storages at once.
 
+Driver config modes:
+
+* direct adapter object:
+  ``['driver' => 'aws-s3', 'adapter' => $adapter]``
+* constructor arguments for official adapter classes:
+  ``['driver' => 'aws-s3', 'constructor' => [$client, $bucket, $prefix]]``
+
+``StorageFactory`` also exposes:
+
+* ``StorageFactory::officialDrivers()`` for official driver metadata.
+* ``StorageFactory::suggestedPackage($driver)`` for install guidance.
+
+Official Adapter Coverage
+-------------------------
+
+The following official Flysystem adapters are mapped by driver key:
+
+* ``local`` -> ``league/flysystem-local`` -> ``League\Flysystem\Local\LocalFilesystemAdapter``
+* ``ftp`` -> ``league/flysystem-ftp`` -> ``League\Flysystem\Ftp\FtpAdapter``
+* ``inmemory`` (alias: ``in-memory``) -> ``league/flysystem-memory`` -> ``League\Flysystem\InMemory\InMemoryFilesystemAdapter``
+* ``read-only`` (alias: ``readonly``) -> ``league/flysystem-read-only`` -> ``League\Flysystem\ReadOnly\ReadOnlyFilesystemAdapter``
+* ``path-prefixing`` (alias: ``path-prefix``) -> ``league/flysystem-path-prefixing`` -> ``League\Flysystem\PathPrefixing\PathPrefixedAdapter``
+* ``aws-s3`` (aliases: ``s3``, ``aws``) -> ``league/flysystem-aws-s3-v3`` -> ``League\Flysystem\AwsS3V3\AwsS3V3Adapter``
+* ``async-aws-s3`` -> ``league/flysystem-async-aws-s3`` -> ``League\Flysystem\AsyncAwsS3\AsyncAwsS3Adapter``
+* ``azure-blob-storage`` (alias: ``azure``) -> ``league/flysystem-azure-blob-storage`` -> ``League\Flysystem\AzureBlobStorage\AzureBlobStorageAdapter``
+* ``google-cloud-storage`` (alias: ``gcs``) -> ``league/flysystem-google-cloud-storage`` -> ``League\Flysystem\GoogleCloudStorage\GoogleCloudStorageAdapter``
+* ``mongodb-gridfs`` (alias: ``gridfs``) -> ``league/flysystem-gridfs`` -> ``League\Flysystem\GridFS\GridFSAdapter``
+* ``sftp-v2`` (alias: ``sftp2``) -> ``league/flysystem-sftp-v2`` -> ``League\Flysystem\PhpseclibV2\SftpAdapter``
+* ``sftp-v3`` (alias: ``sftp3``) -> ``league/flysystem-sftp-v3`` -> ``League\Flysystem\PhpseclibV3\SftpAdapter``
+* ``webdav`` -> ``league/flysystem-webdav`` -> ``League\Flysystem\WebDAV\WebDAVAdapter``
+* ``ziparchive`` (alias: ``zip``) -> ``league/flysystem-ziparchive`` -> ``League\Flysystem\ZipArchive\ZipArchiveAdapter``
+
+If a package is missing, ``StorageFactory`` throws an install hint with the package name.
+
 Basic Local Example
 -------------------
 
@@ -69,6 +103,31 @@ Then pass the adapter directly:
 
    // Works with all Pathwise modules that accept paths:
    // s3://uploads/a.pdf
+
+Constructor mode example (official drivers):
+
+.. code-block:: php
+
+   StorageFactory::mount('s3', [
+       'driver' => 's3',
+       'constructor' => [$client, 'my-bucket', 'app-prefix'],
+   ]);
+
+Read-only/path-prefix wrappers (official adapters):
+
+.. code-block:: php
+
+   use League\Flysystem\Local\LocalFilesystemAdapter;
+
+   StorageFactory::mount('readonly', [
+       'driver' => 'read-only',
+       'constructor' => [new LocalFilesystemAdapter('/srv/storage')],
+   ]);
+
+   StorageFactory::mount('prefixed', [
+       'driver' => 'path-prefixing',
+       'constructor' => [new LocalFilesystemAdapter('/srv/storage'), 'tenant-a'],
+   ]);
 
 Custom Driver Registration
 --------------------------

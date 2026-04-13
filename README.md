@@ -69,6 +69,20 @@ Requirements:
 
 Pathwise supports any Flysystem adapter. You can mount storages through `StorageFactory` and use them with all modules (`UploadProcessor`, `DownloadProcessor`, `FileOperations`, etc.).
 
+`StorageFactory` supports:
+- `['driver' => 'local', 'root' => '/path']`
+- `['driver' => 'aws-s3', 'adapter' => $adapter]`
+- `['driver' => 'aws-s3', 'constructor' => [...]]`
+- `['filesystem' => $filesystemOperator]`
+- custom drivers via `StorageFactory::registerDriver()`
+
+Official adapter driver keys covered:
+- `local`, `ftp`, `inmemory` (`in-memory`)
+- `read-only`, `path-prefixing`
+- `aws-s3` (`s3`), `async-aws-s3`
+- `azure-blob-storage`, `google-cloud-storage`, `mongodb-gridfs`
+- `sftp-v2`, `sftp-v3`, `webdav`, `ziparchive`
+
 ### **Local Driver**
 
 ```php
