@@ -17,6 +17,7 @@ queue/audit tooling, and operational helpers.
    file-manager
    directory-manager
    upload-processing
+   download-processing
    security
    queue
    observability

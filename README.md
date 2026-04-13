@@ -59,7 +59,7 @@ Requirements:
 - Mount support with scheme paths (`name://path`) and default filesystem support for relative paths.
 - Advanced file APIs: checksum verification, visibility controls, URL passthrough (`publicUrl`, `temporaryUrl`).
 - Directory automation: sync with diff report, recursive copy/move/delete, mounted-path ZIP/unzip bridging.
-- Upload pipelines: chunked/resumable uploads, validation profiles (image/video/document), extension allow/deny controls, strict MIME/signature checks, upload-id safety validation, malware-scan hook.
+- Upload/download pipelines: chunked/resumable uploads, validation profiles (image/video/document), extension allow/deny controls, strict MIME/signature checks, upload-id safety validation, malware-scan hook, secure download metadata + range handling.
 - Compression workflows: include/exclude glob patterns, ignore files, progress callbacks, hooks, optional native acceleration.
 - Operational tooling: `AuditTrail`, `FileJobQueue`, `FileWatcher`, `RetentionManager` and policy engine support.
 
