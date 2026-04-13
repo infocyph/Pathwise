@@ -1,42 +1,39 @@
 # Pathwise: File Management Made Simple
 
-[![Codacy Badge](https://app.codacy.com/project/badge/Grade/5028848d26e34f5e883aa248a8885811)](https://app.codacy.com/gh/infocyph/Pathwise/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
-![Libraries.io dependency status for GitHub repo](https://img.shields.io/librariesio/github/infocyph/pathwise)
-![Packagist Downloads](https://img.shields.io/packagist/dt/infocyph/pathwise)
+[![Security & Standards](https://github.com/infocyph/Pathwise/actions/workflows/build.yml/badge.svg)](https://github.com/infocyph/Pathwise/actions/workflows/build.yml)
+[![Documentation](https://img.shields.io/badge/Documentation-Pathwise-blue?logo=readthedocs&logoColor=white)](https://docs.infocyph.com/projects/pathwise/)
+![Packagist Downloads](https://img.shields.io/packagist/dt/infocyph/pathwise?color=green&link=https%3A%2F%2Fpackagist.org%2Fpackages%2Finfocyph%2Fpathwise)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 ![Packagist Version](https://img.shields.io/packagist/v/infocyph/pathwise)
-![Packagist PHP Version Support](https://img.shields.io/packagist/php-v/infocyph/pathwise)
-![GitHub code size in bytes](https://img.shields.io/github/languages/code-size/infocyph/pathwise)
+![Packagist PHP Version](https://img.shields.io/packagist/dependency-v/infocyph/pathwise/php)
+![GitHub Code Size](https://img.shields.io/github/languages/code-size/infocyph/pathwise)
 
-Pathwise is a robust PHP library designed as **Flysystem + more** for streamlined file and directory management. It combines Flysystem-backed storage operations with higher-level workflows like safe reading/writing, metadata extraction, compression, upload pipelines, policy enforcement, and observability.
+Pathwise is a robust PHP library designed as streamlined file and directory management. It combines storage operations with higher-level workflows like safe reading/writing, metadata extraction, compression, upload pipelines, policy enforcement and observability.
 
 ## **Table of Contents**
 1. [Introduction](#pathwise-file-management-made-simple)
 2. [Prerequisites](#prerequisites)
 3. [Installation](#installation)
 4. [Features Overview](#features-overview)
-5. [Documentation Map](#documentation-map)
-6. [Quality Gates](#quality-gates)
-7. [FileManager](#filemanager)
+5. [Quality Gates](#quality-gates)
+6. [FileManager](#filemanager)
     - [SafeFileReader](#safefilereader)
     - [SafeFileWriter](#safefilewriter)
     - [FileOperations](#fileoperations)
     - [FileCompression](#filecompression)
-8. [DirectoryManager](#directorymanager)
+7. [DirectoryManager](#directorymanager)
     - [DirectoryOperations](#directoryoperations)
-9. [Utils](#utils)
+8. [Utils](#utils)
     - [PathHelper](#pathhelper)
     - [PermissionsHelper](#permissionshelper)
     - [MetadataHelper](#metadatahelper)
-10. [Handy Functions](#handy-functions)
-    - [File and Directory Utilities](#file-and-directory-utilities)
-11. [Support](#support)
-12. [License](#license)
+9. [Handy Functions](#handy-functions)
+   - [File and Directory Utilities](#file-and-directory-utilities)
+10. [Support](#support)
+11. [License](#license)
 
 ## **Prerequisites**
 - Language: PHP 8.4/+
-
-
 
 ## **Installation**
 Pathwise is available via Composer:
@@ -47,7 +44,6 @@ composer require infocyph/pathwise
 
 Requirements:
 - PHP 8.4 or higher
-- `league/flysystem` 3.x
 - `ext-fileinfo`
 - Optional Extensions:
     - `ext-zip`: Required for compression features.
@@ -59,54 +55,17 @@ Requirements:
 
 ## **Features Overview**
 
-- Flysystem-first filesystem operations across core modules.
+- Filesystem operations across core modules.
 - Mount support with scheme paths (`name://path`) and default filesystem support for relative paths.
 - Advanced file APIs: checksum verification, visibility controls, URL passthrough (`publicUrl`, `temporaryUrl`).
 - Directory automation: sync with diff report, recursive copy/move/delete, mounted-path ZIP/unzip bridging.
-- Upload pipelines: chunked/resumable uploads, validation profiles (image/video/document), malware-scan hook.
+- Upload pipelines: chunked/resumable uploads, validation profiles (image/video/document), extension allow/deny controls, strict MIME/signature checks, upload-id safety validation, malware-scan hook.
 - Compression workflows: include/exclude glob patterns, ignore files, progress callbacks, hooks, optional native acceleration.
-- Operational tooling: `AuditTrail`, `FileJobQueue`, `FileWatcher`, `RetentionManager`, and policy engine support.
-
-## **Documentation Map**
-
-If you are new to Pathwise, read in this order:
-
-1. [Overview](docs/overview.rst)
-2. [Capabilities](docs/capabilities.rst)
-3. [Quickstart](docs/quickstart.rst)
-4. [Recipes](docs/recipes.rst)
-
-Then use module pages for details:
-
-- [File Manager](docs/file-manager.rst)
-- [Directory Manager](docs/directory-manager.rst)
-- [Upload Processing](docs/upload-processing.rst)
-- [Security](docs/security.rst)
-- [Queue](docs/queue.rst)
-- [Observability](docs/observability.rst)
-- [Indexing](docs/indexing.rst)
-- [Retention](docs/retention.rst)
-- [Utilities](docs/utilities.rst)
-
-## **Quality Gates**
-
-Pathwise includes a cognitive complexity gate powered by `tomasvotruba/cognitive-complexity` on top of PHPStan.
-
-Run it locally:
-
-```bash
-composer test:phpstan
-```
-
-Current thresholds (see `phpstan.neon.dist`):
-
-- Class cognitive complexity: `250`
-- Function/method cognitive complexity: `9`
-- Dependency-tree complexity: `400`
+- Operational tooling: `AuditTrail`, `FileJobQueue`, `FileWatcher`, `RetentionManager` and policy engine support.
 
 ## **FileManager**
 
-The `FileManager` module provides classes for handling files, including reading, writing, compressing, and general file operations.
+The `FileManager` module provides classes for handling files, including reading, writing, compressing and general file operations.
 
 ### **SafeFileReader**
 
@@ -115,7 +74,7 @@ A memory-safe file reader supporting various reading modes (line-by-line, binary
 #### **Key Features**
 - Supports multiple reading modes.
 - Provides locking to prevent concurrent access issues.
-- Implements `Countable`, `Iterator`, and `SeekableIterator`.
+- Implements `Countable`, `Iterator` and `SeekableIterator`.
 
 #### **Usage Example**
 
@@ -137,7 +96,7 @@ foreach ($reader->json() as $data) {
 
 ### **SafeFileWriter**
 
-A memory-safe file writer with support for various writing modes, including CSV, JSON, binary, and more.
+A memory-safe file writer with support for various writing modes, including CSV, JSON, binary and more.
 
 #### **Key Features**
 - Supports multiple writing modes.
@@ -160,12 +119,12 @@ $writer->json(['key' => 'value']);
 
 ### **FileOperations**
 
-General-purpose file handling class for creating, deleting, copying, renaming, and manipulating files.
+General-purpose file handling class for creating, deleting, copying, renaming and manipulating files.
 
 #### **Key Features**
 - File creation and deletion.
 - Append and update content.
-- Rename, copy, and metadata retrieval.
+- Rename, copy and metadata retrieval.
 
 #### **Usage Example**
 
@@ -210,16 +169,16 @@ $compression->decompress('/path/to/extract/');
 
 ## **DirectoryManager**
 
-The `DirectoryManager` module offers tools for handling directory creation, deletion, and traversal.
+The `DirectoryManager` module offers tools for handling directory creation, deletion and traversal.
 
 
 ### **DirectoryOperations**
 
-Provides comprehensive tools for managing directories, including creation, deletion, copying, and listing contents.
+Provides comprehensive tools for managing directories, including creation, deletion, copying and listing contents.
 
 #### **Key Features**
-- Create, delete, and copy directories.
-- Retrieve directory size, depth, and contents.
+- Create, delete and copy directories.
+- Retrieve directory size, depth and contents.
 - Supports recursive operations and filtering.
 
 #### **Usage Example**
@@ -241,12 +200,12 @@ print_r($contents);
 
 ## **Utils**
 
-Utility classes for managing paths, permissions, and metadata.
+Utility classes for managing paths, permissions and metadata.
 
 
 ### **PathHelper**
 
-Provides utilities for working with file paths, including joining, normalizing, and converting between relative and absolute paths.
+Provides utilities for working with file paths, including joining, normalizing and converting between relative and absolute paths.
 
 #### **Key Features**
 - Path joining and normalization.
@@ -267,11 +226,11 @@ echo $joinedPath;
 
 ### **PermissionsHelper**
 
-Handles file and directory permissions, ownership, and access control.
+Handles file and directory permissions, ownership and access control.
 
 #### **Key Features**
 - Retrieve and set permissions.
-- Check read, write, and execute access.
+- Check read, write and execute access.
 - Retrieve and set ownership details.
 
 #### **Usage Example**
@@ -290,7 +249,7 @@ if (PermissionsHelper::canWrite('/path/to/file')) {
 
 ### **MetadataHelper**
 
-Extracts metadata for files and directories, such as size, timestamps, MIME type, and more.
+Extracts metadata for files and directories, such as size, timestamps, MIME type and more.
 
 #### **Key Features**
 - Retrieve file size and type.

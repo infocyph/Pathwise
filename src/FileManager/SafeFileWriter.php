@@ -44,9 +44,7 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      * @param string $filename The name of the file to write to.
      * @param bool $append Whether to append to the existing file or truncate it.
      */
-    public function __construct(private readonly string $filename, private readonly bool $append = false)
-    {
-    }
+    public function __construct(private readonly string $filename, private readonly bool $append = false) {}
 
     /**
      * Closes the file and releases any system resources associated with it.

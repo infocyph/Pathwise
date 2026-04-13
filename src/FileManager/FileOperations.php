@@ -26,8 +26,6 @@ class FileOperations
 
     /**
      * Constructor to initialize the file path.
-     *
-     * @param string $filePath
      */
     public function __construct(protected string $filePath)
     {
@@ -36,9 +34,6 @@ class FileOperations
 
     /**
      * Append content to the file.
-     *
-     * @param string $content
-     * @return self
      */
     public function append(string $content): self
     {
@@ -74,9 +69,6 @@ class FileOperations
 
     /**
      * Copy the file to a new location.
-     *
-     * @param string $destination
-     * @return self
      */
     public function copy(string $destination, ?callable $progress = null): self
     {
@@ -148,9 +140,6 @@ class FileOperations
 
     /**
      * Create or overwrite the file with optional content.
-     *
-     * @param string|null $content
-     * @return self
      */
     public function create(?string $content = ''): self
     {
@@ -171,8 +160,6 @@ class FileOperations
 
     /**
      * Delete the file.
-     *
-     * @return self
      */
     public function delete(): self
     {
@@ -195,8 +182,6 @@ class FileOperations
 
     /**
      * Check if a file exists at the given path.
-     *
-     * @return bool
      */
     public function exists(): bool
     {
@@ -205,8 +190,6 @@ class FileOperations
 
     /**
      * Get the line count of the file using SplFileObject.
-     *
-     * @return int
      */
     public function getLineCount(): int
     {
@@ -217,8 +200,6 @@ class FileOperations
 
     /**
      * Get all metadata for the file.
-     *
-     * @return array
      */
     public function getMetadata(): array
     {
@@ -239,7 +220,6 @@ class FileOperations
     /**
      * Check if a file is readable.
      *
-     * @return bool
      * @throws FileNotFoundException
      */
     public function isReadable(): bool
@@ -253,9 +233,6 @@ class FileOperations
     /**
      * Open the file with a lock, optionally with a timeout.
      *
-     * @param bool $exclusive
-     * @param int $timeout
-     * @return self
      * @throws FileAccessException
      */
     public function openWithLock(bool $exclusive = true, int $timeout = 0): self
@@ -288,7 +265,6 @@ class FileOperations
     /**
      * Read content from the file.
      *
-     * @return string
      * @throws FileNotFoundException
      */
     public function read(): string
@@ -306,9 +282,6 @@ class FileOperations
 
     /**
      * Rename or move the file to a new location.
-     *
-     * @param string $newPath
-     * @return self
      */
     public function rename(string $newPath): self
     {
@@ -344,9 +317,6 @@ class FileOperations
 
     /**
      * Search for a term in the file using OS-native commands and return matching lines.
-     *
-     * @param string $searchTerm
-     * @return array
      */
     public function searchContent(string $searchTerm): array
     {
@@ -385,9 +355,6 @@ class FileOperations
 
     /**
      * Set file group.
-     *
-     * @param int $groupId
-     * @return self
      */
     public function setGroup(int $groupId): self
     {
@@ -401,9 +368,6 @@ class FileOperations
 
     /**
      * Set file owner.
-     *
-     * @param int $ownerId
-     * @return self
      */
     public function setOwner(int $ownerId): self
     {
@@ -417,9 +381,6 @@ class FileOperations
 
     /**
      * Set file permissions.
-     *
-     * @param int $permissions
-     * @return self
      */
     public function setPermissions(int $permissions): self
     {
@@ -482,8 +443,6 @@ class FileOperations
 
     /**
      * Unlock the file.
-     *
-     * @return self
      */
     public function unlock(): self
     {
@@ -493,9 +452,6 @@ class FileOperations
 
     /**
      * Overwrite the file with new content.
-     *
-     * @param string $content
-     * @return self
      */
     public function update(string $content): self
     {
@@ -564,9 +520,6 @@ class FileOperations
 
     /**
      * Initialize the SplFileObject.
-     *
-     * @param string $mode
-     * @return self
      */
     protected function initFile(string $mode = 'r'): self
     {

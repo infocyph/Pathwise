@@ -229,7 +229,7 @@ trait FsConcern
 
         return array_all(
             array_merge($this->excludePatterns, $this->ignorePatterns),
-            fn ($pattern) => !fnmatch($pattern, $relativePath)
+            fn($pattern) => !fnmatch($pattern, $relativePath),
         );
     }
 
@@ -241,7 +241,7 @@ trait FsConcern
         }
 
         foreach (array_merge($this->excludePatterns, $this->ignorePatterns) as $pattern) {
-            $pattern = trim($pattern);
+            $pattern = trim((string) $pattern);
             if ($pattern === '') {
                 continue;
             }

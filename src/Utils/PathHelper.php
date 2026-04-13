@@ -269,11 +269,8 @@ class PathHelper
     public static function normalize(string $path): string
     {
         $originalPath = $path;
-        if (isset(self::$cache[$originalPath])) {
-            return self::$cache[$originalPath];
-        }
 
-        return self::$cache[$originalPath] = self::normalizeUncached($path);
+        return self::$cache[$originalPath] ?? self::$cache[$originalPath] = self::normalizeUncached($path);
     }
 
     /**

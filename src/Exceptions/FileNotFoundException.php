@@ -2,6 +2,4 @@
 
 namespace Infocyph\Pathwise\Exceptions;
 
-class FileNotFoundException extends \Exception
-{
-}
+class FileNotFoundException extends \Exception {}

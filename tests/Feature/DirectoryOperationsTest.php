@@ -231,3 +231,34 @@ test('unzip throws when source archive does not exist', function () {
     expect(fn () => $this->directoryOperations->unzip($this->tempDir . DIRECTORY_SEPARATOR . 'missing.zip'))
         ->toThrow(DirectoryOperationException::class);
 });
+
+test('unzip rejects zip-slip traversal entries', function () {
+    $zipPath = $this->tempDir . DIRECTORY_SEPARATOR . uniqid('archive_', true) . '.zip';
+    $zip = new ZipArchive;
+    $zip->open($zipPath, ZipArchive::CREATE);
+    $zip->addFromString('../outside_zip_slip.txt', 'malicious');
+    $zip->close();
+
+    $unzipDir = createTempDirectory();
+    $outsidePath = dirname($unzipDir) . DIRECTORY_SEPARATOR . 'outside_zip_slip.txt';
+
+    if (file_exists($outsidePath)) {
+        unlink($outsidePath);
+    }
+
+    try {
+        $dirOps = new DirectoryOperations($unzipDir);
+
+        expect(fn () => $dirOps->unzip($zipPath))
+            ->toThrow(DirectoryOperationException::class, 'Unsafe ZIP entry path');
+
+        expect(file_exists($outsidePath))->toBeFalse();
+    } finally {
+        if (is_dir($unzipDir)) {
+            (new DirectoryOperations($unzipDir))->delete(true);
+        }
+        if (file_exists($outsidePath)) {
+            unlink($outsidePath);
+        }
+    }
+});

@@ -52,8 +52,7 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
         private readonly string $filename,
         private readonly string $mode = 'r',
         private readonly bool $exclusiveLock = false,
-    ) {
-    }
+    ) {}
 
     /**
      * Destructor for the SafeFileReader class.
@@ -273,6 +272,23 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
         }
     }
 
+    private function containsObjectValue(mixed $value, int $depth = 0): bool
+    {
+        if ($depth > 256) {
+            return true;
+        }
+
+        if (is_object($value)) {
+            return true;
+        }
+
+        if (!is_array($value)) {
+            return false;
+        }
+
+        return array_any($value, fn($item) => $this->containsObjectValue($item, $depth + 1));
+    }
+
     /**
      * Iterates over the file line by line, splitting each line into an array using the given CSV settings.
      *
@@ -295,6 +311,20 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
                 $this->count++;
             }
         }
+    }
+
+    private function deserializeValue(string $serializedLine): mixed
+    {
+        $result = unserialize($serializedLine, ['allowed_classes' => false]);
+        if ($result === false && $serializedLine !== 'b:0;') {
+            throw new Exception('Failed to unserialize data.');
+        }
+
+        if ($this->containsObjectValue($result)) {
+            throw new Exception('Serialized objects are not allowed.');
+        }
+
+        return $result;
     }
 
     /**
@@ -529,10 +559,7 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
         while (!$this->file->eof()) {
             $serializedLine = trim($this->file->fgets());
             if ($serializedLine) {
-                $result = unserialize($serializedLine);
-                if ($result === false && $serializedLine !== 'b:0;') {
-                    throw new Exception('Failed to unserialize data.');
-                }
+                $result = $this->deserializeValue($serializedLine);
                 yield $result;
                 $this->position++;
                 $this->count++;

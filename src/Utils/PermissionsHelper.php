@@ -82,7 +82,7 @@ class PermissionsHelper
             0x0001 => ($permissions & 0x0200) ? 't' : 'x',
         ];
 
-        return array_reduce(array_keys($flags), fn ($info, $flag) => $info . (($permissions & $flag) ? $flags[$flag] : '-'), '');
+        return array_reduce(array_keys($flags), fn($info, $flag) => $info . (($permissions & $flag) ? $flags[$flag] : '-'), '');
     }
 
 

@@ -234,7 +234,7 @@ final class FlysystemHelper
         }
 
         /** @var callable $callable */
-        $callable = [$filesystem, 'publicUrl'];
+        $callable = $filesystem->publicUrl(...);
 
         return $callable($location, $config);
     }
@@ -305,7 +305,7 @@ final class FlysystemHelper
         }
 
         /** @var callable $callable */
-        $callable = [$filesystem, 'temporaryUrl'];
+        $callable = $filesystem->temporaryUrl(...);
 
         return $callable($location, $expiresAt, $config);
     }
@@ -447,9 +447,8 @@ final class FlysystemHelper
         } catch (\Throwable) {
             $normalized['visibility'] = null;
         }
-        $normalized = array_merge($normalized, $item->extraMetadata());
 
-        return $normalized;
+        return array_merge($normalized, $item->extraMetadata());
     }
 
     /**
