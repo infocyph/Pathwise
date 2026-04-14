@@ -303,6 +303,12 @@ class DirectoryOperations
         return $contents;
     }
 
+    /**
+     * List directory contents as a DirectoryListing object.
+     *
+     * @param bool $deep Whether to list contents recursively. Defaults to true.
+     * @return DirectoryListing The directory listing.
+     */
     public function listContentsListing(bool $deep = true): DirectoryListing
     {
         return FlysystemHelper::listContentsListing($this->path, $deep);
@@ -363,6 +369,12 @@ class DirectoryOperations
         return true;
     }
 
+    /**
+     * Set the execution strategy for directory operations.
+     *
+     * @param ExecutionStrategy $executionStrategy The execution strategy to use.
+     * @return self This instance for method chaining.
+     */
     public function setExecutionStrategy(ExecutionStrategy $executionStrategy): self
     {
         $this->executionStrategy = $executionStrategy;
@@ -385,6 +397,12 @@ class DirectoryOperations
         return chmod($this->path, $permissions);
     }
 
+    /**
+     * Set the visibility of the directory.
+     *
+     * @param string $visibility The visibility to set (e.g., 'public' or 'private').
+     * @return self This instance for method chaining.
+     */
     public function setVisibility(string $visibility): self
     {
         FlysystemHelper::setVisibility($this->path, $visibility);
@@ -486,6 +504,12 @@ class DirectoryOperations
         }
     }
 
+    /**
+     * Get the visibility of the directory.
+     *
+     * @return string|null The visibility, or null if not available.
+     * @throws DirectoryOperationException If the directory does not exist.
+     */
     public function visibility(): ?string
     {
         if (!FlysystemHelper::directoryExists($this->path)) {

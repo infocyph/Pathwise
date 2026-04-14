@@ -4,6 +4,12 @@ namespace Infocyph\Pathwise\Native;
 
 final class NativeCommandRunner
 {
+    /**
+     * Check if a command exists on the system.
+     *
+     * @param string $command The command to check.
+     * @return bool True if the command exists, false otherwise.
+     */
     public static function commandExists(string $command): bool
     {
         $lookup = PHP_OS_FAMILY === 'Windows'

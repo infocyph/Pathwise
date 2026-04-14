@@ -11,6 +11,14 @@ final class PolicyEngine
      */
     private array $rules = [];
 
+    /**
+     * Allow an operation matching the given pattern.
+     *
+     * @param string $operation The operation to allow (e.g., 'read', 'write', '*').
+     * @param string $pattern The path pattern to match (e.g., '/path/*').
+     * @param callable|null $condition Optional condition callback that must return true.
+     * @return self This instance for method chaining.
+     */
     public function allow(string $operation, string $pattern = '*', ?callable $condition = null): self
     {
         $this->rules[] = [
@@ -23,6 +31,14 @@ final class PolicyEngine
         return $this;
     }
 
+    /**
+     * Assert that an operation is allowed on a path.
+     *
+     * @param string $operation The operation to check.
+     * @param string $path The path to check.
+     * @param array $context Additional context for condition evaluation.
+     * @throws PolicyViolationException If the operation is not allowed.
+     */
     public function assertAllowed(string $operation, string $path, array $context = []): void
     {
         if (!$this->isAllowed($operation, $path, $context)) {
@@ -30,6 +46,14 @@ final class PolicyEngine
         }
     }
 
+    /**
+     * Deny an operation matching the given pattern.
+     *
+     * @param string $operation The operation to deny (e.g., 'read', 'write', '*').
+     * @param string $pattern The path pattern to match (e.g., '/path/*').
+     * @param callable|null $condition Optional condition callback that must return true.
+     * @return self This instance for method chaining.
+     */
     public function deny(string $operation, string $pattern = '*', ?callable $condition = null): self
     {
         $this->rules[] = [
@@ -42,6 +66,14 @@ final class PolicyEngine
         return $this;
     }
 
+    /**
+     * Check if an operation is allowed on a path.
+     *
+     * @param string $operation The operation to check.
+     * @param string $path The path to check.
+     * @param array $context Additional context for condition evaluation.
+     * @return bool True if allowed, false otherwise.
+     */
     public function isAllowed(string $operation, string $path, array $context = []): bool
     {
         $decision = true;

@@ -14,6 +14,21 @@ Pathwise combines two layers:
 Primary Modules
 ---------------
 
+Unified Facade (``Infocyph\Pathwise\File``)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Class:
+
+* ``File``
+
+What you get:
+
+* One path-bound entry to ``FileOperations``, ``DirectoryOperations``,
+  ``SafeFileReader``, ``SafeFileWriter`` and ``FileCompression``.
+* Static gateways for ``UploadProcessor``, ``DownloadProcessor``,
+  ``StorageFactory``, ``PolicyEngine``, ``FileJobQueue``, ``AuditTrail``,
+  ``RetentionManager``, ``ChecksumIndexer`` and ``FileWatcher``.
+
 File IO (``Infocyph\Pathwise\FileManager``)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -122,5 +137,6 @@ Optional:
 What to Read Next
 -----------------
 
+* ``file-facade`` for unified usage style.
 * ``quickstart`` for first-use examples.
 * ``recipes`` for end-to-end flows.

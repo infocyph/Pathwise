@@ -11,7 +11,9 @@ final class FileWatcher
     /**
      * Compare snapshots and return change report.
      *
-     * @return array{created: array, modified: array, deleted: array}
+     * @param array $previousSnapshot The previous snapshot data.
+     * @param array $currentSnapshot The current snapshot data.
+     * @return array{created: array, modified: array, deleted: array} The diff report with created, modified, and deleted files.
      */
     public static function diff(array $previousSnapshot, array $currentSnapshot): array
     {
@@ -47,7 +49,9 @@ final class FileWatcher
     /**
      * Build a snapshot map for a file or directory.
      *
-     * @return array<string, array{mtime: int, size: int}>
+     * @param string $path The path to snapshot.
+     * @param bool $recursive Whether to include subdirectories recursively.
+     * @return array<string, array{mtime: int, size: int}> The snapshot map with file paths as keys.
      */
     public static function snapshot(string $path, bool $recursive = true): array
     {
@@ -100,6 +104,11 @@ final class FileWatcher
     /**
      * Poll for file-system changes and invoke callback on each non-empty diff.
      *
+     * @param string $path The path to watch.
+     * @param callable $onChange Callback invoked when changes detected. Receives diff array.
+     * @param int $durationSeconds How long to watch in seconds. Defaults to 5.
+     * @param int $intervalMilliseconds Polling interval in milliseconds. Defaults to 500.
+     * @param bool $recursive Whether to watch subdirectories. Defaults to true.
      * @return array<string, array{mtime: int, size: int}> Final snapshot.
      */
     public static function watch(

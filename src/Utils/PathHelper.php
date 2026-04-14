@@ -157,6 +157,12 @@ class PathHelper
         return is_link($path) ? 'link' : null;
     }
 
+    /**
+     * Check if a path has a scheme (e.g., 's3://', 'ftp://').
+     *
+     * @param string $path The path to check.
+     * @return bool True if the path has a scheme, false otherwise.
+     */
     public static function hasScheme(string $path): bool
     {
         return preg_match('/^[a-zA-Z0-9._-]+:\/\//', $path) === 1;

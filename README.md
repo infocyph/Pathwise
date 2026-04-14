@@ -59,6 +59,7 @@ Requirements:
 - Filesystem operations across core modules.
 - Mount support with scheme paths (`name://path`) and default filesystem support for relative paths.
 - Config-driven storage bootstrap via `StorageFactory` for local/custom/adapter-based filesystems.
+- Unified entry facade via `Infocyph\Pathwise\File` for file/dir/processors/storage/tooling.
 - Advanced file APIs: checksum verification, visibility controls, URL passthrough (`publicUrl`, `temporaryUrl`).
 - Directory automation: sync with diff report, recursive copy/move/delete, mounted-path ZIP/unzip bridging.
 - Upload/download pipelines: chunked/resumable uploads, validation profiles (image/video/document), extension allow/deny controls, strict MIME/signature checks, upload-id safety validation, malware-scan hook, secure download metadata + range handling.
@@ -135,6 +136,22 @@ StorageFactory::mount('tenant', [
     'driver' => 'tenant-local',
     'tenant' => 'acme',
 ]);
+```
+
+## **Unified File Facade**
+
+Use a single entry point when you want fewer direct class imports.
+
+```php
+use Infocyph\Pathwise\File;
+
+$entry = File::at('/tmp/example.txt');
+$entry->file()->create('hello')->append("\nworld");
+
+$upload = File::upload();
+$download = File::download();
+
+File::mountStorage('assets', ['driver' => 'local', 'root' => '/srv/assets']);
 ```
 
 ## **FileManager**

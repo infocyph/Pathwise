@@ -51,6 +51,11 @@ class FileOperations
         return $this;
     }
 
+    /**
+     * Begin a transaction for atomic file operations.
+     *
+     * @return self This instance for method chaining.
+     */
     public function beginTransaction(): self
     {
         $this->transactionActive = true;
@@ -59,6 +64,11 @@ class FileOperations
         return $this;
     }
 
+    /**
+     * Commit the current transaction.
+     *
+     * @return self This instance for method chaining.
+     */
     public function commitTransaction(): self
     {
         $this->transactionActive = false;
@@ -253,6 +263,13 @@ class FileOperations
         return $this;
     }
 
+    /**
+     * Get the public URL for this file.
+     *
+     * @param array $config Additional configuration for URL generation.
+     * @return string The public URL.
+     * @throws FileNotFoundException If the file does not exist.
+     */
     public function publicUrl(array $config = []): string
     {
         if (!$this->exists()) {
@@ -273,6 +290,12 @@ class FileOperations
         return FlysystemHelper::read($this->filePath);
     }
 
+    /**
+     * Read the file as a stream.
+     *
+     * @return mixed The file stream resource.
+     * @throws FileNotFoundException If the file is not readable.
+     */
     public function readStream(): mixed
     {
         $this->isReadable();
@@ -304,6 +327,11 @@ class FileOperations
         return $this;
     }
 
+    /**
+     * Rollback the current transaction, reverting all changes.
+     *
+     * @return self This instance for method chaining.
+     */
     public function rollbackTransaction(): self
     {
         for ($i = count($this->rollbackActions) - 1; $i >= 0; $i--) {
@@ -339,6 +367,12 @@ class FileOperations
         return $output;
     }
 
+    /**
+     * Set the audit trail for logging operations.
+     *
+     * @param AuditTrail $auditTrail The audit trail instance.
+     * @return self This instance for method chaining.
+     */
     public function setAuditTrail(AuditTrail $auditTrail): self
     {
         $this->auditTrail = $auditTrail;
@@ -346,6 +380,12 @@ class FileOperations
         return $this;
     }
 
+    /**
+     * Set the execution strategy for file operations.
+     *
+     * @param ExecutionStrategy $executionStrategy The execution strategy to use.
+     * @return self This instance for method chaining.
+     */
     public function setExecutionStrategy(ExecutionStrategy $executionStrategy): self
     {
         $this->executionStrategy = $executionStrategy;
@@ -401,6 +441,12 @@ class FileOperations
         return $this;
     }
 
+    /**
+     * Set the policy engine for access control.
+     *
+     * @param PolicyEngine $policyEngine The policy engine instance.
+     * @return self This instance for method chaining.
+     */
     public function setPolicyEngine(PolicyEngine $policyEngine): self
     {
         $this->policyEngine = $policyEngine;
@@ -408,6 +454,12 @@ class FileOperations
         return $this;
     }
 
+    /**
+     * Set the visibility of the file.
+     *
+     * @param string $visibility The visibility to set (e.g., 'public' or 'private').
+     * @return self This instance for method chaining.
+     */
     public function setVisibility(string $visibility): self
     {
         $this->assertPolicy('set-visibility', $this->filePath, ['visibility' => $visibility]);
@@ -417,6 +469,14 @@ class FileOperations
         return $this;
     }
 
+    /**
+     * Get a temporary URL for this file.
+     *
+     * @param DateTimeInterface $expiresAt The expiration time for the URL.
+     * @param array $config Additional configuration for URL generation.
+     * @return string The temporary URL.
+     * @throws FileNotFoundException If the file does not exist.
+     */
     public function temporaryUrl(DateTimeInterface $expiresAt, array $config = []): string
     {
         if (!$this->exists()) {
@@ -426,6 +486,13 @@ class FileOperations
         return FlysystemHelper::temporaryUrl($this->filePath, $expiresAt, $config);
     }
 
+    /**
+     * Execute a callback within a transaction.
+     *
+     * @param callable $callback The callback to execute. Receives this instance as argument.
+     * @return mixed The result of the callback.
+     * @throws \Throwable Re-throws any exception after rollback.
+     */
     public function transaction(callable $callback): mixed
     {
         $this->beginTransaction();
@@ -468,6 +535,15 @@ class FileOperations
         return $this;
     }
 
+    /**
+     * Verify the file's checksum against an expected value.
+     *
+     * @param string $expectedChecksum The expected checksum.
+     * @param string $algorithm The hash algorithm to use. Defaults to 'sha256'.
+     * @return bool True if the checksum matches, false otherwise.
+     * @throws FileAccessException If the algorithm is not supported.
+     * @throws FileNotFoundException If the file does not exist.
+     */
     public function verifyChecksum(string $expectedChecksum, string $algorithm = 'sha256'): bool
     {
         if (!in_array($algorithm, hash_algos(), true)) {
@@ -482,6 +558,12 @@ class FileOperations
         return is_string($fileHash) && hash_equals($expectedChecksum, $fileHash);
     }
 
+    /**
+     * Get the visibility of the file.
+     *
+     * @return string|null The visibility, or null if not available.
+     * @throws FileNotFoundException If the file does not exist.
+     */
     public function visibility(): ?string
     {
         if (!$this->exists()) {
@@ -509,6 +591,13 @@ class FileOperations
         return $this;
     }
 
+    /**
+     * Write to the file from a stream.
+     *
+     * @param mixed $stream The stream resource to write from.
+     * @param array $config Additional configuration for the write operation.
+     * @return self This instance for method chaining.
+     */
     public function writeStream(mixed $stream, array $config = []): self
     {
         $this->assertPolicy('write-stream', $this->filePath);

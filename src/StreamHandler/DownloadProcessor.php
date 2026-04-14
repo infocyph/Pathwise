@@ -24,6 +24,9 @@ class DownloadProcessor
     /**
      * Build secure download metadata for a file path.
      *
+     * @param string $path The file path to download.
+     * @param string|null $downloadName The desired download filename (null to use original).
+     * @param string|null $rangeHeader The HTTP Range header value (null for no range).
      * @return array{
      *   path: string,
      *   fileName: string,
@@ -36,7 +39,10 @@ class DownloadProcessor
      *   rangeEnd: int,
      *   contentLength: int,
      *   headers: array<string, string>
-     * }
+     * } The download metadata array.
+     * @throws DownloadException If the file is hidden and blocked.
+     * @throws FileNotFoundException If the file doesn't exist.
+     * @throws FileSizeExceededException If the file exceeds max download size.
      */
     public function prepareDownload(string $path, ?string $downloadName = null, ?string $rangeHeader = null): array
     {
@@ -91,7 +97,9 @@ class DownloadProcessor
     }
 
     /**
-     * @param array<int, string> $roots
+     * Set the allowed root directories for downloads.
+     *
+     * @param array<int, string> $roots Array of allowed root directory paths.
      */
     public function setAllowedRoots(array $roots): void
     {
@@ -104,16 +112,31 @@ class DownloadProcessor
         }
     }
 
+    /**
+     * Set whether to block hidden files from being downloaded.
+     *
+     * @param bool $block If true, block hidden files.
+     */
     public function setBlockHiddenFiles(bool $block = true): void
     {
         $this->blockHiddenFiles = $block;
     }
 
+    /**
+     * Set the chunk size for streaming downloads.
+     *
+     * @param int $chunkSize The chunk size in bytes.
+     */
     public function setChunkSize(int $chunkSize): void
     {
         $this->chunkSize = max(1024, $chunkSize);
     }
 
+    /**
+     * Set the default download name for files without a name.
+     *
+     * @param string $name The default download name.
+     */
     public function setDefaultDownloadName(string $name): void
     {
         $safe = $this->sanitizeFilename($name);
@@ -121,8 +144,10 @@ class DownloadProcessor
     }
 
     /**
-     * @param array<int, string> $allowedExtensions
-     * @param array<int, string> $blockedExtensions
+     * Set extension allow/block policy for downloads.
+     *
+     * @param array<int, string> $allowedExtensions Array of allowed extensions (empty for all).
+     * @param array<int, string> $blockedExtensions Array of blocked extensions (default: dangerous types).
      */
     public function setExtensionPolicy(array $allowedExtensions = [], array $blockedExtensions = []): void
     {
@@ -132,16 +157,31 @@ class DownloadProcessor
             : $this->normalizeExtensions($blockedExtensions);
     }
 
+    /**
+     * Set whether to force attachment disposition.
+     *
+     * @param bool $enabled If true, force attachment disposition.
+     */
     public function setForceAttachment(bool $enabled = true): void
     {
         $this->forceAttachment = $enabled;
     }
 
+    /**
+     * Set the maximum allowed download size.
+     *
+     * @param int $maxDownloadSize The maximum size in bytes, or 0 for unlimited.
+     */
     public function setMaxDownloadSize(int $maxDownloadSize = 0): void
     {
         $this->maxDownloadSize = max(0, $maxDownloadSize);
     }
 
+    /**
+     * Enable or disable HTTP range requests.
+     *
+     * @param bool $enabled If true, enable range requests.
+     */
     public function setRangeRequestsEnabled(bool $enabled = true): void
     {
         $this->rangeRequestsEnabled = $enabled;
@@ -150,6 +190,10 @@ class DownloadProcessor
     /**
      * Stream a secure download to a writable resource and return the manifest.
      *
+     * @param string $path The file path to download.
+     * @param mixed $outputStream The output stream resource to write to.
+     * @param string|null $downloadName The desired download filename (null to use original).
+     * @param string|null $rangeHeader The HTTP Range header value (null for no range).
      * @return array{
      *   path: string,
      *   fileName: string,
@@ -163,7 +207,8 @@ class DownloadProcessor
      *   contentLength: int,
      *   bytesSent: int,
      *   headers: array<string, string>
-     * }
+     * } The download manifest with bytes sent.
+     * @throws DownloadException If the output stream is invalid or download fails.
      */
     public function streamDownload(
         string $path,

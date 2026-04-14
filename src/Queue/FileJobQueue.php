@@ -18,6 +18,14 @@ final readonly class FileJobQueue
         }
     }
 
+    /**
+     * Add a job to the queue.
+     *
+     * @param string $type The job type.
+     * @param array $payload The job payload data.
+     * @param int $priority The job priority (higher is more important).
+     * @return string The job ID.
+     */
     public function enqueue(string $type, array $payload = [], int $priority = 0): string
     {
         $jobId = uniqid('job_', true);
@@ -37,7 +45,11 @@ final readonly class FileJobQueue
     }
 
     /**
-     * @return array{processed: int, failed: int}
+     * Process jobs from the queue.
+     *
+     * @param callable $handler Callback to process each job. Receives job array as argument.
+     * @param int $maxJobs Maximum number of jobs to process (0 for unlimited).
+     * @return array{processed: int, failed: int} Array with processed and failed counts.
      */
     public function process(callable $handler, int $maxJobs = 0): array
     {
@@ -84,6 +96,11 @@ final readonly class FileJobQueue
         ];
     }
 
+    /**
+     * Get queue statistics.
+     *
+     * @return array Array with pending, processing, failed counts and file path.
+     */
     public function stats(): array
     {
         $data = $this->readQueueData();

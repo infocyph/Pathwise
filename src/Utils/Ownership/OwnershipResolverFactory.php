@@ -4,6 +4,11 @@ namespace Infocyph\Pathwise\Utils\Ownership;
 
 final class OwnershipResolverFactory
 {
+    /**
+     * Create an appropriate ownership resolver for the current platform.
+     *
+     * @return OwnershipResolverInterface The ownership resolver instance.
+     */
     public static function create(): OwnershipResolverInterface
     {
         if (PHP_OS_FAMILY === 'Windows') {

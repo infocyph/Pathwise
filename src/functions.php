@@ -179,7 +179,8 @@ if (!function_exists('createFilesystem')) {
      * - ['adapter' => $flysystemAdapter]
      * - ['driver' => 'custom', ...] after StorageFactory::registerDriver()
      *
-     * @param array<string, mixed> $config
+     * @param array<string, mixed> $config The filesystem configuration.
+     * @return FilesystemOperator The created filesystem.
      */
     function createFilesystem(array $config): FilesystemOperator
     {
@@ -191,7 +192,9 @@ if (!function_exists('mountStorage')) {
     /**
      * Build and mount a filesystem under a scheme name.
      *
-     * @param array<string, mixed> $config
+     * @param string $name The mount name.
+     * @param array<string, mixed> $config The filesystem configuration.
+     * @return FilesystemOperator The created filesystem.
      */
     function mountStorage(string $name, array $config): FilesystemOperator
     {
@@ -203,7 +206,7 @@ if (!function_exists('mountStorages')) {
     /**
      * Build and mount multiple filesystems.
      *
-     * @param array<string, array<string, mixed>> $mounts
+     * @param array<string, array<string, mixed>> $mounts Array of mount name => config pairs.
      */
     function mountStorages(array $mounts): void
     {
