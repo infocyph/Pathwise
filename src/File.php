@@ -56,7 +56,10 @@ final class File
     }
 
     /**
-     * @param array<string, mixed> $config
+     * Create a Flysystem filesystem from configuration.
+     *
+     * @param array<string, mixed> $config The filesystem configuration.
+     * @return FilesystemOperator The created filesystem.
      */
     public static function createFilesystem(array $config): FilesystemOperator
     {
@@ -64,7 +67,11 @@ final class File
     }
 
     /**
-     * @return array{linked: array, skipped: array}
+     * Deduplicate files in a directory using hard links.
+     *
+     * @param string $directory The directory to deduplicate.
+     * @param string $algorithm The hash algorithm to use. Defaults to 'sha256'.
+     * @return array{linked: array, skipped: array} Array with linked and skipped file paths.
      */
     public static function deduplicate(string $directory, string $algorithm = 'sha256'): array
     {
@@ -72,7 +79,11 @@ final class File
     }
 
     /**
-     * @return array{created: array, modified: array, deleted: array}
+     * Compare two snapshots and return the differences.
+     *
+     * @param array $previousSnapshot The previous snapshot data.
+     * @param array $currentSnapshot The current snapshot data.
+     * @return array{created: array, modified: array, deleted: array} The diff report.
      */
     public static function diffSnapshots(array $previousSnapshot, array $currentSnapshot): array
     {
@@ -90,7 +101,11 @@ final class File
     }
 
     /**
-     * @return array<string, array<int, string>>
+     * Find duplicate files in a directory.
+     *
+     * @param string $directory The directory to search for duplicates.
+     * @param string $algorithm The hash algorithm to use. Defaults to 'sha256'.
+     * @return array<string, array<int, string>> Array mapping checksum to duplicate file paths.
      */
     public static function duplicates(string $directory, string $algorithm = 'sha256'): array
     {
@@ -109,7 +124,11 @@ final class File
     }
 
     /**
-     * @return array<string, array<int, string>> checksum => paths
+     * Build a checksum index for all files in a directory.
+     *
+     * @param string $directory The directory to index.
+     * @param string $algorithm The hash algorithm to use. Defaults to 'sha256'.
+     * @return array<string, array<int, string>> Array mapping checksum to file paths.
      */
     public static function index(string $directory, string $algorithm = 'sha256'): array
     {
@@ -117,7 +136,11 @@ final class File
     }
 
     /**
-     * @param array<string, mixed> $config
+     * Create and mount a filesystem under a name.
+     *
+     * @param string $name The mount name.
+     * @param array<string, mixed> $config The filesystem configuration.
+     * @return FilesystemOperator The created filesystem.
      */
     public static function mountStorage(string $name, array $config): FilesystemOperator
     {
@@ -125,7 +148,9 @@ final class File
     }
 
     /**
-     * @param array<string, array<string, mixed>> $mounts
+     * Mount multiple filesystems at once.
+     *
+     * @param array<string, array<string, mixed>> $mounts Array of mount name => config pairs.
      */
     public static function mountStorages(array $mounts): void
     {
@@ -154,7 +179,13 @@ final class File
     }
 
     /**
-     * @return array{deleted: array, kept: array}
+     * Apply retention rules to a directory.
+     *
+     * @param string $directory The directory to apply retention rules to.
+     * @param int|null $keepLast Number of most recent files to keep (null for unlimited).
+     * @param int|null $maxAgeDays Maximum age of files in days (null for unlimited).
+     * @param string $sortBy Field to sort by ('mtime' or 'ctime').
+     * @return array{deleted: array, kept: array} Array with deleted and kept file paths.
      */
     public static function retain(
         string $directory,
@@ -166,7 +197,11 @@ final class File
     }
 
     /**
-     * @return array<string, array{mtime: int, size: int}>
+     * Build a snapshot map for a file or directory.
+     *
+     * @param string $path The path to snapshot.
+     * @param bool $recursive Whether to include subdirectories recursively.
+     * @return array<string, array{mtime: int, size: int}> The snapshot map.
      */
     public static function snapshot(string $path, bool $recursive = true): array
     {
@@ -184,7 +219,14 @@ final class File
     }
 
     /**
-     * @return array<string, array{mtime: int, size: int}>
+     * Poll for file-system changes and invoke callback on each non-empty diff.
+     *
+     * @param string $path The path to watch.
+     * @param callable $onChange Callback invoked when changes detected.
+     * @param int $durationSeconds How long to watch in seconds. Defaults to 5.
+     * @param int $intervalMilliseconds Polling interval in milliseconds. Defaults to 500.
+     * @param bool $recursive Whether to watch subdirectories. Defaults to true.
+     * @return array<string, array{mtime: int, size: int}> Final snapshot.
      */
     public static function watch(
         string $path,

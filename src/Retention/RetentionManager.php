@@ -13,7 +13,11 @@ final class RetentionManager
     /**
      * Apply retention rules to a directory.
      *
-     * @return array{deleted: array, kept: array}
+     * @param string $directory The directory to apply retention rules to.
+     * @param int|null $keepLast Number of most recent files to keep (null for unlimited).
+     * @param int|null $maxAgeDays Maximum age of files in days (null for unlimited).
+     * @param string $sortBy Field to sort by ('mtime' or 'ctime').
+     * @return array{deleted: array, kept: array} Array with deleted and kept file paths.
      */
     public static function apply(
         string $directory,

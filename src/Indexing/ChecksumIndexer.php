@@ -11,7 +11,11 @@ use RecursiveIteratorIterator;
 final class ChecksumIndexer
 {
     /**
-     * @return array<string, array<int, string>> checksum => paths
+     * Build a checksum index for all files in a directory.
+     *
+     * @param string $directory The directory to index.
+     * @param string $algorithm The hash algorithm to use. Defaults to 'sha256'.
+     * @return array<string, array<int, string>> Array mapping checksum to array of file paths.
      */
     public static function buildIndex(string $directory, string $algorithm = 'sha256'): array
     {
@@ -38,7 +42,9 @@ final class ChecksumIndexer
     /**
      * Deduplicate files by replacing duplicate entries with hard links where supported.
      *
-     * @return array{linked: array, skipped: array}
+     * @param string $directory The directory to deduplicate.
+     * @param string $algorithm The hash algorithm to use. Defaults to 'sha256'.
+     * @return array{linked: array, skipped: array} Array with linked and skipped file paths.
      */
     public static function deduplicateWithHardLinks(string $directory, string $algorithm = 'sha256'): array
     {
@@ -77,7 +83,11 @@ final class ChecksumIndexer
     }
 
     /**
-     * @return array<string, array<int, string>>
+     * Find duplicate files in a directory.
+     *
+     * @param string $directory The directory to search for duplicates.
+     * @param string $algorithm The hash algorithm to use. Defaults to 'sha256'.
+     * @return array<string, array<int, string>> Array mapping checksum to array of duplicate file paths.
      */
     public static function findDuplicates(string $directory, string $algorithm = 'sha256'): array
     {

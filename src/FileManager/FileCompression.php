@@ -473,6 +473,7 @@ class FileCompression
      * @param callable $logger The logger callable. The callable should accept
      *   two arguments: the first is a string message, and the second is the
      *   ZipArchive object.
+     * @return self This instance for method chaining.
      */
     public function setLogger(callable $logger): self
     {
@@ -485,6 +486,7 @@ class FileCompression
      * Set the password for the ZIP archive.
      *
      * @param string $password The password to encrypt the ZIP archive with.
+     * @return self This instance for method chaining.
      */
     public function setPassword(string $password): self
     {

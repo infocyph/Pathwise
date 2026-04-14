@@ -45,7 +45,11 @@ final readonly class FileJobQueue
     }
 
     /**
-     * @return array{processed: int, failed: int}
+     * Process jobs from the queue.
+     *
+     * @param callable $handler Callback to process each job. Receives job array as argument.
+     * @param int $maxJobs Maximum number of jobs to process (0 for unlimited).
+     * @return array{processed: int, failed: int} Array with processed and failed counts.
      */
     public function process(callable $handler, int $maxJobs = 0): array
     {

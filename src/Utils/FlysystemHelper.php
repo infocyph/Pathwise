@@ -238,7 +238,11 @@ final class FlysystemHelper
     }
 
     /**
-     * @return array<int, mixed>
+     * List directory contents as an array.
+     *
+     * @param string $path The directory path.
+     * @param bool $deep Whether to list recursively. Defaults to true.
+     * @return array<int, mixed> The list of contents.
      */
     public static function listContents(string $path, bool $deep = true): array
     {
@@ -285,6 +289,12 @@ final class FlysystemHelper
         return $filesystem->mimeType($location);
     }
 
+    /**
+     * Mount a filesystem under a name.
+     *
+     * @param string $name The mount name.
+     * @param FilesystemOperator $filesystem The filesystem to mount.
+     */
     public static function mount(string $name, FilesystemOperator $filesystem): void
     {
         $normalized = self::normalizeMountName($name);
@@ -326,6 +336,14 @@ final class FlysystemHelper
         self::deleteDirectory($source);
     }
 
+    /**
+     * Get the public URL for a file.
+     *
+     * @param string $path The file path.
+     * @param array $config Additional configuration for URL generation.
+     * @return string The public URL.
+     * @throws \RuntimeException If public URL generation is not supported.
+     */
     public static function publicUrl(string $path, array $config = []): string
     {
         [$filesystem, $location] = self::filesystemForFile($path);
@@ -339,6 +357,12 @@ final class FlysystemHelper
         return $callable($location, $config);
     }
 
+    /**
+     * Read the contents of a file.
+     *
+     * @param string $path The file path.
+     * @return string The file contents.
+     */
     public static function read(string $path): string
     {
         [$filesystem, $location] = self::filesystemForFile($path);
@@ -346,6 +370,12 @@ final class FlysystemHelper
         return $filesystem->read($location);
     }
 
+    /**
+     * Read a file as a stream.
+     *
+     * @param string $path The file path.
+     * @return mixed The file stream resource.
+     */
     public static function readStream(string $path): mixed
     {
         [$filesystem, $location] = self::filesystemForFile($path);
@@ -417,6 +447,15 @@ final class FlysystemHelper
         return $filesystem->fileSize($location);
     }
 
+    /**
+     * Get a temporary URL for a file.
+     *
+     * @param string $path The file path.
+     * @param DateTimeInterface $expiresAt The expiration time.
+     * @param array $config Additional configuration for URL generation.
+     * @return string The temporary URL.
+     * @throws \RuntimeException If temporary URL generation is not supported.
+     */
     public static function temporaryUrl(string $path, DateTimeInterface $expiresAt, array $config = []): string
     {
         [$filesystem, $location] = self::filesystemForFile($path);

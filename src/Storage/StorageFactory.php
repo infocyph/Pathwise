@@ -102,7 +102,11 @@ final class StorageFactory
     }
 
     /**
-     * @param array<string, mixed> $config
+     * Create a filesystem from configuration.
+     *
+     * @param array<string, mixed> $config The filesystem configuration.
+     * @return FilesystemOperator The created filesystem.
+     * @throws \InvalidArgumentException If the driver is unsupported.
      */
     public static function createFilesystem(array $config): FilesystemOperator
     {
@@ -170,7 +174,11 @@ final class StorageFactory
     }
 
     /**
-     * @param array<string, mixed> $config
+     * Create and mount a filesystem under a name.
+     *
+     * @param string $name The mount name.
+     * @param array<string, mixed> $config The filesystem configuration.
+     * @return FilesystemOperator The created filesystem.
      */
     public static function mount(string $name, array $config): FilesystemOperator
     {
@@ -181,7 +189,9 @@ final class StorageFactory
     }
 
     /**
-     * @param array<string, array<string, mixed>> $mounts
+     * Mount multiple filesystems at once.
+     *
+     * @param array<string, array<string, mixed>> $mounts Array of mount name => config pairs.
      */
     public static function mountMany(array $mounts): void
     {
@@ -201,7 +211,11 @@ final class StorageFactory
     }
 
     /**
-     * @param callable(array<string, mixed>): FilesystemOperator $factory
+     * Register a custom driver factory.
+     *
+     * @param string $name The driver name.
+     * @param callable(array<string, mixed>): FilesystemOperator $factory Factory that receives config and returns filesystem.
+     * @throws \InvalidArgumentException If the driver name is empty.
      */
     public static function registerDriver(string $name, callable $factory): void
     {

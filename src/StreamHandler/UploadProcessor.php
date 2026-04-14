@@ -58,6 +58,10 @@ class UploadProcessor
 
     /**
      * Finalize a resumable upload by assembling all uploaded chunks.
+     *
+     * @param string $uploadId The unique upload identifier.
+     * @return string The path to the final assembled file.
+     * @throws UploadException If the upload directory is not set or chunks are missing.
      */
     public function finalizeChunkUpload(string $uploadId): string
     {
@@ -83,6 +87,8 @@ class UploadProcessor
 
     /**
      * Get detailed info about the current configuration and settings.
+     *
+     * @return array Array with upload configuration details.
      */
     public function getInfo(): array
     {
@@ -106,6 +112,8 @@ class UploadProcessor
 
     /**
      * Retrieve available validation profiles.
+     *
+     * @return array List of available validation profile names.
      */
     public function getValidationProfiles(): array
     {
@@ -115,7 +123,13 @@ class UploadProcessor
     /**
      * Process an upload chunk and persist resumable state.
      *
-     * @return array{uploadId: string, receivedChunks: int, totalChunks: int, isComplete: bool}
+     * @param array $chunkFile The chunk file data from $_FILES.
+     * @param string $uploadId The unique upload identifier.
+     * @param int $chunkIndex The index of this chunk (0-based).
+     * @param int $totalChunks Total number of chunks expected.
+     * @param string $originalFilename The original filename.
+     * @return array{uploadId: string, receivedChunks: int, totalChunks: int, isComplete: bool} Chunk upload status.
+     * @throws UploadException If the upload directory is not set.
      */
     public function processChunkUpload(array $chunkFile, string $uploadId, int $chunkIndex, int $totalChunks, string $originalFilename): array
     {
@@ -157,6 +171,10 @@ class UploadProcessor
 
     /**
      * Process the upload and save the file.
+     *
+     * @param array $file The file data from $_FILES.
+     * @return string The path to the saved file.
+     * @throws UploadException If validation fails or upload directory is not set.
      */
     public function processUpload(array $file): string
     {
@@ -228,6 +246,9 @@ class UploadProcessor
 
     /**
      * Configure chunk upload constraints.
+     *
+     * @param int $maxChunkCount Maximum number of chunks allowed (0 for unlimited).
+     * @param int $maxChunkSize Maximum size per chunk in bytes (0 for unlimited).
      */
     public function setChunkLimits(int $maxChunkCount = 0, int $maxChunkSize = 0): void
     {
@@ -237,6 +258,10 @@ class UploadProcessor
 
     /**
      * Configure directory and path settings.
+     *
+     * @param string $uploadDir The upload directory path.
+     * @param bool $useDateDirectories Whether to use date-based subdirectories.
+     * @param string|null $tempDir The temporary directory path (null for system default).
      */
     public function setDirectorySettings(string $uploadDir, bool $useDateDirectories = false, ?string $tempDir = null): void
     {
@@ -264,6 +289,9 @@ class UploadProcessor
 
     /**
      * Configure optional image dimension validation.
+     *
+     * @param int $maxImageWidth Maximum image width in pixels (0 for unlimited).
+     * @param int $maxImageHeight Maximum image height in pixels (0 for unlimited).
      */
     public function setImageValidationSettings(int $maxImageWidth = 0, int $maxImageHeight = 0): void
     {
@@ -285,6 +313,8 @@ class UploadProcessor
      * Configure an optional malware scanner callback.
      *
      * Signature: fn(string $filePath, string $mimeType): bool
+     *
+     * @param callable $scanner The malware scanner callback.
      */
     public function setMalwareScanner(callable $scanner): void
     {
@@ -293,6 +323,9 @@ class UploadProcessor
 
     /**
      * Configure naming strategy.
+     *
+     * @param string $namingStrategy The naming strategy ('hash' or 'timestamp').
+     * @throws UploadException If an invalid strategy is specified.
      */
     public function setNamingStrategy(string $namingStrategy): void
     {
@@ -304,6 +337,8 @@ class UploadProcessor
 
     /**
      * Require malware scanning before upload acceptance.
+     *
+     * @param bool $required If true, require malware scanning.
      */
     public function setRequireMalwareScan(bool $required = true): void
     {
@@ -312,6 +347,8 @@ class UploadProcessor
 
     /**
      * Enable strict content checks (MIME-extension agreement + magic signature).
+     *
+     * @param bool $enabled If true, enable strict content type validation.
      */
     public function setStrictContentTypeValidation(bool $enabled = true): void
     {
@@ -320,6 +357,9 @@ class UploadProcessor
 
     /**
      * Configure validation using a predefined profile.
+     *
+     * @param string $profile The validation profile name ('image', 'video', or 'document').
+     * @throws UploadException If an invalid profile is specified.
      */
     public function setValidationProfile(string $profile): void
     {
@@ -337,6 +377,9 @@ class UploadProcessor
 
     /**
      * Configure validation settings.
+     *
+     * @param array $allowedFileTypes Array of allowed MIME types.
+     * @param int $maxFileSize Maximum file size in bytes.
      */
     public function setValidationSettings(array $allowedFileTypes, int $maxFileSize): void
     {
