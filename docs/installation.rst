@@ -41,12 +41,12 @@ See ``storage-adapters`` for setup patterns.
 Where to Use First
 ------------------
 
-If you are evaluating Pathwise, start with ``FileOperations`` and
-``DirectoryOperations``. They cover the largest set of day-to-day file tasks.
+If you are evaluating Pathwise, start with the unified ``File`` facade, then
+drop down to direct module classes as needed.
 
 .. code-block:: php
 
-   use Infocyph\Pathwise\FileManager\FileOperations;
+   use Infocyph\Pathwise\File;
 
-   $ops = new FileOperations('/tmp/example.txt');
+   $ops = File::at('/tmp/example.txt')->file();
    $ops->create('initial')->update('updated');

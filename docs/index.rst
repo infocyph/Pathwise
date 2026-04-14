@@ -13,6 +13,7 @@ queue/audit tooling, and operational helpers.
    installation
    capabilities
    storage-adapters
+   file-facade
    quickstart
    recipes
    file-manager

@@ -15,6 +15,7 @@ It focuses on three layers:
 
 Main namespaces:
 
+* ``Infocyph\Pathwise`` (unified ``File`` facade)
 * ``Infocyph\Pathwise\FileManager``
 * ``Infocyph\Pathwise\DirectoryManager``
 * ``Infocyph\Pathwise\StreamHandler``
@@ -36,19 +37,21 @@ Quick Start
 
 .. code-block:: php
 
-   use Infocyph\Pathwise\FileManager\FileOperations;
-   use Infocyph\Pathwise\DirectoryManager\DirectoryOperations;
+   use Infocyph\Pathwise\File;
 
-   (new FileOperations('/tmp/demo.txt'))
+   File::at('/tmp/demo.txt')
+       ->file()
        ->create('hello')
        ->append("\nworld");
 
-   $report = (new DirectoryOperations('/tmp/source'))
+   $report = File::at('/tmp/source')
+       ->directory()
        ->syncTo('/tmp/backup', deleteOrphans: true);
 
 Read Next
 ---------
 
 * ``capabilities`` for the full module map.
+* ``file-facade`` for the unified entry style.
 * ``quickstart`` for copy/paste examples.
 * ``recipes`` for end-to-end workflow patterns.
