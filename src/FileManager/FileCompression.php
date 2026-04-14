@@ -422,6 +422,12 @@ class FileCompression
         return $this;
     }
 
+    /**
+     * Set the execution strategy for compression operations.
+     *
+     * @param ExecutionStrategy $executionStrategy The execution strategy to use.
+     * @return self This instance for method chaining.
+     */
     public function setExecutionStrategy(ExecutionStrategy $executionStrategy): self
     {
         $this->executionStrategy = $executionStrategy;
@@ -431,6 +437,10 @@ class FileCompression
 
     /**
      * Configure include/exclude glob patterns used during compression.
+     *
+     * @param array $includePatterns Patterns to include in compression.
+     * @param array $excludePatterns Patterns to exclude from compression.
+     * @return self This instance for method chaining.
      */
     public function setGlobPatterns(array $includePatterns = [], array $excludePatterns = []): self
     {
@@ -442,6 +452,9 @@ class FileCompression
 
     /**
      * Configure ignore file names (e.g. .gitignore, .pathwiseignore) read from source root.
+     *
+     * @param array $ignoreFileNames Array of ignore file names.
+     * @return self This instance for method chaining.
      */
     public function setIgnoreFileNames(array $ignoreFileNames): self
     {
@@ -481,6 +494,9 @@ class FileCompression
 
     /**
      * Register a progress callback for compress/decompress operations.
+     *
+     * @param callable $progressCallback Callback receiving progress array with operation, path, current, and total.
+     * @return self This instance for method chaining.
      */
     public function setProgressCallback(callable $progressCallback): self
     {

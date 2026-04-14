@@ -145,6 +145,13 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
         return $this->writeCount;
     }
 
+    /**
+     * Enable or disable atomic write mode.
+     *
+     * @param bool $enabled If true, enable atomic writes.
+     * @return self This instance for method chaining.
+     * @throws FileAccessException If atomic mode is enabled in append mode.
+     */
     public function enableAtomicWrite(bool $enabled = true): self
     {
         if ($enabled && $this->append) {
@@ -307,6 +314,14 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
         $this->isLocked = false;
     }
 
+    /**
+     * Verify the file's checksum against an expected value.
+     *
+     * @param string $expectedChecksum The expected checksum.
+     * @param string $algorithm The hash algorithm to use. Defaults to 'sha256'.
+     * @return bool True if the checksum matches, false otherwise.
+     * @throws Exception If the algorithm is not supported.
+     */
     public function verifyChecksum(string $expectedChecksum, string $algorithm = 'sha256'): bool
     {
         if (!in_array($algorithm, hash_algos(), true)) {

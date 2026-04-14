@@ -16,11 +16,22 @@ final readonly class AuditTrail
         }
     }
 
+    /**
+     * Get the log file path.
+     *
+     * @return string The normalized log file path.
+     */
     public function getLogFilePath(): string
     {
         return PathHelper::normalize($this->logFilePath);
     }
 
+    /**
+     * Log an operation with context.
+     *
+     * @param string $operation The operation name.
+     * @param array $context Additional context data.
+     */
     public function log(string $operation, array $context = []): void
     {
         $record = [

@@ -271,6 +271,11 @@ class UploadProcessor
         $this->maxImageHeight = max(0, $maxImageHeight);
     }
 
+    /**
+     * Set the logger for upload operations.
+     *
+     * @param LoggerInterface $logger The logger instance.
+     */
     public function setLogger(LoggerInterface $logger): void
     {
         $this->logger = $logger;

@@ -17,6 +17,14 @@ final class FlysystemHelper
     /** @var array<string, FilesystemOperator> */
     private static array $mounts = [];
 
+    /**
+     * Calculate the checksum of a file.
+     *
+     * @param string $path The file path.
+     * @param string $algorithm The hash algorithm to use. Defaults to 'sha256'.
+     * @param array $config Additional configuration.
+     * @return string|null The checksum, or null if the file doesn't exist or algorithm is unsupported.
+     */
     public static function checksum(string $path, string $algorithm = 'sha256', array $config = []): ?string
     {
         if (!in_array($algorithm, hash_algos(), true) || !self::fileExists($path)) {
@@ -30,16 +38,29 @@ final class FlysystemHelper
         return $filesystem->checksum($location, $config);
     }
 
+    /**
+     * Clear the default filesystem.
+     */
     public static function clearDefaultFilesystem(): void
     {
         self::$defaultFilesystem = null;
     }
 
+    /**
+     * Clear all mounted filesystems.
+     */
     public static function clearMounts(): void
     {
         self::$mounts = [];
     }
 
+    /**
+     * Copy a file from source to destination.
+     *
+     * @param string $source The source file path.
+     * @param string $destination The destination file path.
+     * @param array $config Additional configuration.
+     */
     public static function copy(string $source, string $destination, array $config = []): void
     {
         [$destinationFilesystem, $destinationLocation] = self::filesystemForFile($destination);
@@ -64,6 +85,13 @@ final class FlysystemHelper
         }
     }
 
+    /**
+     * Copy a directory recursively from source to destination.
+     *
+     * @param string $source The source directory path.
+     * @param string $destination The destination directory path.
+     * @param array $config Additional configuration.
+     */
     public static function copyDirectory(string $source, string $destination, array $config = []): void
     {
         [$sourceFilesystem, $sourceLocation] = self::filesystemForDirectory($source);
@@ -101,24 +129,46 @@ final class FlysystemHelper
         }
     }
 
+    /**
+     * Create a directory.
+     *
+     * @param string $path The directory path.
+     * @param array $config Additional configuration.
+     */
     public static function createDirectory(string $path, array $config = []): void
     {
         [$filesystem, $location] = self::filesystemForDirectory($path);
         $filesystem->createDirectory($location, $config);
     }
 
+    /**
+     * Delete a file.
+     *
+     * @param string $path The file path.
+     */
     public static function delete(string $path): void
     {
         [$filesystem, $location] = self::filesystemForFile($path);
         $filesystem->delete($location);
     }
 
+    /**
+     * Delete a directory.
+     *
+     * @param string $path The directory path.
+     */
     public static function deleteDirectory(string $path): void
     {
         [$filesystem, $location] = self::filesystemForDirectory($path);
         $filesystem->deleteDirectory($location);
     }
 
+    /**
+     * Check if a directory exists.
+     *
+     * @param string $path The directory path.
+     * @return bool True if the directory exists, false otherwise.
+     */
     public static function directoryExists(string $path): bool
     {
         try {
@@ -130,6 +180,12 @@ final class FlysystemHelper
         }
     }
 
+    /**
+     * Check if a file exists.
+     *
+     * @param string $path The file path.
+     * @return bool True if the file exists, false otherwise.
+     */
     public static function fileExists(string $path): bool
     {
         try {
@@ -141,6 +197,12 @@ final class FlysystemHelper
         }
     }
 
+    /**
+     * Check if a path exists (file or directory).
+     *
+     * @param string $path The path to check.
+     * @return bool True if the path exists, false otherwise.
+     */
     public static function has(string $path): bool
     {
         try {
@@ -152,11 +214,22 @@ final class FlysystemHelper
         }
     }
 
+    /**
+     * Check if a default filesystem is set.
+     *
+     * @return bool True if a default filesystem is set, false otherwise.
+     */
     public static function hasDefaultFilesystem(): bool
     {
         return self::$defaultFilesystem !== null;
     }
 
+    /**
+     * Get the last modified timestamp of a file.
+     *
+     * @param string $path The file path.
+     * @return int The last modified timestamp.
+     */
     public static function lastModified(string $path): int
     {
         [$filesystem, $location] = self::filesystemForFile($path);
@@ -181,6 +254,13 @@ final class FlysystemHelper
         return $items;
     }
 
+    /**
+     * List directory contents as a DirectoryListing.
+     *
+     * @param string $path The directory path.
+     * @param bool $deep Whether to list recursively.
+     * @return DirectoryListing The directory listing.
+     */
     public static function listContentsListing(string $path, bool $deep = true): DirectoryListing
     {
         [$filesystem, $location] = self::filesystemForDirectory($path);
@@ -188,6 +268,12 @@ final class FlysystemHelper
         return $filesystem->listContents($location, $deep);
     }
 
+    /**
+     * Get the MIME type of a file.
+     *
+     * @param string $path The file path.
+     * @return string|null The MIME type, or null if the file doesn't exist.
+     */
     public static function mimeType(string $path): ?string
     {
         if (!self::fileExists($path)) {
@@ -205,6 +291,13 @@ final class FlysystemHelper
         self::$mounts[$normalized] = $filesystem;
     }
 
+    /**
+     * Move a file from source to destination.
+     *
+     * @param string $source The source file path.
+     * @param string $destination The destination file path.
+     * @param array $config Additional configuration.
+     */
     public static function move(string $source, string $destination, array $config = []): void
     {
         [$destinationFilesystem, $destinationLocation] = self::filesystemForFile($destination);
@@ -220,6 +313,13 @@ final class FlysystemHelper
         self::delete($source);
     }
 
+    /**
+     * Move a directory from source to destination.
+     *
+     * @param string $source The source directory path.
+     * @param string $destination The destination directory path.
+     * @param array $config Additional configuration.
+     */
     public static function moveDirectory(string $source, string $destination, array $config = []): void
     {
         self::copyDirectory($source, $destination, $config);
@@ -253,6 +353,9 @@ final class FlysystemHelper
         return $filesystem->readStream($location);
     }
 
+    /**
+     * Reset the helper by clearing default filesystem and mounts.
+     */
     public static function reset(): void
     {
         self::clearDefaultFilesystem();
@@ -279,17 +382,34 @@ final class FlysystemHelper
         return self::filesystemForDirectory($path);
     }
 
+    /**
+     * Set the default filesystem.
+     *
+     * @param FilesystemOperator $filesystem The filesystem to set as default.
+     */
     public static function setDefaultFilesystem(FilesystemOperator $filesystem): void
     {
         self::$defaultFilesystem = $filesystem;
     }
 
+    /**
+     * Set the visibility of a file.
+     *
+     * @param string $path The file path.
+     * @param string $visibility The visibility to set (e.g., 'public' or 'private').
+     */
     public static function setVisibility(string $path, string $visibility): void
     {
         [$filesystem, $location] = self::filesystemForFile($path);
         $filesystem->setVisibility($location, $visibility);
     }
 
+    /**
+     * Get the size of a file.
+     *
+     * @param string $path The file path.
+     * @return int The file size in bytes.
+     */
     public static function size(string $path): int
     {
         [$filesystem, $location] = self::filesystemForFile($path);
@@ -310,12 +430,23 @@ final class FlysystemHelper
         return $callable($location, $expiresAt, $config);
     }
 
+    /**
+     * Unmount a filesystem.
+     *
+     * @param string $name The mount name.
+     */
     public static function unmount(string $name): void
     {
         $normalized = self::normalizeMountName($name);
         unset(self::$mounts[$normalized]);
     }
 
+    /**
+     * Get the visibility of a file.
+     *
+     * @param string $path The file path.
+     * @return string|null The visibility, or null if not available.
+     */
     public static function visibility(string $path): ?string
     {
         [$filesystem, $location] = self::filesystemForFile($path);
@@ -323,12 +454,26 @@ final class FlysystemHelper
         return $filesystem->visibility($location);
     }
 
+    /**
+     * Write contents to a file.
+     *
+     * @param string $path The file path.
+     * @param string $contents The contents to write.
+     * @param array $config Additional configuration.
+     */
     public static function write(string $path, string $contents, array $config = []): void
     {
         [$filesystem, $location] = self::filesystemForFile($path);
         $filesystem->write($location, $contents, $config);
     }
 
+    /**
+     * Write to a file from a stream.
+     *
+     * @param string $path The file path.
+     * @param mixed $stream The stream resource.
+     * @param array $config Additional configuration.
+     */
     public static function writeStream(string $path, mixed $stream, array $config = []): void
     {
         [$filesystem, $location] = self::filesystemForFile($path);

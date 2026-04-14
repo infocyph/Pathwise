@@ -104,16 +104,31 @@ class DownloadProcessor
         }
     }
 
+    /**
+     * Set whether to block hidden files from being downloaded.
+     *
+     * @param bool $block If true, block hidden files.
+     */
     public function setBlockHiddenFiles(bool $block = true): void
     {
         $this->blockHiddenFiles = $block;
     }
 
+    /**
+     * Set the chunk size for streaming downloads.
+     *
+     * @param int $chunkSize The chunk size in bytes.
+     */
     public function setChunkSize(int $chunkSize): void
     {
         $this->chunkSize = max(1024, $chunkSize);
     }
 
+    /**
+     * Set the default download name for files without a name.
+     *
+     * @param string $name The default download name.
+     */
     public function setDefaultDownloadName(string $name): void
     {
         $safe = $this->sanitizeFilename($name);
@@ -132,16 +147,31 @@ class DownloadProcessor
             : $this->normalizeExtensions($blockedExtensions);
     }
 
+    /**
+     * Set whether to force attachment disposition.
+     *
+     * @param bool $enabled If true, force attachment disposition.
+     */
     public function setForceAttachment(bool $enabled = true): void
     {
         $this->forceAttachment = $enabled;
     }
 
+    /**
+     * Set the maximum allowed download size.
+     *
+     * @param int $maxDownloadSize The maximum size in bytes, or 0 for unlimited.
+     */
     public function setMaxDownloadSize(int $maxDownloadSize = 0): void
     {
         $this->maxDownloadSize = max(0, $maxDownloadSize);
     }
 
+    /**
+     * Enable or disable HTTP range requests.
+     *
+     * @param bool $enabled If true, enable range requests.
+     */
     public function setRangeRequestsEnabled(bool $enabled = true): void
     {
         $this->rangeRequestsEnabled = $enabled;

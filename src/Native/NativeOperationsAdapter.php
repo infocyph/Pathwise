@@ -6,6 +6,11 @@ use Infocyph\Pathwise\Utils\PathHelper;
 
 final class NativeOperationsAdapter
 {
+    /**
+     * Check if native compression commands are available.
+     *
+     * @return bool True if native compression is available.
+     */
     public static function canUseNativeCompression(): bool
     {
         if (PHP_OS_FAMILY === 'Windows') {
@@ -14,6 +19,11 @@ final class NativeOperationsAdapter
 
         return NativeCommandRunner::commandExists('zip') && NativeCommandRunner::commandExists('unzip');
     }
+    /**
+     * Check if native directory copy commands are available.
+     *
+     * @return bool True if native directory copy is available.
+     */
     public static function canUseNativeDirectoryCopy(): bool
     {
         if (PHP_OS_FAMILY === 'Windows') {
@@ -23,6 +33,11 @@ final class NativeOperationsAdapter
         return NativeCommandRunner::commandExists('rsync');
     }
 
+    /**
+     * Check if native file copy commands are available.
+     *
+     * @return bool True if native file copy is available.
+     */
     public static function canUseNativeFileCopy(): bool
     {
         if (PHP_OS_FAMILY === 'Windows') {

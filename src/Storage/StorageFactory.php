@@ -93,6 +93,9 @@ final class StorageFactory
     /** @var array<string, callable(array<string, mixed>): FilesystemOperator> */
     private static array $drivers = [];
 
+    /**
+     * Clear all registered custom drivers.
+     */
     public static function clearDrivers(): void
     {
         self::$drivers = [];
@@ -134,16 +137,33 @@ final class StorageFactory
         );
     }
 
+    /**
+     * Get the names of all registered custom drivers.
+     *
+     * @return array The driver names.
+     */
     public static function driverNames(): array
     {
         return array_keys(self::$drivers);
     }
 
+    /**
+     * Check if a custom driver is registered.
+     *
+     * @param string $name The driver name.
+     * @return bool True if the driver is registered, false otherwise.
+     */
     public static function hasDriver(string $name): bool
     {
         return isset(self::$drivers[self::canonicalDriverName($name)]);
     }
 
+    /**
+     * Check if a driver is an official Flysystem driver.
+     *
+     * @param string $driver The driver name.
+     * @return bool True if it's an official driver, false otherwise.
+     */
     public static function isOfficialDriver(string $driver): bool
     {
         return isset(self::OFFICIAL_DRIVERS[self::canonicalDriverName($driver)]);
@@ -171,7 +191,9 @@ final class StorageFactory
     }
 
     /**
-     * @return array<string, array{package: string, adapter_class: class-string}>
+     * Get all official driver metadata.
+     *
+     * @return array<string, array{package: string, adapter_class: class-string}> The official drivers.
      */
     public static function officialDrivers(): array
     {
@@ -191,6 +213,12 @@ final class StorageFactory
         self::$drivers[$driver] = $factory;
     }
 
+    /**
+     * Get the suggested package for an official driver.
+     *
+     * @param string $driver The driver name.
+     * @return string|null The package name, or null if not an official driver.
+     */
     public static function suggestedPackage(string $driver): ?string
     {
         $normalized = self::canonicalDriverName($driver);
@@ -198,6 +226,11 @@ final class StorageFactory
         return self::OFFICIAL_DRIVERS[$normalized]['package'] ?? null;
     }
 
+    /**
+     * Unregister a custom driver.
+     *
+     * @param string $name The driver name to unregister.
+     */
     public static function unregisterDriver(string $name): void
     {
         unset(self::$drivers[self::canonicalDriverName($name)]);
