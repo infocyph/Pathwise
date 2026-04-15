@@ -15,7 +15,7 @@ It focuses on three layers:
 
 Main namespaces:
 
-* ``Infocyph\Pathwise`` (unified ``File`` facade)
+* ``Infocyph\Pathwise`` (unified ``PathwiseFacade`` facade)
 * ``Infocyph\Pathwise\FileManager``
 * ``Infocyph\Pathwise\DirectoryManager``
 * ``Infocyph\Pathwise\StreamHandler``
@@ -37,14 +37,14 @@ Quick Start
 
 .. code-block:: php
 
-   use Infocyph\Pathwise\File;
+   use Infocyph\Pathwise\PathwiseFacade;
 
-   File::at('/tmp/demo.txt')
+   PathwiseFacade::at('/tmp/demo.txt')
        ->file()
        ->create('hello')
        ->append("\nworld");
 
-   $report = File::at('/tmp/source')
+   $report = PathwiseFacade::at('/tmp/source')
        ->directory()
        ->syncTo('/tmp/backup', deleteOrphans: true);
 

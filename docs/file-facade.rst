@@ -1,9 +1,9 @@
-Unified File Facade
-===================
+Unified Pathwise Facade
+=======================
 
 Namespace: ``Infocyph\Pathwise``
 
-Pathwise provides ``File`` as a convenience facade when you want one entry
+Pathwise provides ``PathwiseFacade`` as a convenience facade when you want one entry
 point instead of importing many classes directly.
 
 Use this when:
@@ -21,9 +21,9 @@ Path-Bound Access
 
 .. code-block:: php
 
-   use Infocyph\Pathwise\File;
+   use Infocyph\Pathwise\PathwiseFacade;
 
-   $entry = File::at('/tmp/demo.txt');
+   $entry = PathwiseFacade::at('/tmp/demo.txt');
 
    $entry->file()->create('hello')->append("\nworld");
 
@@ -43,11 +43,11 @@ Directory + Compression via Same Entry
 
 .. code-block:: php
 
-   use Infocyph\Pathwise\File;
+   use Infocyph\Pathwise\PathwiseFacade;
 
-   File::at('/tmp/source')->directory()->create();
+   PathwiseFacade::at('/tmp/source')->directory()->create();
 
-   File::at('/tmp/archive.zip')
+   PathwiseFacade::at('/tmp/archive.zip')
        ->compression(true)
        ->compress('/tmp/source')
        ->save();
@@ -57,39 +57,39 @@ Static Gateways
 
 .. code-block:: php
 
-   use Infocyph\Pathwise\File;
+   use Infocyph\Pathwise\PathwiseFacade;
 
-   $upload = File::upload();
-   $download = File::download();
-   $policy = File::policy();
-   $queue = File::queue('/tmp/jobs.json');
-   $audit = File::audit('/tmp/audit.jsonl');
+   $upload = PathwiseFacade::upload();
+   $download = PathwiseFacade::download();
+   $policy = PathwiseFacade::policy();
+   $queue = PathwiseFacade::queue('/tmp/jobs.json');
+   $audit = PathwiseFacade::audit('/tmp/audit.jsonl');
 
 Storage from Facade
 -------------------
 
-``File`` delegates storage creation/mounting to ``StorageFactory``.
+``PathwiseFacade`` delegates storage creation/mounting to ``StorageFactory``.
 
 .. code-block:: php
 
-   use Infocyph\Pathwise\File;
+   use Infocyph\Pathwise\PathwiseFacade;
 
-   File::mountStorage('assets', [
+   PathwiseFacade::mountStorage('assets', [
        'driver' => 'local',
        'root' => '/srv/storage/assets',
    ]);
 
    // For other adapters, pass adapter/constructor config:
-   // File::mountStorage('s3', ['driver' => 's3', 'adapter' => $adapter]);
+   // PathwiseFacade::mountStorage('s3', ['driver' => 's3', 'adapter' => $adapter]);
 
 Operational Tooling from Facade
 -------------------------------
 
 Available helpers:
 
-* ``File::retain(...)`` -> ``RetentionManager``
-* ``File::index(...)`` / ``File::duplicates(...)`` / ``File::deduplicate(...)`` -> ``ChecksumIndexer``
-* ``File::snapshot(...)`` / ``File::diffSnapshots(...)`` / ``File::watch(...)`` -> ``FileWatcher``
+* ``PathwiseFacade::retain(...)`` -> ``RetentionManager``
+* ``PathwiseFacade::index(...)`` / ``PathwiseFacade::duplicates(...)`` / ``PathwiseFacade::deduplicate(...)`` -> ``ChecksumIndexer``
+* ``PathwiseFacade::snapshot(...)`` / ``PathwiseFacade::diffSnapshots(...)`` / ``PathwiseFacade::watch(...)`` -> ``FileWatcher``
 
 See also:
 

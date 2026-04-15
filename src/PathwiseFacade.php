@@ -21,7 +21,7 @@ use Infocyph\Pathwise\Utils\MetadataHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use League\Flysystem\FilesystemOperator;
 
-final class File
+final class PathwiseFacade
 {
     /**
      * Constructor to initialize the file path.
@@ -37,7 +37,7 @@ final class File
      * Create a new instance at the given path.
      *
      * @param string $path The path to the file or directory.
-     * @return self A new File instance.
+     * @return self A new facade instance.
      */
     public static function at(string $path): self
     {
@@ -116,7 +116,7 @@ final class File
      * Alias for at() - create a new instance at the given path.
      *
      * @param string $path The path to the file or directory.
-     * @return self A new File instance.
+     * @return self A new facade instance.
      */
     public static function from(string $path): self
     {

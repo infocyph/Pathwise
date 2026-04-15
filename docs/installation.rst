@@ -41,12 +41,12 @@ See ``storage-adapters`` for setup patterns.
 Where to Use First
 ------------------
 
-If you are evaluating Pathwise, start with the unified ``File`` facade, then
+If you are evaluating Pathwise, start with the unified ``PathwiseFacade`` facade, then
 drop down to direct module classes as needed.
 
 .. code-block:: php
 
-   use Infocyph\Pathwise\File;
+   use Infocyph\Pathwise\PathwiseFacade;
 
-   $ops = File::at('/tmp/example.txt')->file();
+   $ops = PathwiseFacade::at('/tmp/example.txt')->file();
    $ops->create('initial')->update('updated');
