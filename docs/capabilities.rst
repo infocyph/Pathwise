@@ -14,12 +14,12 @@ Pathwise combines two layers:
 Primary Modules
 ---------------
 
-Unified Facade (``Infocyph\Pathwise\File``)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Unified Facade (``Infocyph\Pathwise\PathwiseFacade``)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Class:
 
-* ``File``
+* ``PathwiseFacade``
 
 What you get:
 

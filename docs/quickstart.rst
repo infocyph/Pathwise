@@ -15,9 +15,9 @@ This quickstart shows the fastest way to understand what Pathwise can do.
 
 .. code-block:: php
 
-   use Infocyph\Pathwise\File;
+   use Infocyph\Pathwise\PathwiseFacade;
 
-   $file = File::at('/tmp/example.txt')->file();
+   $file = PathwiseFacade::at('/tmp/example.txt')->file();
    $file->create("v1\n")
        ->append("v2\n")
        ->writeAndVerify("v3\n", 'sha256');

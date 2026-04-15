@@ -1,6 +1,6 @@
 <?php
 
-use Infocyph\Pathwise\File;
+use Infocyph\Pathwise\PathwiseFacade;
 use Infocyph\Pathwise\Storage\StorageFactory;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 
@@ -24,7 +24,7 @@ afterEach(function () {
 
 test('it provides path-bound file accessors', function () {
     $filePath = $this->workspace . DIRECTORY_SEPARATOR . 'sample.txt';
-    $entry = File::at($filePath);
+    $entry = PathwiseFacade::at($filePath);
 
     $entry->file()->create("line-1\n");
 
@@ -52,9 +52,9 @@ test('it provides path-bound directory and compression accessors', function () {
     $zipPath = $this->workspace . DIRECTORY_SEPARATOR . 'archive.zip';
     $extractDir = $this->workspace . DIRECTORY_SEPARATOR . 'extract';
 
-    File::at($sourceDir)->directory()->create();
-    File::at($zipPath)->compression(true)->compress($sourceDir)->save();
-    File::at($zipPath)->compression()->decompress($extractDir)->save();
+    PathwiseFacade::at($sourceDir)->directory()->create();
+    PathwiseFacade::at($zipPath)->compression(true)->compress($sourceDir)->save();
+    PathwiseFacade::at($zipPath)->compression()->decompress($extractDir)->save();
 
     expect(FlysystemHelper::fileExists($zipPath))->toBeTrue()
         ->and(FlysystemHelper::fileExists($extractDir . DIRECTORY_SEPARATOR . 'a.txt'))->toBeTrue()
@@ -65,41 +65,41 @@ test('it provides static gateways for processors policy storage and ops tooling'
     $root = $this->workspace . DIRECTORY_SEPARATOR . 'storage';
     mkdir($root, 0755, true);
 
-    File::mountStorage('facade', [
+    PathwiseFacade::mountStorage('facade', [
         'driver' => 'local',
         'root' => $root,
     ]);
 
     FlysystemHelper::write('facade://data/file.txt', 'hello');
 
-    $upload = File::upload();
-    $download = File::download();
-    $policy = File::policy()->allow('*', '*');
+    $upload = PathwiseFacade::upload();
+    $download = PathwiseFacade::download();
+    $policy = PathwiseFacade::policy()->allow('*', '*');
 
     $queueFile = $this->workspace . DIRECTORY_SEPARATOR . 'queue' . DIRECTORY_SEPARATOR . 'jobs.json';
-    $queue = File::queue($queueFile);
+    $queue = PathwiseFacade::queue($queueFile);
     $queue->enqueue('example', ['id' => 1], 10);
     $stats = $queue->stats();
 
     $auditFile = $this->workspace . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'audit.jsonl';
-    $audit = File::audit($auditFile);
+    $audit = PathwiseFacade::audit($auditFile);
     $audit->log('facade.test', ['ok' => true]);
 
     $watchPath = $this->workspace . DIRECTORY_SEPARATOR . 'watch.txt';
     file_put_contents($watchPath, 'v1');
-    $snapshotA = File::snapshot($watchPath);
+    $snapshotA = PathwiseFacade::snapshot($watchPath);
     file_put_contents($watchPath, 'v22');
-    $snapshotB = File::snapshot($watchPath);
-    $diff = File::diffSnapshots($snapshotA, $snapshotB);
+    $snapshotB = PathwiseFacade::snapshot($watchPath);
+    $diff = PathwiseFacade::diffSnapshots($snapshotA, $snapshotB);
 
     $dupDir = $this->workspace . DIRECTORY_SEPARATOR . 'dups';
     mkdir($dupDir, 0755, true);
     file_put_contents($dupDir . DIRECTORY_SEPARATOR . 'a.txt', 'dup');
     file_put_contents($dupDir . DIRECTORY_SEPARATOR . 'b.txt', 'dup');
-    $index = File::index($dupDir);
-    $duplicates = File::duplicates($dupDir);
+    $index = PathwiseFacade::index($dupDir);
+    $duplicates = PathwiseFacade::duplicates($dupDir);
 
-    $retention = File::retain($this->workspace . DIRECTORY_SEPARATOR . 'empty-retention');
+    $retention = PathwiseFacade::retain($this->workspace . DIRECTORY_SEPARATOR . 'empty-retention');
 
     expect($upload)->toBeInstanceOf(\Infocyph\Pathwise\StreamHandler\UploadProcessor::class)
         ->and($download)->toBeInstanceOf(\Infocyph\Pathwise\StreamHandler\DownloadProcessor::class)
