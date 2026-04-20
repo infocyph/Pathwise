@@ -15,7 +15,11 @@ test('it applies allow and deny rules with last match winning', function () {
 test('it supports conditional policy rules', function () {
     $policy = new PolicyEngine();
     $policy->deny('delete', '*');
-    $policy->allow('delete', '*', fn (string $_operation, string $_path, array $context): bool => ($context['force'] ?? false) === true);
+    $policy->allow('delete', '*', function (string $operation, string $path, array $context): bool {
+        unset($operation, $path);
+
+        return ($context['force'] ?? false) === true;
+    });
 
     expect($policy->isAllowed('delete', '/tmp/file.txt', ['force' => false]))->toBeFalse()
         ->and($policy->isAllowed('delete', '/tmp/file.txt', ['force' => true]))->toBeTrue();
@@ -26,4 +30,3 @@ test('it throws on denied operations', function () {
 
     expect(fn () => $policy->assertAllowed('delete', '/tmp/file.txt'))->toThrow(PolicyViolationException::class);
 });
-

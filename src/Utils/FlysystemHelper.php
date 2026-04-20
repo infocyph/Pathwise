@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Infocyph\Pathwise\Utils;
 
 use DateTimeInterface;
@@ -11,9 +13,13 @@ use League\Flysystem\FilesystemOperator;
 use League\Flysystem\Local\LocalFilesystemAdapter;
 use League\Flysystem\StorageAttributes;
 
+/**
+ * @phpstan-type FsConfig array<string, mixed>
+ */
 final class FlysystemHelper
 {
     private static ?FilesystemOperator $defaultFilesystem = null;
+
     /** @var array<string, FilesystemOperator> */
     private static array $mounts = [];
 
@@ -22,7 +28,7 @@ final class FlysystemHelper
      *
      * @param string $path The file path.
      * @param string $algorithm The hash algorithm to use. Defaults to 'sha256'.
-     * @param array $config Additional configuration.
+     * @param FsConfig $config Additional configuration.
      * @return string|null The checksum, or null if the file doesn't exist or algorithm is unsupported.
      */
     public static function checksum(string $path, string $algorithm = 'sha256', array $config = []): ?string
@@ -59,7 +65,7 @@ final class FlysystemHelper
      *
      * @param string $source The source file path.
      * @param string $destination The destination file path.
-     * @param array $config Additional configuration.
+     * @param FsConfig $config Additional configuration.
      */
     public static function copy(string $source, string $destination, array $config = []): void
     {
@@ -90,7 +96,7 @@ final class FlysystemHelper
      *
      * @param string $source The source directory path.
      * @param string $destination The destination directory path.
-     * @param array $config Additional configuration.
+     * @param FsConfig $config Additional configuration.
      */
     public static function copyDirectory(string $source, string $destination, array $config = []): void
     {
@@ -113,6 +119,7 @@ final class FlysystemHelper
 
             if ($item->isDir()) {
                 $destinationFilesystem->createDirectory($targetPath, $config);
+
                 continue;
             }
 
@@ -133,7 +140,7 @@ final class FlysystemHelper
      * Create a directory.
      *
      * @param string $path The directory path.
-     * @param array $config Additional configuration.
+     * @param FsConfig $config Additional configuration.
      */
     public static function createDirectory(string $path, array $config = []): void
     {
@@ -242,16 +249,12 @@ final class FlysystemHelper
      *
      * @param string $path The directory path.
      * @param bool $deep Whether to list recursively. Defaults to true.
-     * @return array<int, mixed> The list of contents.
+     * @return list<array<string, mixed>> The list of contents.
      */
     public static function listContents(string $path, bool $deep = true): array
     {
         $items = [];
         foreach (self::listContentsListing($path, $deep) as $item) {
-            if (!$item instanceof StorageAttributes) {
-                continue;
-            }
-
             $items[] = self::normalizeStorageAttributes($item);
         }
 
@@ -263,7 +266,7 @@ final class FlysystemHelper
      *
      * @param string $path The directory path.
      * @param bool $deep Whether to list recursively.
-     * @return DirectoryListing The directory listing.
+     * @return DirectoryListing<StorageAttributes> The directory listing.
      */
     public static function listContentsListing(string $path, bool $deep = true): DirectoryListing
     {
@@ -306,7 +309,7 @@ final class FlysystemHelper
      *
      * @param string $source The source file path.
      * @param string $destination The destination file path.
-     * @param array $config Additional configuration.
+     * @param FsConfig $config Additional configuration.
      */
     public static function move(string $source, string $destination, array $config = []): void
     {
@@ -328,7 +331,7 @@ final class FlysystemHelper
      *
      * @param string $source The source directory path.
      * @param string $destination The destination directory path.
-     * @param array $config Additional configuration.
+     * @param FsConfig $config Additional configuration.
      */
     public static function moveDirectory(string $source, string $destination, array $config = []): void
     {
@@ -340,21 +343,19 @@ final class FlysystemHelper
      * Get the public URL for a file.
      *
      * @param string $path The file path.
-     * @param array $config Additional configuration for URL generation.
+     * @param FsConfig $config Additional configuration for URL generation.
      * @return string The public URL.
-     * @throws \RuntimeException If public URL generation is not supported.
+     * @throws \RuntimeException If public URL generation fails.
      */
     public static function publicUrl(string $path, array $config = []): string
     {
         [$filesystem, $location] = self::filesystemForFile($path);
-        if (!method_exists($filesystem, 'publicUrl')) {
-            throw new \RuntimeException('Public URL generation is not supported by the resolved filesystem.');
+
+        try {
+            return $filesystem->publicUrl($location, $config);
+        } catch (\Throwable $e) {
+            throw new \RuntimeException('Public URL generation failed for the resolved filesystem.', 0, $e);
         }
-
-        /** @var callable $callable */
-        $callable = $filesystem->publicUrl(...);
-
-        return $callable($location, $config);
     }
 
     /**
@@ -452,21 +453,19 @@ final class FlysystemHelper
      *
      * @param string $path The file path.
      * @param DateTimeInterface $expiresAt The expiration time.
-     * @param array $config Additional configuration for URL generation.
+     * @param FsConfig $config Additional configuration for URL generation.
      * @return string The temporary URL.
-     * @throws \RuntimeException If temporary URL generation is not supported.
+     * @throws \RuntimeException If temporary URL generation fails.
      */
     public static function temporaryUrl(string $path, DateTimeInterface $expiresAt, array $config = []): string
     {
         [$filesystem, $location] = self::filesystemForFile($path);
-        if (!method_exists($filesystem, 'temporaryUrl')) {
-            throw new \RuntimeException('Temporary URL generation is not supported by the resolved filesystem.');
+
+        try {
+            return $filesystem->temporaryUrl($location, $expiresAt, $config);
+        } catch (\Throwable $e) {
+            throw new \RuntimeException('Temporary URL generation failed for the resolved filesystem.', 0, $e);
         }
-
-        /** @var callable $callable */
-        $callable = $filesystem->temporaryUrl(...);
-
-        return $callable($location, $expiresAt, $config);
     }
 
     /**
@@ -484,9 +483,9 @@ final class FlysystemHelper
      * Get the visibility of a file.
      *
      * @param string $path The file path.
-     * @return string|null The visibility, or null if not available.
+     * @return string The visibility.
      */
-    public static function visibility(string $path): ?string
+    public static function visibility(string $path): string
     {
         [$filesystem, $location] = self::filesystemForFile($path);
 
@@ -498,7 +497,7 @@ final class FlysystemHelper
      *
      * @param string $path The file path.
      * @param string $contents The contents to write.
-     * @param array $config Additional configuration.
+     * @param FsConfig $config Additional configuration.
      */
     public static function write(string $path, string $contents, array $config = []): void
     {
@@ -511,7 +510,7 @@ final class FlysystemHelper
      *
      * @param string $path The file path.
      * @param mixed $stream The stream resource.
-     * @param array $config Additional configuration.
+     * @param FsConfig $config Additional configuration.
      */
     public static function writeStream(string $path, mixed $stream, array $config = []): void
     {
@@ -632,7 +631,15 @@ final class FlysystemHelper
             $normalized['visibility'] = null;
         }
 
-        return array_merge($normalized, $item->extraMetadata());
+        foreach ($item->extraMetadata() as $key => $value) {
+            if (!is_string($key)) {
+                continue;
+            }
+
+            $normalized[$key] = $value;
+        }
+
+        return $normalized;
     }
 
     /**

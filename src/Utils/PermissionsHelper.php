@@ -1,11 +1,14 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Infocyph\Pathwise\Utils;
 
 use RuntimeException;
 
 class PermissionsHelper
 {
+    /** @var array<string, string> */
     private static array $permissionCache = [];
 
     /**
@@ -21,7 +24,6 @@ class PermissionsHelper
     {
         return is_executable($path);
     }
-
 
     /**
      * Checks if the specified path is readable.
@@ -85,7 +87,6 @@ class PermissionsHelper
         return array_reduce(array_keys($flags), fn($info, $flag) => $info . (($permissions & $flag) ? $flags[$flag] : '-'), '');
     }
 
-
     /**
      * Converts the permissions of a file or directory into a human-readable string.
      *
@@ -105,7 +106,12 @@ class PermissionsHelper
             return null;
         }
 
-        return self::formatPermissions(fileperms($path));
+        $permissions = fileperms($path);
+        if (!is_int($permissions)) {
+            return null;
+        }
+
+        return self::formatPermissions($permissions);
     }
 
     /**
@@ -118,23 +124,40 @@ class PermissionsHelper
      * null.
      *
      * @param string $path The path to the file or directory to retrieve
-     *     ownership for.
-     * @return array|null An array containing the owner and group of the file
-     *     or directory, or null if the file or directory does not exist, or
-     *     if ownership functions are not supported on the current system.
+     *                     ownership for.
+     * @return array{owner: string|null, group: string|null}|null An array containing the owner and group of the file
+     *                                                            or directory, or null if the file or directory does not exist, or
+     *                                                            if ownership functions are not supported on the current system.
      */
     public static function getOwnership(string $path): ?array
     {
         if (!self::isPosixSupported()) {
-            throw new RuntimeException("Ownership functions are only supported on Unix-based systems.");
+            throw new RuntimeException('Ownership functions are only supported on Unix-based systems.');
         }
 
         if (!file_exists($path)) {
             return null;
         }
 
-        $owner = posix_getpwuid(fileowner($path))['name'] ?? null;
-        $group = posix_getgrgid(filegroup($path))['name'] ?? null;
+        $ownerId = fileowner($path);
+        $groupId = filegroup($path);
+
+        $owner = null;
+        if (is_int($ownerId)) {
+            $ownerInfo = posix_getpwuid($ownerId);
+            if (is_array($ownerInfo)) {
+                $owner = $ownerInfo['name'];
+            }
+        }
+
+        $group = null;
+        if (is_int($groupId)) {
+            $groupInfo = posix_getgrgid($groupId);
+            if (is_array($groupInfo)) {
+                $group = $groupInfo['name'];
+            }
+        }
+
         return compact('owner', 'group');
     }
 
@@ -147,7 +170,7 @@ class PermissionsHelper
      *
      * @param string $path The path to the file or directory.
      * @return string|null The permissions as an octal string, or null if the
-     *         path does not exist.
+     *                     path does not exist.
      */
     public static function getPermissions(string $path): ?string
     {
@@ -155,7 +178,16 @@ class PermissionsHelper
             return null;
         }
 
-        return self::$permissionCache[$path]['permissions'] ??= substr(sprintf('%04o', fileperms($path)), -4);
+        if (!isset(self::$permissionCache[$path])) {
+            $permissions = fileperms($path);
+            if (!is_int($permissions)) {
+                return null;
+            }
+
+            self::$permissionCache[$path] = substr(sprintf('%04o', $permissions), -4);
+        }
+
+        return self::$permissionCache[$path];
     }
 
     /**
@@ -175,13 +207,12 @@ class PermissionsHelper
      * @param string $path The path to the file or directory to set ownership on.
      * @param string $owner The username of the new owner.
      * @param string|null $group The groupname of the new group, or null to leave the group unchanged.
-     * @return $this
      * @throws RuntimeException If the operation fails or if ownership functions are not supported on the current system.
      */
     public static function setOwnership(string $path, string $owner, ?string $group = null): self
     {
         if (!self::isPosixSupported()) {
-            throw new RuntimeException("Ownership functions are only supported on Unix-based systems.");
+            throw new RuntimeException('Ownership functions are only supported on Unix-based systems.');
         }
 
         $result = chown($path, $owner);
@@ -196,7 +227,6 @@ class PermissionsHelper
         return new self();
     }
 
-
     /**
      * Sets the permissions of the file or directory at the given path.
      *
@@ -206,7 +236,6 @@ class PermissionsHelper
      *
      * @param string $path The path to the file or directory to set permissions on.
      * @param int $permissions The new permissions for the file or directory.
-     * @return $this
      * @throws RuntimeException If the operation fails.
      */
     public static function setPermissions(string $path, int $permissions): self
@@ -214,6 +243,7 @@ class PermissionsHelper
         if (!chmod($path, $permissions)) {
             throw new RuntimeException("Failed to set permissions on {$path}");
         }
+
         return new self();
     }
 
@@ -227,7 +257,7 @@ class PermissionsHelper
      * they are not available, it returns false.
      *
      * @return bool True if POSIX-style ownership functions are supported,
-     *     false otherwise.
+     *              false otherwise.
      */
     private static function isPosixSupported(): bool
     {

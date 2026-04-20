@@ -65,7 +65,8 @@ test('it watches directory changes with callback', function () {
     if ($pid === 0) {
         usleep(300000);
         file_put_contents($targetFile, 'changed');
-        exit(0);
+        pcntl_exec(PHP_BINARY, ['-r', 'exit(0);']);
+        throw new RuntimeException('Failed to terminate child process.');
     }
 
     FileWatcher::watch($this->watchDir, function (array $diff) use (&$events) {

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Infocyph\Pathwise\Native;
 
 final class NativeCommandRunner
@@ -13,13 +15,14 @@ final class NativeCommandRunner
     public static function commandExists(string $command): bool
     {
         $lookup = PHP_OS_FAMILY === 'Windows'
-            ? "where " . escapeshellcmd($command) . " >NUL 2>&1"
-            : "command -v " . escapeshellarg($command) . " >/dev/null 2>&1";
+            ? 'where ' . escapeshellcmd($command) . ' >NUL 2>&1'
+            : 'command -v ' . escapeshellarg($command) . ' >/dev/null 2>&1';
 
         $result = self::run($lookup);
 
         return $result['success'];
     }
+
     /**
      * @return array{success: bool, output: array<int, string>, code: int}
      */

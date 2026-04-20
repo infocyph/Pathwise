@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Infocyph\Pathwise\FileManager;
 
 use Countable;
@@ -7,10 +9,10 @@ use DateTime;
 use DateTimeInterface;
 use Exception;
 use Infocyph\Pathwise\Exceptions\FileAccessException;
+use Infocyph\Pathwise\FileManager\Concerns\SafeFileWriterWriteConcern;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use JsonSerializable;
-use SimpleXMLElement;
 use SplFileObject;
 use Stringable;
 
@@ -21,21 +23,32 @@ use Stringable;
  * @method SafeFileReader binary(int $bytes = 1024) Binary iterator
  * @method SafeFileReader json() JSON line-by-line iterator
  * @method SafeFileReader regex(string $pattern) Regex iterator
- * @method SafeFileReader fixedWidth(array $widths) Fixed-width field iterator
+ * @method SafeFileReader fixedWidth(array<int, int> $widths) Fixed-width field iterator
  * @method SafeFileReader xml(string $element) XML iterator
  * @method SafeFileReader serialized() Serialized object iterator
  * @method SafeFileReader jsonArray() JSON array iterator
  */
 class SafeFileWriter implements Countable, Stringable, JsonSerializable
 {
+    use SafeFileWriterWriteConcern;
+
     private ?string $atomicTempFilePath = null;
+
     private bool $atomicWriteEnabled = false;
+
     private bool $cleanupLocalWorkingPath = false;
+
     private ?SplFileObject $file = null;
+
     private bool $isLocked = false;
+
     private ?string $localWorkingPath = null;
+
     private bool $syncBackOnClose = false;
+
     private int $writeCount = 0;
+
+    /** @var array<string, int> */
     private array $writeTypesCount = [];
 
     /**
@@ -60,7 +73,7 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
             // Never throw from destructors.
         } finally {
             if ($this->cleanupLocalWorkingPath && is_string($this->localWorkingPath) && is_file($this->localWorkingPath)) {
-                @unlink($this->localWorkingPath);
+                $this->unlinkPathSilently($this->localWorkingPath);
             }
         }
     }
@@ -75,26 +88,41 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      * finally releases the lock.
      *
      * @param string $type The type of write operation to perform.
-     * @param array $params The parameters to be passed to the specific write operation.
+     * @param list<mixed> $params The parameters to be passed to the specific write operation.
      * @throws Exception If the specified write type is unknown.
      */
-    public function __call(string $type, array $params)
+    public function __call(string $type, array $params): mixed
     {
         $this->initiate($this->append ? 'a' : 'w');
         $returnable = match ($type) {
-            'character' => $this->writeCharacter(...$params),
-            'line' => $this->writeLine(...$params),
-            'csv' => $this->writeCSV(...$params),
-            'binary' => $this->writeBinary(...$params),
-            'json' => $this->writeJSON(...$params),
-            'regex' => $this->writePatternMatch(...$params),
-            'fixedWidth' => $this->writeFixedWidth(...$params),
-            'xml' => $this->writeXML(...$params),
-            'serialized' => $this->writeSerialized(...$params),
-            'jsonArray' => $this->writeJSONArray(...$params),
+            'character' => $this->writeCharacter($this->requireStringParam($params, 0, $type)),
+            'line' => $this->writeLine($this->requireStringParam($params, 0, $type)),
+            'csv' => $this->writeCSV(
+                $this->requireCsvRowParam($params, 0, $type),
+                $this->optionalStringParam($params, 1, ','),
+                $this->optionalStringParam($params, 2, '"'),
+                $this->optionalStringParam($params, 3, '\\'),
+            ),
+            'binary' => $this->writeBinary($this->requireStringParam($params, 0, $type)),
+            'json' => $this->writeJSON($params[0] ?? null, $this->optionalBoolParam($params, 1, false)),
+            'regex' => $this->writePatternMatch(
+                $this->requireStringParam($params, 0, $type),
+                $this->requireStringParam($params, 1, $type),
+            ),
+            'fixedWidth' => $this->writeFixedWidth(
+                $this->requireFixedWidthDataParam($params, 0, $type),
+                $this->requireWidthsParam($params, 1, $type),
+            ),
+            'xml' => $this->writeXML($this->requireXmlParam($params, 0, $type)),
+            'serialized' => $this->writeSerialized($params[0] ?? null),
+            'jsonArray' => $this->writeJSONArray(
+                $this->requireArrayParam($params, 0, $type),
+                $this->optionalBoolParam($params, 1, false),
+            ),
             default => throw new Exception("Unknown write type '$type'"),
         };
         $this->trackWriteType($type);
+
         return $returnable;
     }
 
@@ -109,7 +137,7 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
     public function __toString(): string
     {
         return sprintf(
-            "SafeFileWriter [File: %s, Size: %d bytes, Writes: %d]",
+            'SafeFileWriter [File: %s, Size: %d bytes, Writes: %d]',
             $this->filename,
             $this->getSize(),
             $this->writeCount,
@@ -245,7 +273,7 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      * - `modificationDate`: The last modification date in ISO 8601 format.
      * - `creationDate`: The creation date in ISO 8601 format.
      *
-     * @return array The associative array to be JSON serialized.
+     * @return array<string, mixed> The associative array to be JSON serialized.
      */
     public function jsonSerialize(): array
     {
@@ -270,13 +298,19 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      */
     public function lock(int $lockType = LOCK_EX, bool $waitForLock = false, int $retries = 5, int $delay = 200): void
     {
+        if (!in_array($lockType, [LOCK_EX, LOCK_SH], true)) {
+            throw new FileAccessException("Invalid lock type for file {$this->filename}.");
+        }
+
         $this->initiate($this->append ? 'a' : 'w');
+        $file = $this->requireFileHandle();
         $attempt = 0;
 
         do {
             $lockMode = $waitForLock ? $lockType : $lockType | LOCK_NB;
-            if ($this->file->flock($lockMode)) {
+            if ($file->flock($lockMode)) {
                 $this->isLocked = true;
+
                 return;
             }
             if (!$waitForLock) {
@@ -406,16 +440,17 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
 
         if (!is_file($this->atomicTempFilePath)) {
             $this->atomicTempFilePath = null;
+
             return;
         }
 
         if ($this->isRemoteTarget()) {
             $this->localWorkingPath ??= $this->createLocalTempFile('pathwise_writer_sync_');
-            if (!@rename($this->atomicTempFilePath, $this->localWorkingPath)) {
-                if (!@copy($this->atomicTempFilePath, $this->localWorkingPath)) {
+            if (!$this->runSilently(fn(): bool => rename($this->atomicTempFilePath, $this->localWorkingPath))) {
+                if (!$this->runSilently(fn(): bool => copy($this->atomicTempFilePath, $this->localWorkingPath))) {
                     throw new FileAccessException("Failed to finalize atomic write for {$this->filename}");
                 }
-                @unlink($this->atomicTempFilePath);
+                $this->unlinkPathSilently($this->atomicTempFilePath);
             }
             $this->syncBackOnClose = true;
             $this->atomicTempFilePath = null;
@@ -423,11 +458,11 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
             return;
         }
 
-        if (!@rename($this->atomicTempFilePath, $this->filename)) {
-            if (!@copy($this->atomicTempFilePath, $this->filename)) {
+        if (!$this->runSilently(fn(): bool => rename($this->atomicTempFilePath, $this->filename))) {
+            if (!$this->runSilently(fn(): bool => copy($this->atomicTempFilePath, $this->filename))) {
                 throw new FileAccessException("Failed to finalize atomic write for {$this->filename}");
             }
-            @unlink($this->atomicTempFilePath);
+            $this->unlinkPathSilently($this->atomicTempFilePath);
         }
 
         $this->atomicTempFilePath = null;
@@ -468,7 +503,7 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
         if (!$this->file) {
             $targetFile = $this->resolveTargetFilePath();
             if (!$this->isRemoteTarget() && !is_writable(dirname($targetFile)) && !file_exists($targetFile)) {
-                throw new FileAccessException("Cannot write to directory: " . dirname($targetFile));
+                throw new FileAccessException('Cannot write to directory: ' . dirname($targetFile));
             }
             $this->file = new SplFileObject($targetFile, $mode);
         }
@@ -494,6 +529,7 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
             if (is_resource($target)) {
                 fclose($target);
             }
+
             throw new FileAccessException("Cannot write to file: {$this->filename}");
         }
 
@@ -530,6 +566,17 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
         return $this->atomicTempFilePath;
     }
 
+    private function runSilently(callable $operation): mixed
+    {
+        set_error_handler(static fn(): bool => true);
+
+        try {
+            return $operation();
+        } finally {
+            restore_error_handler();
+        }
+    }
+
     private function syncWorkingCopyBack(): void
     {
         if (!$this->syncBackOnClose || !is_string($this->localWorkingPath) || !is_file($this->localWorkingPath)) {
@@ -548,204 +595,12 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
         }
     }
 
-    /**
-     * Tracks the number of times a write type is called.
-     *
-     * @param string $type The type of write (e.g. 'character', 'line', 'csv', etc.).
-     */
-    private function trackWriteType(string $type): void
+    private function unlinkPathSilently(string $path): void
     {
-        $type = strtolower($type);
-        if (!isset($this->writeTypesCount[$type])) {
-            $this->writeTypesCount[$type] = 0;
+        if (!is_file($path)) {
+            return;
         }
-        $this->writeTypesCount[$type]++;
-    }
 
-    /**
-     * Writes a string of binary data to the file.
-     *
-     * This function takes a string of binary data and writes it to the file.
-     * The write count is incremented after writing the data.
-     *
-     * @param string $data The binary data to write.
-     * @return int|false The number of bytes written, or false on failure.
-     */
-    private function writeBinary(string $data): int|false
-    {
-        $this->writeCount++;
-        return $this->file->fwrite($data);
-    }
-
-    /**
-     * Writes a single character to the file.
-     *
-     * This function takes a single character and writes it to the file.
-     * The write count is incremented after writing the data.
-     *
-     * @param string $char The character to write to the file.
-     * @return int|false The number of bytes written, or false on failure.
-     */
-    private function writeCharacter(string $char): int|false
-    {
-        $this->writeCount++;
-        return $this->file->fwrite($char);
-    }
-
-    /**
-     * Writes a row of data to the file in CSV format.
-     *
-     * This function takes an array of data and writes it to the file
-     * as a CSV line using the specified separator, enclosure, and
-     * escape characters. It increments the write count after writing.
-     *
-     * @param array $row The data to write as a CSV line.
-     * @param string $separator The character used to separate fields. Defaults to ','.
-     * @param string $enclosure The character used to enclose fields. Defaults to '"'.
-     * @param string $escape The character used to escape special characters. Defaults to '\\'.
-     * @return int|false The number of bytes written, or false on failure.
-     */
-    private function writeCSV(
-        array $row,
-        string $separator = ",",
-        string $enclosure = "\"",
-        string $escape = "\\",
-    ): int|false {
-        $this->writeCount++;
-        return $this->file->fputcsv($row, $separator, $enclosure, $escape);
-    }
-
-    /**
-     * Writes a line of fixed-width fields to the file.
-     *
-     * The given $data array is padded and written to the file, with each
-     * element padded to the corresponding width in the $widths array.
-     *
-     * @param array $data The data to write. Each element is written as a string.
-     * @param array $widths The widths of each field. Each element is a positive integer.
-     * @return int|false The number of bytes written, or false on failure.
-     * @throws Exception If the count of $data does not match the count of $widths.
-     */
-    private function writeFixedWidth(array $data, array $widths): int|false
-    {
-        if (count($data) !== count($widths)) {
-            throw new Exception("Data and widths arrays must match.");
-        }
-        $line = '';
-        foreach ($data as $index => $field) {
-            $line .= str_pad((string) $field, $widths[$index]);
-        }
-        $this->writeCount++;
-        return $this->file->fwrite($line . PHP_EOL);
-    }
-
-    /**
-     * Writes JSON data to the file.
-     *
-     * This function encodes the provided data as JSON and writes it to the file.
-     * Optionally, it can format the JSON with indentation and whitespace for readability.
-     *
-     * @param mixed $data The data to encode as JSON and write.
-     * @param bool $prettyPrint If true, the JSON will be formatted for readability. Defaults to false.
-     * @return int|false The number of bytes written, or false on failure.
-     * @throws Exception If JSON encoding fails.
-     */
-    private function writeJSON(mixed $data, bool $prettyPrint = false): int|false
-    {
-        $jsonOptions = $prettyPrint ? JSON_PRETTY_PRINT : 0;
-        $jsonData = json_encode($data, $jsonOptions);
-        if ($jsonData === false) {
-            throw new Exception("JSON encoding failed: " . json_last_error_msg());
-        }
-        $this->writeCount++;
-        return $this->file->fwrite($jsonData . PHP_EOL);
-    }
-
-    /**
-     * Writes a JSON array to the file.
-     *
-     * @param array $data The array of data to write.
-     * @param bool $prettyPrint If true, the JSON will be formatted with
-     *     indentation and whitespace for readability. Defaults to false.
-     * @return int|false The number of bytes written, or false on failure.
-     * @throws Exception If the JSON encoding fails.
-     */
-    private function writeJSONArray(array $data, bool $prettyPrint = false): int|false
-    {
-        $jsonOptions = $prettyPrint ? JSON_PRETTY_PRINT : 0;
-        $jsonData = json_encode($data, $jsonOptions);
-        if ($jsonData === false) {
-            throw new Exception("JSON encoding failed: " . json_last_error_msg());
-        }
-        $this->writeCount++;
-        return $this->file->fwrite($jsonData . PHP_EOL);
-    }
-
-    /**
-     * Writes a line of text to the file.
-     *
-     * This function takes a string of content and writes it to the file,
-     * appending a newline character at the end.
-     * The write count is incremented after writing the data.
-     *
-     * @param string $content The content to write to the file.
-     * @return int|false The number of bytes written, or false on failure.
-     */
-    private function writeLine(string $content): int|false
-    {
-        $this->writeCount++;
-        return $this->file->fwrite($content . PHP_EOL);
-    }
-
-    /**
-     * Writes the given content to the file if it matches the specified pattern.
-     *
-     * This function checks if the provided content matches the given regex pattern.
-     * If a match is found, the content is written to the file with a newline appended.
-     * The write count is incremented each time content is successfully written.
-     *
-     * @param string $content The content to be checked and potentially written.
-     * @param string $pattern The regex pattern to match against the content.
-     * @return int|false The number of bytes written, or false on failure.
-     */
-    private function writePatternMatch(string $content, string $pattern): int|false
-    {
-        if (preg_match($pattern, $content)) {
-            $this->writeCount++;
-            return $this->file->fwrite($content . PHP_EOL);
-        }
-        return false;
-    }
-
-    /**
-     * Writes a serialized representation of the given data to the file.
-     *
-     * The `serialize` function is used to convert the data into a string
-     * representation. The resulting string is then written to the file,
-     * followed by a newline.
-     *
-     * @param mixed $data The data to serialize and write.
-     * @return int|false The number of bytes written, or false on failure.
-     */
-    private function writeSerialized(mixed $data): int|false
-    {
-        $serializedData = serialize($data);
-        $this->writeCount++;
-        return $this->file->fwrite($serializedData . PHP_EOL);
-    }
-
-    /**
-     * Writes an XML element to the file.
-     *
-     * This function takes a SimpleXMLElement, converts it to an XML string,
-     * and writes it to the file, appending a newline character.
-     *
-     * @param SimpleXMLElement $element The XML element to write.
-     * @return int|false The number of bytes written, or false on failure.
-     */
-    private function writeXML(SimpleXMLElement $element): int|false
-    {
-        $this->writeCount++;
-        return $this->file->fwrite($element->asXML() . PHP_EOL);
+        $this->runSilently(static fn(): bool => unlink($path));
     }
 }

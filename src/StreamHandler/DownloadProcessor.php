@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Infocyph\Pathwise\StreamHandler;
 
 use Infocyph\Pathwise\Exceptions\DownloadException;
@@ -11,14 +13,25 @@ use Infocyph\Pathwise\Utils\PathHelper;
 
 class DownloadProcessor
 {
+    /** @var list<string> */
     private array $allowedExtensions = [];
+
+    /** @var list<string> */
     private array $allowedRoots = [];
+
+    /** @var list<string> */
     private array $blockedExtensions = ['php', 'phtml', 'phar', 'exe', 'sh', 'bat', 'cmd', 'com'];
+
     private bool $blockHiddenFiles = true;
+
     private int $chunkSize = 8192;
+
     private string $defaultDownloadName = 'download.bin';
+
     private bool $forceAttachment = true;
+
     private int $maxDownloadSize = 0;
+
     private bool $rangeRequestsEnabled = true;
 
     /**
@@ -146,14 +159,16 @@ class DownloadProcessor
     /**
      * Set extension allow/block policy for downloads.
      *
-     * @param array<int, string> $allowedExtensions Array of allowed extensions (empty for all).
-     * @param array<int, string> $blockedExtensions Array of blocked extensions (default: dangerous types).
+     * @param list<string> $allowedExtensions Array of allowed extensions (empty for all).
+     * @param list<string> $blockedExtensions Array of blocked extensions (default: dangerous types).
      */
     public function setExtensionPolicy(array $allowedExtensions = [], array $blockedExtensions = []): void
     {
         $this->allowedExtensions = $this->normalizeExtensions($allowedExtensions);
+        /** @var list<string> $defaultBlocked */
+        $defaultBlocked = ['php', 'phtml', 'phar', 'exe', 'sh', 'bat', 'cmd', 'com'];
         $this->blockedExtensions = $blockedExtensions === []
-            ? ['php', 'phtml', 'phar', 'exe', 'sh', 'bat', 'cmd', 'com']
+            ? $defaultBlocked
             : $this->normalizeExtensions($blockedExtensions);
     }
 
@@ -233,7 +248,7 @@ class DownloadProcessor
             $remaining = $manifest['contentLength'];
             $bytesSent = 0;
             while ($remaining > 0) {
-                $chunk = fread($inputStream, min($this->chunkSize, $remaining));
+                $chunk = fread($inputStream, $this->readLength($remaining));
                 if (!is_string($chunk) || $chunk === '') {
                     break;
                 }
@@ -281,9 +296,13 @@ class DownloadProcessor
 
     private function discardBytes(mixed $stream, int $bytes): void
     {
+        if (!is_resource($stream)) {
+            throw new DownloadException('Invalid stream resource for seek.');
+        }
+
         $remaining = $bytes;
         while ($remaining > 0 && !feof($stream)) {
-            $chunk = fread($stream, min($this->chunkSize, $remaining));
+            $chunk = fread($stream, $this->readLength($remaining));
             if (!is_string($chunk) || $chunk === '') {
                 break;
             }
@@ -309,8 +328,8 @@ class DownloadProcessor
     }
 
     /**
-     * @param array<int, string> $extensions
-     * @return array<int, string>
+     * @param list<string> $extensions
+     * @return list<string>
      */
     private function normalizeExtensions(array $extensions): array
     {
@@ -329,22 +348,15 @@ class DownloadProcessor
 
     private function pathStartsWith(string $path, string $prefix): bool
     {
-        if ($path === $prefix) {
-            return true;
-        }
-
         $pathNormalized = rtrim($path, '/\\');
         $prefixNormalized = rtrim($prefix, '/\\');
-        if ($pathNormalized === $prefixNormalized) {
-            return true;
-        }
-
-        $needle = $prefixNormalized . DIRECTORY_SEPARATOR;
         if (PHP_OS_FAMILY === 'Windows') {
-            return str_starts_with(strtolower($pathNormalized), strtolower($needle));
+            $pathNormalized = strtolower($pathNormalized);
+            $prefixNormalized = strtolower($prefixNormalized);
         }
 
-        return str_starts_with($pathNormalized, $needle);
+        return $pathNormalized === $prefixNormalized
+            || str_starts_with($pathNormalized, $prefixNormalized . DIRECTORY_SEPARATOR);
     }
 
     private function pathWithinAllowedRoot(string $path): bool
@@ -357,34 +369,54 @@ class DownloadProcessor
         foreach ($this->allowedRoots as $root) {
             $rootIsScheme = PathHelper::hasScheme($root);
             if ($pathIsScheme || $rootIsScheme) {
-                if (!$pathIsScheme || !$rootIsScheme) {
-                    continue;
-                }
-
-                $normalizedPath = rtrim(str_replace('\\', '/', $path), '/');
-                $normalizedRoot = rtrim(str_replace('\\', '/', $root), '/');
-                if ($normalizedPath === $normalizedRoot || str_starts_with($normalizedPath, $normalizedRoot . '/')) {
+                if ($this->pathWithinSchemeRoot($path, $root, $pathIsScheme, $rootIsScheme)) {
                     return true;
                 }
 
                 continue;
             }
 
-            $pathAbsolute = PathHelper::isAbsolute($path)
-                ? $path
-                : PathHelper::toAbsolutePath($path);
-            $rootAbsolute = PathHelper::isAbsolute($root)
-                ? $root
-                : PathHelper::toAbsolutePath($root);
-
-            $resolvedPath = realpath($pathAbsolute) ?: PathHelper::normalize($pathAbsolute);
-            $resolvedRoot = realpath($rootAbsolute) ?: PathHelper::normalize($rootAbsolute);
-            if ($this->pathStartsWith($resolvedPath, $resolvedRoot)) {
+            if ($this->pathWithinLocalRoot($path, $root)) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private function pathWithinLocalRoot(string $path, string $root): bool
+    {
+        $pathAbsolute = PathHelper::isAbsolute($path)
+            ? $path
+            : PathHelper::toAbsolutePath($path);
+        $rootAbsolute = PathHelper::isAbsolute($root)
+            ? $root
+            : PathHelper::toAbsolutePath($root);
+
+        $resolvedPath = realpath($pathAbsolute) ?: PathHelper::normalize($pathAbsolute);
+        $resolvedRoot = realpath($rootAbsolute) ?: PathHelper::normalize($rootAbsolute);
+
+        return $this->pathStartsWith($resolvedPath, $resolvedRoot);
+    }
+
+    private function pathWithinSchemeRoot(string $path, string $root, bool $pathIsScheme, bool $rootIsScheme): bool
+    {
+        if (!$pathIsScheme || !$rootIsScheme) {
+            return false;
+        }
+
+        $normalizedPath = rtrim(str_replace('\\', '/', $path), '/');
+        $normalizedRoot = rtrim(str_replace('\\', '/', $root), '/');
+
+        return $normalizedPath === $normalizedRoot || str_starts_with($normalizedPath, $normalizedRoot . '/');
+    }
+
+    /**
+     * @return int<1, max>
+     */
+    private function readLength(int $remaining): int
+    {
+        return max(1, min($this->chunkSize, $remaining));
     }
 
     private function resolveDownloadName(?string $downloadName, string $path): string
@@ -416,8 +448,8 @@ class DownloadProcessor
             throw new DownloadException('Invalid range header.');
         }
 
-        $startRaw = $matches[1] ?? '';
-        $endRaw = $matches[2] ?? '';
+        $startRaw = $matches[1];
+        $endRaw = $matches[2];
 
         if ($startRaw === '' && $endRaw === '') {
             throw new DownloadException('Invalid range header.');
@@ -480,15 +512,34 @@ class DownloadProcessor
         return $candidate;
     }
 
+    private function seekSilently(mixed $stream, int $offset, int $whence): int
+    {
+        if (!is_resource($stream)) {
+            throw new DownloadException('Invalid stream resource for seek.');
+        }
+
+        set_error_handler(static fn(): bool => true);
+
+        try {
+            return fseek($stream, $offset, $whence);
+        } finally {
+            restore_error_handler();
+        }
+    }
+
     private function seekStreamToOffset(mixed $stream, int $offset): void
     {
         if ($offset < 1) {
             return;
         }
 
+        if (!is_resource($stream)) {
+            throw new DownloadException('Invalid stream resource for seek.');
+        }
+
         $metadata = stream_get_meta_data($stream);
-        $seekable = is_array($metadata) && ($metadata['seekable'] ?? false);
-        if ($seekable && @fseek($stream, $offset, SEEK_SET) === 0) {
+        $seekable = $metadata['seekable'];
+        if ($seekable && $this->seekSilently($stream, $offset, SEEK_SET) === 0) {
             return;
         }
 
@@ -532,6 +583,10 @@ class DownloadProcessor
 
     private function writeFully(mixed $stream, string $payload): int
     {
+        if (!is_resource($stream)) {
+            throw new DownloadException('Invalid output stream.');
+        }
+
         $totalWritten = 0;
         $payloadLength = strlen($payload);
         while ($totalWritten < $payloadLength) {

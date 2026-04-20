@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Infocyph\Pathwise\Utils;
 
 use Infocyph\Pathwise\Utils\Ownership\OwnershipResolverFactory;
@@ -20,7 +22,7 @@ class MetadataHelper
      *
      * @param string $path The path to the file or directory to retrieve metadata for.
      * @param bool $humanReadableSize Optional. If true, returns the file size in a human-readable format.
-     * @return array|null An associative array containing metadata information, or null if the path does not exist.
+     * @return array<string, mixed>|null An associative array containing metadata information, or null if the path does not exist.
      */
     public static function getAllMetadata(string $path, bool $humanReadableSize = false): ?array
     {
@@ -56,10 +58,10 @@ class MetadataHelper
      *
      * @param string $path The path to the file to compute a checksum for.
      * @param string $algorithm The algorithm to use to compute the checksum.
-     *     Supported algorithms are those that are listed in the return value
-     *     of the hash_algos() function.
+     *                          Supported algorithms are those that are listed in the return value
+     *                          of the hash_algos() function.
      * @return string|null The checksum of the file, or null if the path is not
-     *     a file or if the algorithm is not supported.
+     *                     a file or if the algorithm is not supported.
      */
     public static function getChecksum(string $path, string $algorithm = 'md5'): ?string
     {
@@ -91,7 +93,7 @@ class MetadataHelper
                 continue;
             }
 
-            $size += (int) ($item['file_size'] ?? 0);
+            $size += self::intFromMixed($item['file_size'] ?? 0);
         }
 
         return $size;
@@ -109,9 +111,9 @@ class MetadataHelper
      *
      * @param string $directory The path to the directory to count files in.
      * @param bool $recursive If true (default), recursively traverse the
-     *     directory. If false, only count files in the top-level directory.
+     *                        directory. If false, only count files in the top-level directory.
      * @return int|null The number of files in the directory, or null if the
-     *     directory does not exist.
+     *                  directory does not exist.
      */
     public static function getFileCount(string $directory, bool $recursive = true): ?int
     {
@@ -172,7 +174,7 @@ class MetadataHelper
      * 'Y-m-d H:i:s'. If the file does not exist, returns null.
      *
      * @param string $path The path to the file to retrieve timestamps for.
-     * @return array|null The human-readable timestamps, or null if the file does not exist.
+     * @return array{created: string, modified: string, accessed: string}|null The human-readable timestamps, or null if the file does not exist.
      */
     public static function getHumanReadableTimestamps(string $path): ?array
     {
@@ -181,7 +183,11 @@ class MetadataHelper
             return null;
         }
 
-        return array_map(fn($time) => date('Y-m-d H:i:s', $time), $timestamps);
+        return [
+            'created' => date('Y-m-d H:i:s', $timestamps['created']),
+            'modified' => date('Y-m-d H:i:s', $timestamps['modified']),
+            'accessed' => date('Y-m-d H:i:s', $timestamps['accessed']),
+        ];
     }
 
     /**
@@ -208,7 +214,7 @@ class MetadataHelper
      *
      * @param string $path The path to the file to retrieve the MIME type for.
      * @return string|null The MIME type of the file, or null if the path does not
-     *     point to a file or metadata cannot be determined.
+     *                     point to a file or metadata cannot be determined.
      */
     public static function getMimeType(string $path): ?string
     {
@@ -246,10 +252,10 @@ class MetadataHelper
      * null.
      *
      * @param string $path The path to the file or directory to retrieve
-     *     ownership for.
-     * @return array|null An array containing the owner and group of the file
-     *     or directory, or null if the file or directory does not exist, or
-     *     if ownership functions are not supported on the current system.
+     *                     ownership for.
+     * @return array{owner: string|null, group: string|null}|null An array containing the owner and group of the file
+     *                                                            or directory, or null if the file or directory does not exist, or
+     *                                                            if ownership functions are not supported on the current system.
      */
     public static function getOwnershipDetails(string $path): ?array
     {
@@ -263,7 +269,7 @@ class MetadataHelper
      *
      * @param string $path The path to check.
      * @return string|null Returns 'file' if the path is a file, 'directory' if it's a directory,
-     * 'link' if it's a symbolic link, or null if none of these.
+     *                     'link' if it's a symbolic link, or null if none of these.
      */
     public static function getPathType(string $path): ?string
     {
@@ -286,11 +292,17 @@ class MetadataHelper
      *
      * @param string $path The path to the symbolic link.
      * @return string|null The target of the symbolic link, or null if the path
-     *     is not a symbolic link.
+     *                     is not a symbolic link.
      */
     public static function getSymlinkTarget(string $path): ?string
     {
-        return is_link($path) ? readlink($path) : null;
+        if (!is_link($path)) {
+            return null;
+        }
+
+        $target = readlink($path);
+
+        return is_string($target) ? $target : null;
     }
 
     /**
@@ -303,17 +315,24 @@ class MetadataHelper
      * this function returns null.
      *
      * @param string $path The path to the file or directory to retrieve
-     *     timestamps for.
-     * @return array|null The timestamps, or null if the file or directory does
-     *     not exist.
+     *                     timestamps for.
+     * @return array{created: int, modified: int, accessed: int}|null The timestamps, or null if the file or directory does
+     *                                                                not exist.
      */
     public static function getTimestamps(string $path): ?array
     {
         if (file_exists($path)) {
+            $created = filectime($path);
+            $modified = filemtime($path);
+            $accessed = fileatime($path);
+            if (!is_int($created) || !is_int($modified) || !is_int($accessed)) {
+                return null;
+            }
+
             return [
-                'created' => filectime($path),
-                'modified' => filemtime($path),
-                'accessed' => fileatime($path),
+                'created' => $created,
+                'modified' => $modified,
+                'accessed' => $accessed,
             ];
         }
 
@@ -339,7 +358,7 @@ class MetadataHelper
      *
      * @param string $path The path to check for a broken symbolic link.
      * @return bool|null True if the link is broken, false if it is not, or null
-     *     if the path is not a symbolic link.
+     *                   if the path is not a symbolic link.
      */
     public static function isBrokenSymlink(string $path): ?bool
     {
@@ -375,12 +394,23 @@ class MetadataHelper
     private static function formatSize(int $size): string
     {
         $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        $power = $size > 0 ? floor(log($size, 1024)) : 0;
+        $power = $size > 0 ? (int) floor(log($size, 1024)) : 0;
+        $power = min($power, count($units) - 1);
+
         return number_format($size / (1024 ** $power), 2) . ' ' . $units[$power];
     }
 
     private static function getOwnershipResolver(): OwnershipResolverInterface
     {
         return self::$ownershipResolver ??= OwnershipResolverFactory::create();
+    }
+
+    private static function intFromMixed(mixed $value): int
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+
+        return is_numeric($value) ? (int) $value : 0;
     }
 }

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Infocyph\Pathwise\FileManager;
 
 use DateTimeInterface;
@@ -17,11 +19,16 @@ use SplFileObject;
 class FileOperations
 {
     protected ?SplFileObject $file = null;
+
     private ?AuditTrail $auditTrail = null;
+
     private ExecutionStrategy $executionStrategy = ExecutionStrategy::AUTO;
+
     private ?PolicyEngine $policyEngine = null;
+
     /** @var array<int, callable> */
     private array $rollbackActions = [];
+
     private bool $transactionActive = false;
 
     /**
@@ -48,6 +55,7 @@ class FileOperations
         $newContent = ($previousContent ?? '') . $content;
         FlysystemHelper::write($this->filePath, $newContent);
         $this->audit('append', ['path' => $this->filePath, 'bytes' => strlen($content)]);
+
         return $this;
     }
 
@@ -165,6 +173,7 @@ class FileOperations
         });
         FlysystemHelper::write($this->filePath, (string) $content);
         $this->audit('create', ['path' => $this->filePath]);
+
         return $this;
     }
 
@@ -181,12 +190,14 @@ class FileOperations
         $this->recordRollback(function () use ($content): void {
             FlysystemHelper::write($this->filePath, $content);
         });
+
         try {
             FlysystemHelper::delete($this->filePath);
         } catch (\Throwable $e) {
             throw new FileAccessException("Unable to delete file at $this->filePath.", 0, $e);
         }
         $this->audit('delete', ['path' => $this->filePath]);
+
         return $this;
     }
 
@@ -203,13 +214,25 @@ class FileOperations
      */
     public function getLineCount(): int
     {
-        $this->initFile();
-        $this->file->seek(PHP_INT_MAX);
-        return $this->file->key() + 1;
+        $file = $this->requireFile();
+        $file->seek(PHP_INT_MAX);
+
+        return $file->key() + 1;
     }
 
     /**
      * Get all metadata for the file.
+     *
+     * @return array{
+     *     permissions: string,
+     *     size: int,
+     *     last_modified: int,
+     *     owner: int|false,
+     *     group: int|false,
+     *     type: string|false,
+     *     mime_type: string|null,
+     *     extension: string
+     * }
      */
     public function getMetadata(): array
     {
@@ -237,6 +260,7 @@ class FileOperations
         if (!$this->exists()) {
             throw new FileNotFoundException("File not found at $this->filePath.");
         }
+
         return is_readable($this->filePath);
     }
 
@@ -247,13 +271,13 @@ class FileOperations
      */
     public function openWithLock(bool $exclusive = true, int $timeout = 0): self
     {
-        $this->initFile('r+');
+        $file = $this->requireFile('r+');
         $lockType = $exclusive ? LOCK_EX : LOCK_SH;
         $lockType |= LOCK_NB;
 
         $startTime = time();
 
-        while (!$this->file->flock($lockType)) {
+        while (!$file->flock($lockType)) {
             if ($timeout > 0 && (time() - $startTime) >= $timeout) {
                 throw new FileAccessException("Timeout reached while trying to acquire lock on file: {$this->filePath}.");
             }
@@ -266,7 +290,7 @@ class FileOperations
     /**
      * Get the public URL for this file.
      *
-     * @param array $config Additional configuration for URL generation.
+     * @param array<string, mixed> $config Additional configuration for URL generation.
      * @return string The public URL.
      * @throws FileNotFoundException If the file does not exist.
      */
@@ -287,6 +311,7 @@ class FileOperations
     public function read(): string
     {
         $this->isReadable();
+
         return FlysystemHelper::read($this->filePath);
     }
 
@@ -310,6 +335,7 @@ class FileOperations
     {
         $this->assertPolicy('rename', $this->filePath, ['destination' => $newPath]);
         $newPath = PathHelper::normalize($newPath);
+
         try {
             FlysystemHelper::move($this->filePath, $newPath);
         } catch (\Throwable $e) {
@@ -324,6 +350,7 @@ class FileOperations
         $this->filePath = $newPath;
         $this->initFile(); // Reinitialize file object with new path
         $this->audit('rename', ['from' => $oldPath, 'to' => $newPath]);
+
         return $this;
     }
 
@@ -345,6 +372,8 @@ class FileOperations
 
     /**
      * Search for a term in the file using OS-native commands and return matching lines.
+     *
+     * @return list<string>
      */
     public function searchContent(string $searchTerm): array
     {
@@ -403,6 +432,7 @@ class FileOperations
             throw new FileAccessException("Unable to change group for file: {$this->filePath}.");
         }
         $this->audit('set-group', ['path' => $this->filePath, 'group' => $groupId]);
+
         return $this;
     }
 
@@ -416,6 +446,7 @@ class FileOperations
             throw new FileAccessException("Unable to change owner for file: {$this->filePath}.");
         }
         $this->audit('set-owner', ['path' => $this->filePath, 'owner' => $ownerId]);
+
         return $this;
     }
 
@@ -438,6 +469,7 @@ class FileOperations
             throw new FileAccessException("Unable to set permissions for file: {$this->filePath}.");
         }
         $this->audit('set-permissions', ['path' => $this->filePath, 'permissions' => $permissions]);
+
         return $this;
     }
 
@@ -473,7 +505,7 @@ class FileOperations
      * Get a temporary URL for this file.
      *
      * @param DateTimeInterface $expiresAt The expiration time for the URL.
-     * @param array $config Additional configuration for URL generation.
+     * @param array<string, mixed> $config Additional configuration for URL generation.
      * @return string The temporary URL.
      * @throws FileNotFoundException If the file does not exist.
      */
@@ -504,6 +536,7 @@ class FileOperations
             return $result;
         } catch (\Throwable $e) {
             $this->rollbackTransaction();
+
             throw $e;
         }
     }
@@ -513,7 +546,8 @@ class FileOperations
      */
     public function unlock(): self
     {
-        $this->file->flock(LOCK_UN);
+        $this->requireFile()->flock(LOCK_UN);
+
         return $this;
     }
 
@@ -532,6 +566,7 @@ class FileOperations
         });
         FlysystemHelper::write($this->filePath, $content);
         $this->audit('update', ['path' => $this->filePath, 'bytes' => strlen($content)]);
+
         return $this;
     }
 
@@ -595,7 +630,7 @@ class FileOperations
      * Write to the file from a stream.
      *
      * @param mixed $stream The stream resource to write from.
-     * @param array $config Additional configuration for the write operation.
+     * @param array<string, mixed> $config Additional configuration for the write operation.
      * @return self This instance for method chaining.
      */
     public function writeStream(mixed $stream, array $config = []): self
@@ -613,17 +648,25 @@ class FileOperations
     protected function initFile(string $mode = 'r'): self
     {
         $this->file = new SplFileObject($this->filePath, $mode);
+
         return $this;
     }
 
+    /**
+     * @param array<string, mixed> $context
+     */
     private function assertPolicy(string $operation, string $path, array $context = []): void
     {
         $this->policyEngine?->assertAllowed($operation, PathHelper::normalize($path), $context);
     }
 
+    /**
+     * @param array<string, mixed> $context
+     */
     private function audit(string $operation, array $context = []): void
     {
-        $context['path'] = PathHelper::normalize((string) ($context['path'] ?? $this->filePath));
+        $path = $context['path'] ?? $this->filePath;
+        $context['path'] = PathHelper::normalize(is_string($path) ? $path : $this->filePath);
         $this->auditTrail?->log($operation, $context);
     }
 
@@ -659,5 +702,18 @@ class FileOperations
         }
 
         $this->rollbackActions[] = $rollbackAction;
+    }
+
+    private function requireFile(string $mode = 'r'): SplFileObject
+    {
+        if (!$this->file instanceof SplFileObject) {
+            $this->initFile($mode);
+        }
+
+        if (!$this->file instanceof SplFileObject) {
+            throw new FileAccessException("Unable to initialize file object for {$this->filePath}.");
+        }
+
+        return $this->file;
     }
 }

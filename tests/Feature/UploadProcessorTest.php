@@ -130,7 +130,11 @@ test('it supports chunked upload and finalize flow', function () {
 
 test('it exposes malware scanner state in info', function () {
     $this->uploadProcessor->setDirectorySettings($this->uploadDir);
-    $this->uploadProcessor->setMalwareScanner(fn(string $_path, string $_mime): bool => true);
+    $this->uploadProcessor->setMalwareScanner(function (string $path, string $mime): bool {
+        unset($path, $mime);
+
+        return true;
+    });
 
     expect($this->uploadProcessor->getInfo()['hasMalwareScanner'])->toBeTrue();
 });
@@ -150,7 +154,11 @@ test('it blocks finalize when malware scan fails', function () {
         'name' => 'chunk.part',
     ], $uploadId, 0, 1, 'merged.txt');
 
-    $this->uploadProcessor->setMalwareScanner(fn(string $_path, string $_mime): bool => false);
+    $this->uploadProcessor->setMalwareScanner(function (string $path, string $mime): bool {
+        unset($path, $mime);
+
+        return false;
+    });
 
     expect(fn() => $this->uploadProcessor->finalizeChunkUpload($uploadId))
         ->toThrow(UploadException::class, 'Malware scan failed');

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Infocyph\Pathwise\FileManager;
 
 use Countable;
@@ -24,20 +26,29 @@ use XMLReader;
  * @method SafeFileReader binary(int $bytes = 1024) Binary iterator
  * @method SafeFileReader json() JSON line-by-line iterator
  * @method SafeFileReader regex(string $pattern) Regex iterator
- * @method SafeFileReader fixedWidth(array $widths) Fixed-width field iterator
+ * @method SafeFileReader fixedWidth(array<int, int> $widths) Fixed-width field iterator
  * @method SafeFileReader xml(string $element) XML iterator
  * @method SafeFileReader serialized() Serialized object iterator
  * @method SafeFileReader jsonArray() JSON array iterator
+ * @implements Iterator<int, mixed>
+ * @implements SeekableIterator<int, mixed>
  */
 final class SafeFileReader implements Countable, Iterator, SeekableIterator
 {
     private bool $cleanupLocalWorkingPath = false;
+
     private int $count = 0;
+
     private ?Generator $currentIterator = null;
+
     private SplFileObject $file;
+
     private int $fileSize;
+
     private bool $isLocked = false;
+
     private ?string $localWorkingPath = null;
+
     private int $position = 0;
 
     /**
@@ -46,7 +57,7 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
      * @param string $filename The path to the file to read.
      * @param string $mode The file mode to open the file with. Defaults to 'r'.
      * @param bool $exclusiveLock When true, a lock is acquired on the file before
-     *     reading. The type of lock is determined by the $mode parameter.
+     *                            reading. The type of lock is determined by the $mode parameter.
      */
     public function __construct(
         private readonly string $filename,
@@ -65,7 +76,7 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
     {
         $this->releaseLock();
         if ($this->cleanupLocalWorkingPath && is_string($this->localWorkingPath) && is_file($this->localWorkingPath)) {
-            @unlink($this->localWorkingPath);
+            $this->unlinkPathSilently($this->localWorkingPath);
         }
     }
 
@@ -79,8 +90,8 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
      * generates the appropriate iterator for processing the file content.
      *
      * @param string $type The type of iterator to create.
-     * @param array $params Parameters to pass to the iterator method.
-     * @return NoRewindIterator The requested iterator wrapped in a NoRewindIterator.
+     * @param list<mixed> $params Parameters to pass to the iterator method.
+     * @return NoRewindIterator<mixed, mixed, Generator> The requested iterator wrapped in a NoRewindIterator.
      * @throws Exception If the specified iterator type is unknown.
      */
     public function __call(string $type, array $params): NoRewindIterator
@@ -89,12 +100,16 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
         $this->currentIterator = match ($type) {
             'character' => $this->characterIterator(),
             'line' => $this->lineIterator(),
-            'csv' => $this->csvIterator(...$params),
-            'binary' => $this->binaryIterator(...$params),
+            'csv' => $this->csvIterator(
+                $this->optionalStringParam($params, 0, ','),
+                $this->optionalStringParam($params, 1, '"'),
+                $this->optionalStringParam($params, 2, '\\'),
+            ),
+            'binary' => $this->binaryIterator($this->optionalIntParam($params, 0, 1024)),
             'json' => $this->jsonIteratorWithHandling(),
-            'regex' => $this->regexIterator(...$params),
-            'fixedWidth' => $this->fixedWidthIterator(...$params),
-            'xml' => $this->xmlIterator(...$params),
+            'regex' => $this->regexIterator($this->requireStringParam($params, 0, 'regex pattern')),
+            'fixedWidth' => $this->fixedWidthIterator($this->requireWidthsParam($params)),
+            'xml' => $this->xmlIterator($this->requireStringParam($params, 0, 'xml element')),
             'serialized' => $this->serializedIterator(),
             'jsonArray' => $this->jsonArrayIteratorWithHandling(),
             default => throw new Exception("Unknown iterator type '$type'"),
@@ -333,7 +348,7 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
      * The given $widths array is used to determine the width of each field.
      * The fields are extracted from each line using substr(), and are yielded as an array.
      *
-     * @param array $widths An array of positive integers, each specifying the width of a field.
+     * @param list<int> $widths An array of positive integers, each specifying the width of a field.
      * @return Generator Yields an array of fields for each line of the file.
      */
     private function fixedWidthIterator(array $widths): Generator
@@ -343,6 +358,10 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
             $fields = [];
             $offset = 0;
             foreach ($widths as $width) {
+                if ($width < 1) {
+                    continue;
+                }
+
                 $fields[] = substr($line, $offset, $width);
                 $offset += $width;
             }
@@ -378,7 +397,6 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
         }
     }
 
-
     /**
      * Iterates over a JSON array with error handling.
      *
@@ -391,7 +409,12 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
      */
     private function jsonArrayIteratorWithHandling(): Generator
     {
-        $jsonArray = json_decode($this->file->fread($this->fileSize), true);
+        $jsonContent = $this->file->fread($this->fileSize);
+        if (!is_string($jsonContent)) {
+            throw new Exception('JSON array decoding error: failed to read file content.');
+        }
+
+        $jsonArray = json_decode($jsonContent, true);
         if (json_last_error() !== JSON_ERROR_NONE || !is_array($jsonArray)) {
             throw new Exception('JSON array decoding error: ' . json_last_error_msg());
         }
@@ -453,6 +476,32 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
     }
 
     /**
+     * @param list<mixed> $params
+     */
+    private function optionalIntParam(array $params, int $index, int $default): int
+    {
+        $value = $params[$index] ?? $default;
+        if (!is_int($value)) {
+            throw new Exception("Parameter #{$index} must be an integer.");
+        }
+
+        return $value;
+    }
+
+    /**
+     * @param list<mixed> $params
+     */
+    private function optionalStringParam(array $params, int $index, string $default): string
+    {
+        $value = $params[$index] ?? $default;
+        if (!is_string($value)) {
+            throw new Exception("Parameter #{$index} must be a string.");
+        }
+
+        return $value;
+    }
+
+    /**
      * Iterates over the file line by line, applying the given regex pattern to each line.
      *
      * For each line, if the regex pattern matches, the matches are yielded as an array.
@@ -477,16 +526,43 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
     }
 
     /**
-     * Resets the internal state of the file reader.
-     *
-     * This function is used to reset the internal state of the file reader to
-     * its initial state. It rewinds the file to its beginning and resets the
-     * count and position.
+     * @param list<mixed> $params
      */
-    private function reset(): void
+    private function requireStringParam(array $params, int $index, string $name): string
     {
-        $this->file->rewind();
-        $this->resetPosition();
+        $value = $params[$index] ?? null;
+        if (!is_string($value) || $value === '') {
+            throw new Exception("Missing or invalid {$name}.");
+        }
+
+        return $value;
+    }
+
+    /**
+     * @param list<mixed> $params
+     * @return list<int>
+     */
+    private function requireWidthsParam(array $params): array
+    {
+        $value = $params[0] ?? null;
+        if (!is_array($value)) {
+            throw new Exception('Missing fixed-width field definitions.');
+        }
+
+        $widths = [];
+        foreach ($value as $width) {
+            if (!is_int($width) || $width < 1) {
+                throw new Exception('Fixed-width definitions must be positive integers.');
+            }
+
+            $widths[] = $width;
+        }
+
+        if ($widths === []) {
+            throw new Exception('At least one fixed-width field definition is required.');
+        }
+
+        return $widths;
     }
 
     /**
@@ -525,13 +601,15 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
         $tempFile = tempnam(sys_get_temp_dir(), 'pathwise_reader_');
         if ($tempFile === false) {
             fclose($stream);
+
             throw new FileAccessException("Cannot access file at path: {$this->filename}");
         }
 
         $target = fopen($tempFile, 'wb');
         if (!is_resource($target)) {
             fclose($stream);
-            @unlink($tempFile);
+            $this->unlinkPathSilently($tempFile);
+
             throw new FileAccessException("Cannot access file at path: {$this->filename}");
         }
 
@@ -564,6 +642,21 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
                 $this->position++;
                 $this->count++;
             }
+        }
+    }
+
+    private function unlinkPathSilently(string $path): void
+    {
+        if (!is_file($path)) {
+            return;
+        }
+
+        set_error_handler(static fn(): bool => true);
+
+        try {
+            unlink($path);
+        } finally {
+            restore_error_handler();
         }
     }
 

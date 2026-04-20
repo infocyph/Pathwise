@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Infocyph\Pathwise\Storage;
 
 use Infocyph\Pathwise\Utils\FlysystemHelper;
@@ -28,8 +30,9 @@ final class StorageFactory
         'zip' => 'ziparchive',
         'zip-archive' => 'ziparchive',
     ];
+
     /**
-     * @var array<string, array{package: string, adapter_class: class-string}>
+     * @var array<string, array{package: string, adapter_class: non-empty-string}>
      */
     private const array OFFICIAL_DRIVERS = [
         'local' => [
@@ -144,7 +147,7 @@ final class StorageFactory
     /**
      * Get the names of all registered custom drivers.
      *
-     * @return array The driver names.
+     * @return list<string> The driver names.
      */
     public static function driverNames(): array
     {
@@ -203,7 +206,7 @@ final class StorageFactory
     /**
      * Get all official driver metadata.
      *
-     * @return array<string, array{package: string, adapter_class: class-string}> The official drivers.
+     * @return array<string, array{package: string, adapter_class: non-empty-string}> The official drivers.
      */
     public static function officialDrivers(): array
     {
@@ -266,12 +269,7 @@ final class StorageFactory
             return null;
         }
 
-        $filesystem = self::$drivers[$driver]($config);
-        if (!$filesystem instanceof FilesystemOperator) {
-            throw new \InvalidArgumentException("Driver '{$driver}' factory must return a FilesystemOperator.");
-        }
-
-        return $filesystem;
+        return self::$drivers[$driver]($config);
     }
 
     /**
@@ -279,8 +277,8 @@ final class StorageFactory
      */
     private static function createLocalFilesystem(array $config): FilesystemOperator
     {
-        $root = (string) ($config['root'] ?? '');
-        if ($root === '') {
+        $root = $config['root'] ?? null;
+        if (!is_string($root) || $root === '') {
             throw new \InvalidArgumentException('Local driver requires a non-empty "root" path.');
         }
 
@@ -306,6 +304,10 @@ final class StorageFactory
     private static function createOfficialFilesystem(string $driver, array $config): FilesystemOperator
     {
         $driver = self::canonicalDriverName($driver);
+        if ($driver === 'local') {
+            return self::createLocalFilesystem($config);
+        }
+
         $metadata = self::OFFICIAL_DRIVERS[$driver] ?? null;
         if ($metadata === null) {
             throw new \InvalidArgumentException("Unsupported official storage driver '{$driver}'.");
@@ -323,10 +325,15 @@ final class StorageFactory
                 . "Install it and provide either 'adapter' or 'constructor' config.",
             );
         }
-
         if ($driver === 'inmemory') {
-            /** @var FilesystemAdapter $adapter */
-            $adapter = new $adapterClass();
+            $reflection = new \ReflectionClass($adapterClass);
+            $required = $reflection->getConstructor()?->getNumberOfRequiredParameters() ?? 0;
+            if ($required > 0) {
+                throw new \InvalidArgumentException(
+                    "Storage driver '{$driver}' requires explicit constructor config.",
+                );
+            }
+            $adapter = $reflection->newInstance();
 
             return new Filesystem($adapter, self::resolveOptions($config));
         }
@@ -339,7 +346,7 @@ final class StorageFactory
         }
 
         $arguments = array_is_list($constructor) ? $constructor : array_values($constructor);
-        $adapter = new $adapterClass(...$arguments);
+        $adapter = new \ReflectionClass($adapterClass)->newInstanceArgs($arguments);
 
         return new Filesystem($adapter, self::resolveOptions($config));
     }
@@ -371,7 +378,12 @@ final class StorageFactory
      */
     private static function resolveDriver(array $config): string
     {
-        $driver = self::canonicalDriverName((string) ($config['driver'] ?? 'local'));
+        $driverInput = $config['driver'] ?? 'local';
+        if (!is_string($driverInput)) {
+            throw new \InvalidArgumentException('Storage "driver" must be a non-empty string.');
+        }
+
+        $driver = self::canonicalDriverName($driverInput);
         if ($driver === '') {
             throw new \InvalidArgumentException('Storage "driver" must be a non-empty string.');
         }
@@ -390,7 +402,16 @@ final class StorageFactory
             throw new \InvalidArgumentException('Storage "options" must be an array.');
         }
 
-        return $options;
+        $normalized = [];
+        foreach ($options as $key => $value) {
+            if (!is_string($key)) {
+                continue;
+            }
+
+            $normalized[$key] = $value;
+        }
+
+        return $normalized;
     }
 
     /**

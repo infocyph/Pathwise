@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use Infocyph\Pathwise\Storage\StorageFactory;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
@@ -21,7 +23,8 @@ if (!function_exists('getHumanReadableFileSize')) {
     function getHumanReadableFileSize(int $sizeInBytes): string
     {
         $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        $power = $sizeInBytes > 0 ? floor(log($sizeInBytes, 1024)) : 0;
+        $power = $sizeInBytes > 0 ? (int) floor(log($sizeInBytes, 1024)) : 0;
+
         return number_format($sizeInBytes / (1024 ** $power), 2) . ' ' . $units[$power];
     }
 }
@@ -37,7 +40,7 @@ if (!function_exists('isDirectoryEmpty')) {
     {
         $isLocalDirectory = !PathHelper::hasScheme($directoryPath) && is_dir($directoryPath);
         if (!$isLocalDirectory && !FlysystemHelper::directoryExists($directoryPath)) {
-            throw new InvalidArgumentException("The provided path is not a directory.");
+            throw new InvalidArgumentException('The provided path is not a directory.');
         }
         $contents = FlysystemHelper::listContents($directoryPath, false);
 
@@ -76,7 +79,7 @@ if (!function_exists('getDirectorySize')) {
     {
         $isLocalDirectory = !PathHelper::hasScheme($directoryPath) && is_dir($directoryPath);
         if (!$isLocalDirectory && !FlysystemHelper::directoryExists($directoryPath)) {
-            throw new InvalidArgumentException("The provided path is not a directory.");
+            throw new InvalidArgumentException('The provided path is not a directory.');
         }
 
         $size = 0;
@@ -87,11 +90,17 @@ if (!function_exists('getDirectorySize')) {
 
             if ($item instanceof FileAttributes && is_int($item->fileSize())) {
                 $size += $item->fileSize();
+
                 continue;
             }
 
             $extra = $item->extraMetadata();
-            $size += (int) ($extra['file_size'] ?? $extra['filesize'] ?? 0);
+            $extraSize = $extra['file_size'] ?? $extra['filesize'] ?? 0;
+            if (is_int($extraSize)) {
+                $size += $extraSize;
+            } elseif (is_numeric($extraSize)) {
+                $size += (int) $extraSize;
+            }
         }
 
         return $size;
@@ -115,7 +124,13 @@ if (!function_exists('createDirectory')) {
 
         FlysystemHelper::createDirectory($directoryPath);
         if (!PathHelper::hasScheme($directoryPath)) {
-            @chmod($directoryPath, $permissions);
+            set_error_handler(static fn(): bool => true);
+
+            try {
+                chmod($directoryPath, $permissions);
+            } finally {
+                restore_error_handler();
+            }
         }
 
         return true;
@@ -127,24 +142,32 @@ if (!function_exists('listFiles')) {
      * List all files in a directory.
      *
      * @param string $directoryPath The directory path.
-     * @return array List of files (excluding directories).
+     * @return list<string> List of files (excluding directories).
      */
     function listFiles(string $directoryPath): array
     {
         $isLocalDirectory = !PathHelper::hasScheme($directoryPath) && is_dir($directoryPath);
         if (!$isLocalDirectory && !FlysystemHelper::directoryExists($directoryPath)) {
-            throw new InvalidArgumentException("The provided path is not a directory.");
+            throw new InvalidArgumentException('The provided path is not a directory.');
         }
         $items = FlysystemHelper::listContents($directoryPath, false);
         $files = [];
 
         foreach ($items as $item) {
-            if (($item['type'] ?? null) === 'file') {
-                $files[] = basename((string) ($item['path'] ?? ''));
+            $type = $item['type'] ?? null;
+            if (!is_string($type) || $type !== 'file') {
+                continue;
             }
+
+            $path = $item['path'] ?? null;
+            if (!is_string($path) || $path === '') {
+                continue;
+            }
+
+            $files[] = basename($path);
         }
 
-        return array_values($files);
+        return $files;
     }
 }
 

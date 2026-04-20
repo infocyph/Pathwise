@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Infocyph\Pathwise\FileManager\Concerns;
 
 use Infocyph\Pathwise\Exceptions\CompressionException;
@@ -21,6 +23,7 @@ trait FsConcern
             if (is_resource($target)) {
                 fclose($target);
             }
+
             throw new CompressionException("Unable to read source path: {$sourcePath}");
         }
 
@@ -35,7 +38,7 @@ trait FsConcern
             return;
         }
 
-        @mkdir($path, 0755, true);
+        $this->doRunSilently(static fn(): bool => mkdir($path, 0755, true));
     }
 
     private function doLoadIgnorePatterns(string $source): void
@@ -53,10 +56,6 @@ trait FsConcern
             }
 
             $lines = preg_split('/\R/', FlysystemHelper::read($ignoreFilePath)) ?: [];
-            if (!is_array($lines)) {
-                continue;
-            }
-
             foreach ($lines as $line) {
                 $pattern = trim($line);
                 if ($pattern === '' || str_starts_with($pattern, '#')) {
@@ -77,46 +76,59 @@ trait FsConcern
         }
 
         if (FlysystemHelper::fileExists($normalizedSource)) {
-            $tempFile = tempnam(sys_get_temp_dir(), 'pathwise_src_');
-            if ($tempFile === false) {
-                throw new CompressionException("Unable to localize source path: {$source}");
-            }
-
-            $stream = FlysystemHelper::readStream($normalizedSource);
-            $target = fopen($tempFile, 'wb');
-            if (!is_resource($stream) || !is_resource($target)) {
-                if (is_resource($stream)) {
-                    fclose($stream);
-                }
-                if (is_resource($target)) {
-                    fclose($target);
-                }
-                @unlink($tempFile);
-                throw new CompressionException("Unable to localize source path: {$source}");
-            }
-
-            stream_copy_to_stream($stream, $target);
-            fclose($stream);
-            fclose($target);
-
-            $cleanupPath = PathHelper::normalize($tempFile);
+            $cleanupPath = $this->doLocalizeRemoteFileSource($normalizedSource, $source);
 
             return $cleanupPath;
         }
 
         if (FlysystemHelper::directoryExists($normalizedSource)) {
-            $tempDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('pathwise_src_dir_', true);
-            if (!@mkdir($tempDir, 0755, true) && !is_dir($tempDir)) {
-                throw new CompressionException("Unable to localize source path: {$source}");
-            }
-
-            $cleanupPath = PathHelper::normalize($tempDir);
-            $this->doMaterializeDirectoryToLocal($normalizedSource, $cleanupPath);
+            $cleanupPath = $this->doLocalizeRemoteDirectorySource($normalizedSource, $source);
 
             return $cleanupPath;
         }
 
         throw new CompressionException("Source path does not exist: {$source}");
+    }
+
+    private function doLocalizeRemoteDirectorySource(string $normalizedSource, string $originalSource): string
+    {
+        $tempDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('pathwise_src_dir_', true);
+        if (!$this->doRunSilently(static fn(): bool => mkdir($tempDir, 0755, true)) && !is_dir($tempDir)) {
+            throw new CompressionException("Unable to localize source path: {$originalSource}");
+        }
+
+        $cleanupPath = PathHelper::normalize($tempDir);
+        $this->doMaterializeDirectoryToLocal($normalizedSource, $cleanupPath);
+
+        return $cleanupPath;
+    }
+
+    private function doLocalizeRemoteFileSource(string $normalizedSource, string $originalSource): string
+    {
+        $tempFile = tempnam(sys_get_temp_dir(), 'pathwise_src_');
+        if ($tempFile === false) {
+            throw new CompressionException("Unable to localize source path: {$originalSource}");
+        }
+
+        $stream = FlysystemHelper::readStream($normalizedSource);
+        $target = fopen($tempFile, 'wb');
+        if (!is_resource($stream) || !is_resource($target)) {
+            if (is_resource($stream)) {
+                fclose($stream);
+            }
+            if (is_resource($target)) {
+                fclose($target);
+            }
+            $this->doUnlinkFileSilently($tempFile);
+
+            throw new CompressionException("Unable to localize source path: {$originalSource}");
+        }
+
+        stream_copy_to_stream($stream, $target);
+        fclose($stream);
+        fclose($target);
+
+        return PathHelper::normalize($tempFile);
     }
 
     private function doMaterializeDirectoryToLocal(string $sourcePath, string $localDirectory): void
@@ -148,9 +160,18 @@ trait FsConcern
         return trim(str_replace('\\', '/', $baseLocation), '/');
     }
 
-    private function doResolveMaterializedRelativePath(array $item, string $base): ?string
+    private function doResolveMaterializedRelativePath(mixed $item, string $base): ?string
     {
-        $itemPath = trim((string) ($item['path'] ?? ''), '/');
+        if (!is_array($item)) {
+            return null;
+        }
+
+        $itemPathRaw = $item['path'] ?? null;
+        if (!is_string($itemPathRaw)) {
+            return null;
+        }
+
+        $itemPath = trim($itemPathRaw, '/');
         if ($itemPath === '') {
             return null;
         }
@@ -191,6 +212,7 @@ trait FsConcern
                 if (is_resource($target)) {
                     fclose($target);
                 }
+
                 throw new CompressionException("Unable to read ZIP archive: {$this->zipFilePath}");
             }
 
@@ -198,13 +220,25 @@ trait FsConcern
             fclose($source);
             fclose($target);
         } elseif (!$create) {
-            @unlink($normalizedTemp);
+            $this->doUnlinkFileSilently($normalizedTemp);
+
             throw new CompressionException("ZIP archive does not exist: {$this->zipFilePath}");
         } else {
-            @unlink($normalizedTemp);
+            $this->doUnlinkFileSilently($normalizedTemp);
         }
 
         return $normalizedTemp;
+    }
+
+    private function doRunSilently(callable $operation): mixed
+    {
+        set_error_handler(static fn(): bool => true);
+
+        try {
+            return $operation();
+        } finally {
+            restore_error_handler();
+        }
     }
 
     private function doShouldIncludePath(string $relativePath): bool
@@ -219,6 +253,7 @@ trait FsConcern
             foreach ($this->includePatterns as $pattern) {
                 if (fnmatch($pattern, $relativePath)) {
                     $matchesInclude = true;
+
                     break;
                 }
             }
@@ -269,5 +304,14 @@ trait FsConcern
         } finally {
             fclose($stream);
         }
+    }
+
+    private function doUnlinkFileSilently(string $path): void
+    {
+        if (!is_file($path)) {
+            return;
+        }
+
+        $this->doRunSilently(static fn(): bool => unlink($path));
     }
 }
