@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Infocyph\Pathwise\Retention;
 
 use FilesystemIterator;
@@ -17,7 +19,7 @@ final class RetentionManager
      * @param int|null $keepLast Number of most recent files to keep (null for unlimited).
      * @param int|null $maxAgeDays Maximum age of files in days (null for unlimited).
      * @param string $sortBy Field to sort by ('mtime' or 'ctime').
-     * @return array{deleted: array, kept: array} Array with deleted and kept file paths.
+     * @return array{deleted: list<string>, kept: list<string>} Array with deleted and kept file paths.
      */
     public static function apply(
         string $directory,
@@ -39,8 +41,8 @@ final class RetentionManager
 
         foreach ($files as $index => $file) {
             $shouldDeleteByCount = $keepLast !== null && $index >= $keepLast;
-            $shouldDeleteByAge = $cutoff !== null && ($file[$sortBy] ?? 0) < $cutoff;
-            $path = (string) $file['path'];
+            $shouldDeleteByAge = $cutoff !== null && $file[$sortBy] < $cutoff;
+            $path = $file['path'];
 
             if (($shouldDeleteByCount || $shouldDeleteByAge) && FlysystemHelper::fileExists($path)) {
                 FlysystemHelper::delete($path);
@@ -84,6 +86,10 @@ final class RetentionManager
         );
 
         foreach ($iterator as $item) {
+            if (!$item instanceof \SplFileInfo) {
+                continue;
+            }
+
             if ($item->isDir()) {
                 continue;
             }
@@ -91,7 +97,7 @@ final class RetentionManager
             $files[] = [
                 'path' => $item->getPathname(),
                 'mtime' => (int) $item->getMTime(),
-                'ctime' => (int) $item->getCTime(),
+                'ctime' => $item->getCTime(),
             ];
         }
 
@@ -108,32 +114,54 @@ final class RetentionManager
         $base = trim(str_replace('\\', '/', $baseLocation), '/');
 
         foreach (FlysystemHelper::listContents($directory, true) as $item) {
-            if (($item['type'] ?? null) !== 'file') {
+            $entry = self::normalizeFlysystemEntry($directory, $base, $item);
+            if ($entry === null) {
                 continue;
             }
 
-            $itemPath = trim((string) ($item['path'] ?? ''), '/');
-            if ($itemPath === '') {
-                continue;
-            }
-
-            $relative = $base !== '' && str_starts_with($itemPath, $base . '/')
-                ? substr($itemPath, strlen($base) + 1)
-                : ($itemPath === $base ? '' : $itemPath);
-            if ($relative === '') {
-                continue;
-            }
-
-            $resolved = PathHelper::join($directory, $relative);
-            $mtime = (int) ($item['last_modified'] ?? 0);
-
-            $files[] = [
-                'path' => $resolved,
-                'mtime' => $mtime,
-                'ctime' => $mtime,
-            ];
+            $files[] = $entry;
         }
 
         return $files;
+    }
+
+    /**
+     * @param array<string, mixed> $item
+     * @return array{path: string, mtime: int, ctime: int}|null
+     */
+    private static function normalizeFlysystemEntry(string $directory, string $base, array $item): ?array
+    {
+        $type = $item['type'] ?? null;
+        if (!is_string($type) || $type !== 'file') {
+            return null;
+        }
+
+        $itemPathRaw = $item['path'] ?? null;
+        if (!is_string($itemPathRaw)) {
+            return null;
+        }
+
+        $itemPath = trim($itemPathRaw, '/');
+        if ($itemPath === '') {
+            return null;
+        }
+
+        $relative = $base !== '' && str_starts_with($itemPath, $base . '/')
+            ? substr($itemPath, strlen($base) + 1)
+            : ($itemPath === $base ? '' : $itemPath);
+        if ($relative === '') {
+            return null;
+        }
+
+        $lastModified = $item['last_modified'] ?? 0;
+        $mtime = is_int($lastModified)
+            ? $lastModified
+            : (is_numeric($lastModified) ? (int) $lastModified : 0);
+
+        return [
+            'path' => PathHelper::join($directory, $relative),
+            'mtime' => $mtime,
+            'ctime' => $mtime,
+        ];
     }
 }

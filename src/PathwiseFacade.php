@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Infocyph\Pathwise;
 
 use Infocyph\Pathwise\DirectoryManager\DirectoryOperations;
@@ -21,6 +23,11 @@ use Infocyph\Pathwise\Utils\MetadataHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use League\Flysystem\FilesystemOperator;
 
+/**
+ * @phpstan-type SnapshotEntry array{mtime: int, size: int}
+ * @phpstan-type SnapshotMap array<string, SnapshotEntry>
+ * @phpstan-type DiffReport array{created: list<string>, modified: list<string>, deleted: list<string>}
+ */
 final class PathwiseFacade
 {
     /**
@@ -71,19 +78,24 @@ final class PathwiseFacade
      *
      * @param string $directory The directory to deduplicate.
      * @param string $algorithm The hash algorithm to use. Defaults to 'sha256'.
-     * @return array{linked: array, skipped: array} Array with linked and skipped file paths.
+     * @return array{linked: list<string>, skipped: list<string>} Array with linked and skipped file paths.
      */
     public static function deduplicate(string $directory, string $algorithm = 'sha256'): array
     {
-        return ChecksumIndexer::deduplicateWithHardLinks($directory, $algorithm);
+        $result = ChecksumIndexer::deduplicateWithHardLinks($directory, $algorithm);
+
+        return [
+            'linked' => self::normalizeStringList($result['linked']),
+            'skipped' => self::normalizeStringList($result['skipped']),
+        ];
     }
 
     /**
      * Compare two snapshots and return the differences.
      *
-     * @param array $previousSnapshot The previous snapshot data.
-     * @param array $currentSnapshot The current snapshot data.
-     * @return array{created: array, modified: array, deleted: array} The diff report.
+     * @param SnapshotMap $previousSnapshot The previous snapshot data.
+     * @param SnapshotMap $currentSnapshot The current snapshot data.
+     * @return DiffReport The diff report.
      */
     public static function diffSnapshots(array $previousSnapshot, array $currentSnapshot): array
     {
@@ -185,7 +197,7 @@ final class PathwiseFacade
      * @param int|null $keepLast Number of most recent files to keep (null for unlimited).
      * @param int|null $maxAgeDays Maximum age of files in days (null for unlimited).
      * @param string $sortBy Field to sort by ('mtime' or 'ctime').
-     * @return array{deleted: array, kept: array} Array with deleted and kept file paths.
+     * @return array{deleted: list<string>, kept: list<string>} Array with deleted and kept file paths.
      */
     public static function retain(
         string $directory,
@@ -193,7 +205,12 @@ final class PathwiseFacade
         ?int $maxAgeDays = null,
         string $sortBy = 'mtime',
     ): array {
-        return RetentionManager::apply($directory, $keepLast, $maxAgeDays, $sortBy);
+        $result = RetentionManager::apply($directory, $keepLast, $maxAgeDays, $sortBy);
+
+        return [
+            'deleted' => self::normalizeStringList($result['deleted']),
+            'kept' => self::normalizeStringList($result['kept']),
+        ];
     }
 
     /**
@@ -283,11 +300,11 @@ final class PathwiseFacade
      * Get metadata for this file or directory.
      *
      * @param bool $humanReadableSize If true, return size in human-readable format.
-     * @return array|null The metadata array, or null if the path doesn't exist.
+     * @return array<string, mixed>|null The metadata array, or null if the path doesn't exist.
      */
     public function metadata(bool $humanReadableSize = false): ?array
     {
-        return MetadataHelper::getAllMetadata($this->path, $humanReadableSize);
+        return self::normalizeStringMap(MetadataHelper::getAllMetadata($this->path, $humanReadableSize));
     }
 
     /**
@@ -331,5 +348,48 @@ final class PathwiseFacade
     public function writer(bool $append = false): SafeFileWriter
     {
         return new SafeFileWriter($this->path, $append);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private static function normalizeStringList(mixed $values): array
+    {
+        if (!is_array($values)) {
+            return [];
+        }
+
+        $result = [];
+        foreach ($values as $value) {
+            if (!is_string($value)) {
+                continue;
+            }
+
+            $result[] = $value;
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param array<mixed, mixed>|null $values
+     * @return array<string, mixed>|null
+     */
+    private static function normalizeStringMap(?array $values): ?array
+    {
+        if ($values === null) {
+            return null;
+        }
+
+        $result = [];
+        foreach ($values as $key => $value) {
+            if (!is_string($key)) {
+                continue;
+            }
+
+            $result[$key] = $value;
+        }
+
+        return $result;
     }
 }

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Infocyph\Pathwise\Native;
 
 use Infocyph\Pathwise\Utils\PathHelper;
@@ -19,6 +21,7 @@ final class NativeOperationsAdapter
 
         return NativeCommandRunner::commandExists('zip') && NativeCommandRunner::commandExists('unzip');
     }
+
     /**
      * Check if native directory copy commands are available.
      *

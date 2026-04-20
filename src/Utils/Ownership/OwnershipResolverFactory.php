@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Infocyph\Pathwise\Utils\Ownership;
 
 final class OwnershipResolverFactory

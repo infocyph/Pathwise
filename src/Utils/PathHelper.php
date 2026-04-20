@@ -1,9 +1,12 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Infocyph\Pathwise\Utils;
 
 class PathHelper
 {
+    /** @var array<string, string> */
     private static array $cache = [];
 
     /**
@@ -47,7 +50,13 @@ class PathHelper
 
         FlysystemHelper::createDirectory($path);
         if (!self::hasScheme($path)) {
-            @chmod($path, $permissions);
+            set_error_handler(static fn(): bool => true);
+
+            try {
+                chmod($path, $permissions);
+            } finally {
+                restore_error_handler();
+            }
         }
 
         return true;
@@ -62,6 +71,7 @@ class PathHelper
     public static function createTempDirectory(string $prefix = 'temp_'): string|false
     {
         $tempDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . $prefix . uniqid();
+
         return mkdir($tempDir) ? $tempDir : false;
     }
 
@@ -142,7 +152,7 @@ class PathHelper
      *
      * @param string $path The path to check.
      * @return string|null Returns 'file' if the path is a file, 'directory' if it's a directory,
-     * 'link' if it's a symbolic link, or null if none of these.
+     *                     'link' if it's a symbolic link, or null if none of these.
      */
     public static function getPathType(string $path): ?string
     {
@@ -231,29 +241,15 @@ class PathHelper
             return '';
         }
 
-        $path = array_shift($segments) ?? '';
+        $path = array_shift($segments);
         foreach ($segments as $segment) {
             if ($segment === '') {
                 continue;
             }
 
             if (self::hasScheme($path)) {
-                if (preg_match('/^([a-zA-Z0-9._-]+):\/\/(.*)$/', $path, $matches) === 1) {
-                    $scheme = strtolower($matches[1]);
-                    $base = trim(str_replace('\\', '/', $matches[2]), '/');
-                    $next = trim(str_replace('\\', '/', $segment), '/');
+                $path = self::joinSchemeSegment($path, $segment);
 
-                    if ($next === '') {
-                        $path = $scheme . '://' . $base;
-                        continue;
-                    }
-
-                    $base = $base === '' ? $next : $base . '/' . $next;
-                    $path = $scheme . '://' . $base;
-                    continue;
-                }
-
-                $path = rtrim(str_replace('\\', '/', $path), '/') . '/' . ltrim(str_replace('\\', '/', $segment), '/');
                 continue;
             }
 
@@ -323,6 +319,7 @@ class PathHelper
             array_shift($from);
             array_shift($to);
         }
+
         return str_repeat('..' . DIRECTORY_SEPARATOR, count($from)) . implode(DIRECTORY_SEPARATOR, $to);
     }
 
@@ -353,9 +350,13 @@ class PathHelper
             return self::normalize($path);
         }
         $base ??= getcwd() ?: '.';
+
         return self::normalize(self::join($base, $path));
     }
 
+    /**
+     * @param list<string> $stack
+     */
     private static function buildNormalizedPath(string $prefix, array $stack): string
     {
         $normalized = $prefix . implode(DIRECTORY_SEPARATOR, $stack);
@@ -382,16 +383,38 @@ class PathHelper
         return ['', $path];
     }
 
+    private static function joinSchemeSegment(string $path, string $segment): string
+    {
+        if (preg_match('/^([a-zA-Z0-9._-]+):\/\/(.*)$/', $path, $matches) !== 1) {
+            return rtrim(str_replace('\\', '/', $path), '/') . '/' . ltrim(str_replace('\\', '/', $segment), '/');
+        }
+
+        $scheme = strtolower($matches[1]);
+        $base = trim(str_replace('\\', '/', $matches[2]), '/');
+        $next = trim(str_replace('\\', '/', $segment), '/');
+        if ($next === '') {
+            return $scheme . '://' . $base;
+        }
+
+        $base = $base === '' ? $next : $base . '/' . $next;
+
+        return $scheme . '://' . $base;
+    }
+
     /**
-     * @return array<int, string>
+     * @return list<string>
      */
     private static function normalizePathParts(string $path, bool $hasAbsolutePrefix): array
     {
         $parts = preg_split('/[\\\\\\/]+/', $path, -1, PREG_SPLIT_NO_EMPTY);
+        if (!is_array($parts)) {
+            return [];
+        }
+
         $stack = [];
 
         foreach ($parts as $part) {
-            if ($part === '' || $part === '.') {
+            if ($part === '.') {
                 continue;
             }
 
@@ -422,10 +445,14 @@ class PathHelper
         $leadingSlash = str_starts_with($location, '/');
 
         $parts = preg_split('/\/+/', trim($location, '/'), -1, PREG_SPLIT_NO_EMPTY);
+        if (!is_array($parts)) {
+            return $scheme . '://';
+        }
+
         $stack = [];
 
         foreach ($parts as $part) {
-            if ($part === '.' || $part === '') {
+            if ($part === '.') {
                 continue;
             }
 

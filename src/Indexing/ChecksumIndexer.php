@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Infocyph\Pathwise\Indexing;
 
 use FilesystemIterator;
@@ -44,7 +46,7 @@ final class ChecksumIndexer
      *
      * @param string $directory The directory to deduplicate.
      * @param string $algorithm The hash algorithm to use. Defaults to 'sha256'.
-     * @return array{linked: array, skipped: array} Array with linked and skipped file paths.
+     * @return array{linked: list<string>, skipped: list<string>} Array with linked and skipped file paths.
      */
     public static function deduplicateWithHardLinks(string $directory, string $algorithm = 'sha256'): array
     {
@@ -57,20 +59,22 @@ final class ChecksumIndexer
             foreach ($paths as $path) {
                 if (!is_string($canonical) || !self::isLocalFile($canonical) || !self::isLocalFile($path)) {
                     $skipped[] = $path;
+
                     continue;
                 }
 
                 $tmp = $path . '.tmp_delete';
-                if (!@rename($path, $tmp)) {
+                if (!self::runSilently(static fn(): bool => rename($path, $tmp))) {
                     $skipped[] = $path;
+
                     continue;
                 }
 
-                if (@link($canonical, $path)) {
-                    @unlink($tmp);
+                if (self::runSilently(static fn(): bool => link($canonical, $path))) {
+                    self::unlinkSilently($tmp);
                     $linked[] = $path;
                 } else {
-                    @rename($tmp, $path);
+                    self::runSilently(static fn(): bool => rename($tmp, $path));
                     $skipped[] = $path;
                 }
             }
@@ -125,7 +129,7 @@ final class ChecksumIndexer
     }
 
     /**
-     * @return array<int, string>
+     * @return list<string>
      */
     private static function iterFiles(string $directory): array
     {
@@ -137,7 +141,7 @@ final class ChecksumIndexer
     }
 
     /**
-     * @return array<int, string>
+     * @return list<string>
      */
     private static function iterFilesLocal(string $directory): array
     {
@@ -152,6 +156,10 @@ final class ChecksumIndexer
         );
 
         foreach ($iterator as $item) {
+            if (!$item instanceof \SplFileInfo) {
+                continue;
+            }
+
             if ($item->isDir()) {
                 continue;
             }
@@ -163,7 +171,7 @@ final class ChecksumIndexer
     }
 
     /**
-     * @return array<int, string>
+     * @return list<string>
      */
     private static function iterFilesViaFlysystem(string $directory): array
     {
@@ -176,7 +184,12 @@ final class ChecksumIndexer
                 continue;
             }
 
-            $itemPath = trim((string) ($item['path'] ?? ''), '/');
+            $itemPathRaw = $item['path'] ?? null;
+            if (!is_string($itemPathRaw)) {
+                continue;
+            }
+
+            $itemPath = trim($itemPathRaw, '/');
             if ($itemPath === '') {
                 continue;
             }
@@ -192,5 +205,25 @@ final class ChecksumIndexer
         }
 
         return $paths;
+    }
+
+    private static function runSilently(callable $operation): mixed
+    {
+        set_error_handler(static fn(): bool => true);
+
+        try {
+            return $operation();
+        } finally {
+            restore_error_handler();
+        }
+    }
+
+    private static function unlinkSilently(string $path): void
+    {
+        if (!is_file($path)) {
+            return;
+        }
+
+        self::runSilently(static fn(): bool => unlink($path));
     }
 }

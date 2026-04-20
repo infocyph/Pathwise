@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Infocyph\Pathwise\Security;
 
 use Infocyph\Pathwise\Exceptions\PolicyViolationException;
@@ -7,7 +9,12 @@ use Infocyph\Pathwise\Exceptions\PolicyViolationException;
 final class PolicyEngine
 {
     /**
-     * @var array<int, array{operation: string, pattern: string, allow: bool, condition: callable|null}>
+     * @var array<int, array{
+     *   operation: string,
+     *   pattern: string,
+     *   allow: bool,
+     *   condition: (callable(string, string, array<string, mixed>): bool)|null
+     * }>
      */
     private array $rules = [];
 
@@ -36,7 +43,7 @@ final class PolicyEngine
      *
      * @param string $operation The operation to check.
      * @param string $path The path to check.
-     * @param array $context Additional context for condition evaluation.
+     * @param array<string, mixed> $context Additional context for condition evaluation.
      * @throws PolicyViolationException If the operation is not allowed.
      */
     public function assertAllowed(string $operation, string $path, array $context = []): void
@@ -71,7 +78,7 @@ final class PolicyEngine
      *
      * @param string $operation The operation to check.
      * @param string $path The path to check.
-     * @param array $context Additional context for condition evaluation.
+     * @param array<string, mixed> $context Additional context for condition evaluation.
      * @return bool True if allowed, false otherwise.
      */
     public function isAllowed(string $operation, string $path, array $context = []): bool

@@ -1,10 +1,28 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Infocyph\Pathwise\Queue;
 
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 
+/**
+ * @phpstan-type QueueJob array{
+ *     id: string,
+ *     type: string,
+ *     payload: array<string, mixed>,
+ *     priority: int,
+ *     createdAt: int,
+ *     error?: string,
+ *     failedAt?: int
+ * }
+ * @phpstan-type QueueState array{
+ *     pending: list<QueueJob>,
+ *     processing: list<QueueJob>,
+ *     failed: list<QueueJob>
+ * }
+ */
 final readonly class FileJobQueue
 {
     public function __construct(private string $queueFilePath)
@@ -22,7 +40,7 @@ final readonly class FileJobQueue
      * Add a job to the queue.
      *
      * @param string $type The job type.
-     * @param array $payload The job payload data.
+     * @param array<string, mixed> $payload The job payload data.
      * @param int $priority The job priority (higher is more important).
      * @return string The job ID.
      */
@@ -47,7 +65,7 @@ final readonly class FileJobQueue
     /**
      * Process jobs from the queue.
      *
-     * @param callable $handler Callback to process each job. Receives job array as argument.
+     * @param callable(QueueJob): void $handler Callback to process each job.
      * @param int $maxJobs Maximum number of jobs to process (0 for unlimited).
      * @return array{processed: int, failed: int} Array with processed and failed counts.
      */
@@ -99,7 +117,7 @@ final readonly class FileJobQueue
     /**
      * Get queue statistics.
      *
-     * @return array Array with pending, processing, failed counts and file path.
+     * @return array{pending: int, processing: int, failed: int, file: string}
      */
     public function stats(): array
     {
@@ -113,6 +131,95 @@ final readonly class FileJobQueue
         ];
     }
 
+    /**
+     * @return QueueJob|null
+     */
+    private function normalizeJob(mixed $value): ?array
+    {
+        if (!is_array($value)) {
+            return null;
+        }
+
+        $id = $value['id'] ?? null;
+        $type = $value['type'] ?? null;
+        $payload = $this->normalizePayload($value['payload'] ?? []);
+        $priority = $value['priority'] ?? 0;
+        $createdAt = $value['createdAt'] ?? time();
+        if (!is_string($id) || !is_string($type)) {
+            return null;
+        }
+
+        if ((!is_int($priority) && !is_numeric($priority)) || (!is_int($createdAt) && !is_numeric($createdAt))) {
+            return null;
+        }
+
+        $job = [
+            'id' => $id,
+            'type' => $type,
+            'payload' => $payload,
+            'priority' => (int) $priority,
+            'createdAt' => (int) $createdAt,
+        ];
+
+        $error = $value['error'] ?? null;
+        if (is_string($error) && $error !== '') {
+            $job['error'] = $error;
+        }
+
+        $failedAt = $value['failedAt'] ?? null;
+        if (is_int($failedAt) || is_numeric($failedAt)) {
+            $job['failedAt'] = (int) $failedAt;
+        }
+
+        return $job;
+    }
+
+    /**
+     * @return list<QueueJob>
+     */
+    private function normalizeJobList(mixed $value): array
+    {
+        if (!is_array($value)) {
+            return [];
+        }
+
+        $jobs = [];
+        foreach ($value as $rawJob) {
+            $job = $this->normalizeJob($rawJob);
+            if ($job === null) {
+                continue;
+            }
+
+            $jobs[] = $job;
+        }
+
+        return $jobs;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function normalizePayload(mixed $value): array
+    {
+        if (!is_array($value)) {
+            return [];
+        }
+
+        $payload = [];
+        foreach ($value as $key => $item) {
+            if (!is_string($key)) {
+                continue;
+            }
+
+            $payload[$key] = $item;
+        }
+
+        return $payload;
+    }
+
+    /**
+     * @return QueueState
+     */
     private function readQueueData(): array
     {
         if (!FlysystemHelper::fileExists($this->queueFilePath)) {
@@ -130,12 +237,15 @@ final readonly class FileJobQueue
         }
 
         return [
-            'pending' => $decoded['pending'] ?? [],
-            'processing' => $decoded['processing'] ?? [],
-            'failed' => $decoded['failed'] ?? [],
+            'pending' => $this->normalizeJobList($decoded['pending'] ?? []),
+            'processing' => $this->normalizeJobList($decoded['processing'] ?? []),
+            'failed' => $this->normalizeJobList($decoded['failed'] ?? []),
         ];
     }
 
+    /**
+     * @param QueueState $data
+     */
     private function writeQueueData(array $data): void
     {
         FlysystemHelper::write($this->queueFilePath, (string) json_encode($data, JSON_PRETTY_PRINT));

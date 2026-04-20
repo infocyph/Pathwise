@@ -1,38 +1,75 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Infocyph\Pathwise\FileManager;
 
 use Infocyph\Pathwise\Core\ExecutionStrategy;
 use Infocyph\Pathwise\Exceptions\CompressionException;
+use Infocyph\Pathwise\FileManager\Concerns\FileCompressionArchiveConcern;
+use Infocyph\Pathwise\FileManager\Concerns\FileCompressionRuntimeConcern;
 use Infocyph\Pathwise\FileManager\Concerns\FsConcern;
 use Infocyph\Pathwise\Native\NativeOperationsAdapter;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use ZipArchive;
 
+/**
+ * @phpstan-type HookCallback callable(mixed...): mixed
+ * @phpstan-type ExtractionDestination array{
+ *     extractDestination: string,
+ *     extractTempDir: string|null,
+ *     isRemote: bool
+ * }
+ */
 class FileCompression
 {
+    use FileCompressionArchiveConcern;
+    use FileCompressionRuntimeConcern;
     use FsConcern;
 
     private readonly ZipArchive $zip;
+
     private bool $cleanupWorkingZipPath = false;
+
     private ?string $defaultDecompressionPath = null;
+
     private int $encryptionAlgorithm;
+
+    /** @var list<string> */
     private array $excludePatterns = [];
+
     private ExecutionStrategy $executionStrategy = ExecutionStrategy::PHP;
+
+    /** @var array<string, list<HookCallback>> */
     private array $hooks = [];
+
+    /** @var list<string> */
     private array $ignoreFileNames = ['.pathwiseignore', '.gitignore'];
+
+    /** @var list<string> */
     private array $ignorePatterns = [];
+
+    /** @var list<string> */
     private array $includePatterns = [];
+
     private bool $isOpen = false;
+
     /** @var array<string, true> */
     private array $localizedCleanupPaths = [];
+
     private mixed $logger = null;
+
     private ?string $password = null;
+
     private mixed $progressCallback = null;
+
     private int $progressCurrent = 0;
+
     private int $progressTotal = 0;
+
     private bool $syncWorkingZipOnClose = false;
+
     private string $workingZipPath;
 
     /**
@@ -67,19 +104,18 @@ class FileCompression
         } finally {
             $this->cleanupDeferredLocalizedPaths();
             if ($this->cleanupWorkingZipPath && is_file($this->workingZipPath)) {
-                @unlink($this->workingZipPath);
+                $this->unlinkPathSilently($this->workingZipPath);
             }
         }
     }
-
 
     /**
      * Adds a single file to the current ZIP archive.
      *
      * @param string $filePath The path to the file to be added.
      * @param string|null $zipPath The path in the ZIP archive where the file should be stored.
-     *     If not provided, the file will be stored in the root directory of the ZIP file,
-     *     with its original name.
+     *                             If not provided, the file will be stored in the root directory of the ZIP file,
+     *                             with its original name.
      *
      * @return $this
      */
@@ -99,38 +135,48 @@ class FileCompression
         $this->advanceProgress('compress', $zipPath);
 
         $this->triggerHook('afterAdd', $filePath);
+
         return $this;
     }
-
 
     /**
      * Batch add multiple files to the current ZIP archive.
      *
-     * @param array $files An associative array of file paths mapped to their
-     *     desired paths inside the ZIP archive. If a value is not provided for
-     *     a key, the basename of the file will be used as the path in the ZIP
-     *     archive.
+     * @param array<int|string, string|null> $files An associative array of file paths mapped to their
+     *                                              desired paths inside the ZIP archive. If a value is not provided for
+     *                                              a key, the basename of the file will be used as the path in the ZIP
+     *                                              archive.
      * @return $this
      */
     public function batchAddFiles(array $files): self
     {
         $this->reopenIfNeeded();
-        $this->log("Batch adding files.");
+        $this->log('Batch adding files.');
         foreach ($files as $filePath => $zipPath) {
+            if (is_int($filePath)) {
+                if (!is_string($zipPath)) {
+                    throw new CompressionException('Invalid file path provided for batch add.');
+                }
+
+                $this->addFile($zipPath);
+
+                continue;
+            }
+
             $this->addFile($filePath, $zipPath);
         }
+
         return $this;
     }
-
 
     /**
      * Batch extract multiple files from the current ZIP archive.
      *
-     * @param array $files An associative array mapping ZIP paths to local paths.
+     * @param array<string, string> $files An associative array mapping ZIP paths to local paths.
      * @param string $destination The destination directory to extract to.
      *
      *
-     * @throws Exception If any of the files fail to extract.
+     * @throws CompressionException If any of the files fail to extract.
      */
     public function batchExtractFiles(array $files, string $destination): self
     {
@@ -139,18 +185,19 @@ class FileCompression
         if (!FlysystemHelper::directoryExists($destination)) {
             FlysystemHelper::createDirectory($destination);
         }
-        $this->log("Batch extracting files.");
+        $this->log('Batch extracting files.');
         $this->progressCurrent = 0;
         $this->progressTotal = count($files);
         foreach ($files as $zipPath => $localPath) {
-            $zipPath = $this->normalizeZipPath((string) $zipPath);
-            $localPath = ltrim(PathHelper::normalize((string) $localPath), DIRECTORY_SEPARATOR);
+            $zipPath = $this->normalizeZipPath($zipPath);
+            $localPath = ltrim(PathHelper::normalize($localPath), DIRECTORY_SEPARATOR);
             $targetPath = PathHelper::join($destination, $localPath);
 
             if (str_ends_with($zipPath, '/')) {
                 if (!FlysystemHelper::directoryExists($targetPath)) {
                     FlysystemHelper::createDirectory($targetPath);
                 }
+
                 continue;
             }
 
@@ -168,9 +215,9 @@ class FileCompression
 
             $this->advanceProgress('decompress', $zipPath);
         }
+
         return $this;
     }
-
 
     /**
      * Check the integrity of the current ZIP archive.
@@ -183,9 +230,9 @@ class FileCompression
     public function checkIntegrity(): bool
     {
         $this->reopenIfNeeded();
+
         return $this->zip->status === ZipArchive::ER_OK;
     }
-
 
     /**
      * Compress a file or directory into the ZIP archive.
@@ -232,13 +279,12 @@ class FileCompression
         return $this;
     }
 
-
     /**
      * Compress a file or directory, but only include files with the specified
      * extensions in the ZIP archive.
      *
      * @param string $source The path to the file or directory to compress.
-     * @param array $extensions An array of file extensions to include.
+     * @param list<string> $extensions An array of file extensions to include.
      * @return static
      */
     public function compressWithFilter(string $source, array $extensions = []): self
@@ -255,7 +301,6 @@ class FileCompression
 
         return $this;
     }
-
 
     /**
      * Decompress the current ZIP archive to a directory.
@@ -293,9 +338,9 @@ class FileCompression
         }
 
         $this->log("Decompressed to: $destination");
+
         return $this;
     }
-
 
     /**
      * Returns the number of files in the current ZIP archive.
@@ -305,25 +350,29 @@ class FileCompression
     public function fileCount(): int
     {
         $this->reopenIfNeeded();
+
         return $this->zip->numFiles;
     }
-
 
     /**
      * Returns an iterator over the files in the current ZIP archive.
      *
      * Yields each file in the archive as a string, in the order they appear in the archive.
      *
-     * @return \Generator An iterator over the files in the current ZIP archive.
+     * @return \Generator<int, string> An iterator over the files in the current ZIP archive.
      */
     public function getFileIterator(): \Generator
     {
         $this->reopenIfNeeded();
         for ($i = 0; $i < $this->zip->numFiles; $i++) {
-            yield $this->zip->getNameIndex($i);
+            $name = $this->zip->getNameIndex($i);
+            if (!is_string($name)) {
+                continue;
+            }
+
+            yield $name;
         }
     }
-
 
     /**
      * Get an array of all the files in the current ZIP archive.
@@ -331,18 +380,22 @@ class FileCompression
      * The returned array contains the names of all the files in the archive,
      * in the order they appear in the archive.
      *
-     * @return array An array of file names in the current ZIP archive.
+     * @return list<string> An array of file names in the current ZIP archive.
      */
     public function listFiles(): array
     {
         $this->reopenIfNeeded();
         $files = [];
         for ($i = 0; $i < $this->zip->numFiles; $i++) {
-            $files[] = $this->zip->getNameIndex($i);
+            $name = $this->zip->getNameIndex($i);
+            if (!is_string($name)) {
+                continue;
+            }
+            $files[] = $name;
         }
+
         return $files;
     }
-
 
     /**
      * Registers a callback to be called when a certain event occurs.
@@ -371,6 +424,7 @@ class FileCompression
     public function registerHook(string $event, callable $callback): self
     {
         $this->hooks[$event][] = $callback;
+
         return $this;
     }
 
@@ -382,9 +436,9 @@ class FileCompression
     public function save(): self
     {
         $this->closeZip();
+
         return $this;
     }
-
 
     /**
      * Set the default path to use for decompression if no path is provided.
@@ -398,9 +452,9 @@ class FileCompression
     public function setDefaultDecompressionPath(string $path): self
     {
         $this->defaultDecompressionPath = $path;
+
         return $this;
     }
-
 
     /**
      * Sets the encryption algorithm for the ZIP archive.
@@ -409,16 +463,17 @@ class FileCompression
      * when encrypting the ZIP archive. Supported algorithms are AES-256 and AES-128.
      *
      * @param int $algorithm The encryption algorithm to set. Must be one of
-     *     ZipArchive::EM_AES_256 or ZipArchive::EM_AES_128.
+     *                       ZipArchive::EM_AES_256 or ZipArchive::EM_AES_128.
      * @throws CompressionException If an invalid encryption algorithm is specified.
      */
     public function setEncryptionAlgorithm(int $algorithm): self
     {
         if (!in_array($algorithm, [ZipArchive::EM_AES_256, ZipArchive::EM_AES_128], true)) {
-            throw new CompressionException("Invalid encryption algorithm specified.");
+            throw new CompressionException('Invalid encryption algorithm specified.');
         }
 
         $this->encryptionAlgorithm = $algorithm;
+
         return $this;
     }
 
@@ -438,14 +493,14 @@ class FileCompression
     /**
      * Configure include/exclude glob patterns used during compression.
      *
-     * @param array $includePatterns Patterns to include in compression.
-     * @param array $excludePatterns Patterns to exclude from compression.
+     * @param list<string> $includePatterns Patterns to include in compression.
+     * @param list<string> $excludePatterns Patterns to exclude from compression.
      * @return self This instance for method chaining.
      */
     public function setGlobPatterns(array $includePatterns = [], array $excludePatterns = []): self
     {
-        $this->includePatterns = array_values(array_filter(array_map(trim(...), $includePatterns), fn($v) => $v !== ''));
-        $this->excludePatterns = array_values(array_filter(array_map(trim(...), $excludePatterns), fn($v) => $v !== ''));
+        $this->includePatterns = $this->normalizeNonEmptyStrings($includePatterns);
+        $this->excludePatterns = $this->normalizeNonEmptyStrings($excludePatterns);
 
         return $this;
     }
@@ -453,16 +508,15 @@ class FileCompression
     /**
      * Configure ignore file names (e.g. .gitignore, .pathwiseignore) read from source root.
      *
-     * @param array $ignoreFileNames Array of ignore file names.
+     * @param list<string> $ignoreFileNames Array of ignore file names.
      * @return self This instance for method chaining.
      */
     public function setIgnoreFileNames(array $ignoreFileNames): self
     {
-        $this->ignoreFileNames = array_values(array_filter(array_map(trim(...), $ignoreFileNames), fn($v) => $v !== ''));
+        $this->ignoreFileNames = $this->normalizeNonEmptyStrings($ignoreFileNames);
 
         return $this;
     }
-
 
     /**
      * Sets a logger callable to be called when certain events occur.
@@ -471,16 +525,16 @@ class FileCompression
      * the ZipArchive object as its second argument.
      *
      * @param callable $logger The logger callable. The callable should accept
-     *   two arguments: the first is a string message, and the second is the
-     *   ZipArchive object.
+     *                         two arguments: the first is a string message, and the second is the
+     *                         ZipArchive object.
      * @return self This instance for method chaining.
      */
     public function setLogger(callable $logger): self
     {
         $this->logger = $logger;
+
         return $this;
     }
-
 
     /**
      * Set the password for the ZIP archive.
@@ -491,6 +545,7 @@ class FileCompression
     public function setPassword(string $password): self
     {
         $this->password = $password;
+
         return $this;
     }
 
@@ -505,574 +560,5 @@ class FileCompression
         $this->progressCallback = $progressCallback;
 
         return $this;
-    }
-
-    private function addArchiveEntry(ZipArchive $zip, string $sourcePath, string $relativePath): void
-    {
-        if ($this->password !== null) {
-            $zip->setPassword($this->password);
-            $zip->addFile($sourcePath, $relativePath);
-            $zip->setEncryptionName($relativePath, $this->encryptionAlgorithm);
-
-            return;
-        }
-
-        $zip->addFile($sourcePath, $relativePath);
-    }
-
-    private function addDirectoryEntriesToZip(string $path, ZipArchive $zip, string $baseDir): void
-    {
-        $relativePath = $this->getRelativePath($path, $baseDir);
-        if ($relativePath !== '' && !$this->shouldTraverseDirectory($relativePath)) {
-            return;
-        }
-
-        if ($relativePath !== '') {
-            $zip->addEmptyDir($relativePath);
-        }
-
-        $entries = scandir($path);
-        if ($entries === false) {
-            throw new CompressionException("Failed to read directory: {$path}");
-        }
-
-        foreach ($entries as $file) {
-            if ($file === '.' || $file === '..') {
-                continue;
-            }
-
-            $this->addFilesToZip($path . DIRECTORY_SEPARATOR . $file, $zip, $baseDir);
-        }
-    }
-
-
-    /**
-     * Recursively adds files to the current ZIP archive.
-     *
-     * This method traverses the specified directory and adds files to the
-     * ZIP archive. Directories are added as empty directories. If the
-     * password is set, files are added with encryption.
-     *
-     * @param string $path The path to add files from.
-     * @param ZipArchive $zip The ZIP archive to add files to.
-     * @param string|null $baseDir The base directory to use for relative paths.
-     */
-    private function addFilesToZip(string $path, ZipArchive $zip, ?string $baseDir = null): void
-    {
-        $baseDir ??= $path;
-
-        if (is_dir($path)) {
-            $this->addDirectoryEntriesToZip($path, $zip, $baseDir);
-
-            return;
-        }
-
-        $this->addSinglePathToZip($path, $zip, $baseDir);
-    }
-
-
-    /**
-     * Recursively add files to the ZIP archive, filtering by extensions.
-     *
-     * This method traverses the specified directory and adds files to the
-     * ZIP archive based on the provided file extensions. Directories are
-     * added as empty directories if no matching files are found within them.
-     * If a password is set, files are encrypted using the specified algorithm.
-     *
-     * @param string $path The path to the directory or file to add.
-     * @param ZipArchive $zip The ZIP archive instance to add files to.
-     * @param string|null $relativePath The relative path within the ZIP archive.
-     * @param array $extensions An array of file extensions to filter by.
-     */
-    private function addFilesToZipWithFilter(string $path, ZipArchive $zip, ?string $relativePath, array $extensions): void
-    {
-        $relativePath ??= basename($path);
-        $relativePath = $this->normalizeZipPath($relativePath);
-
-        if (is_dir($path)) {
-            if ($relativePath !== '' && !$this->shouldTraverseDirectory($relativePath)) {
-                return;
-            }
-            $zip->addEmptyDir($relativePath);
-            $entries = scandir($path);
-            if ($entries === false) {
-                throw new CompressionException("Failed to read directory: {$path}");
-            }
-
-            foreach ($entries as $file) {
-                if ($file !== '.' && $file !== '..') {
-                    $this->addFilesToZipWithFilter($path . DIRECTORY_SEPARATOR . $file, $zip, "$relativePath/$file", $extensions);
-                }
-            }
-        } elseif ((empty($extensions) || in_array(pathinfo($path, PATHINFO_EXTENSION), $extensions)) && $this->shouldIncludePath($relativePath)) {
-            $this->addArchiveEntry($zip, $path, $relativePath);
-            $this->advanceProgress('compress', $relativePath);
-        }
-    }
-
-    private function addFileToArchive(string $filePath, string $zipPath): void
-    {
-        if ($this->password !== null) {
-            $this->zip->setPassword($this->password);
-        }
-
-        $added = $this->isLocalFilesystemPath($filePath)
-            ? $this->zip->addFile($filePath, $zipPath)
-            : $this->zip->addFromString($zipPath, FlysystemHelper::read($filePath));
-
-        if (!$added) {
-            throw new CompressionException("Failed to add file to ZIP: $filePath");
-        }
-
-        if ($this->password !== null) {
-            $this->zip->setEncryptionName($zipPath, $this->encryptionAlgorithm);
-        }
-    }
-
-    private function addSinglePathToZip(string $path, ZipArchive $zip, string $baseDir): void
-    {
-        $relativePath = $this->getRelativePath($path, $baseDir);
-        if ($relativePath === '') {
-            $relativePath = basename($path);
-        }
-
-        if (!$this->shouldIncludePath($relativePath)) {
-            return;
-        }
-
-        $this->addArchiveEntry($zip, $path, $relativePath);
-        $this->advanceProgress('compress', $relativePath);
-    }
-
-    private function advanceProgress(string $operation, string $path): void
-    {
-        if (!is_callable($this->progressCallback)) {
-            return;
-        }
-
-        $this->progressCurrent++;
-        ($this->progressCallback)([
-            'operation' => $operation,
-            'path' => $path,
-            'current' => $this->progressCurrent,
-            'total' => $this->progressTotal,
-        ]);
-    }
-
-    private function applyArchivePassword(): void
-    {
-        if ($this->password !== null) {
-            $this->zip->setPassword($this->password);
-        }
-    }
-
-    private function attemptNativeDecompression(string $destination, bool $isRemoteDestination): bool
-    {
-        if (
-            $this->executionStrategy === ExecutionStrategy::PHP
-            || $this->password !== null
-            || $isRemoteDestination
-            || !NativeOperationsAdapter::canUseNativeCompression()
-        ) {
-            return false;
-        }
-
-        $this->closeZip();
-        $native = NativeOperationsAdapter::decompressZip($this->workingZipPath, $destination);
-        if ($native['success']) {
-            if (is_callable($this->progressCallback)) {
-                ($this->progressCallback)([
-                    'operation' => 'decompress',
-                    'path' => $this->zipFilePath,
-                    'current' => 1,
-                    'total' => 1,
-                ]);
-            }
-            $this->openZip();
-
-            return true;
-        }
-
-        if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
-            throw new CompressionException("Native decompression failed for archive: {$this->zipFilePath}");
-        }
-
-        $this->openZip();
-
-        return false;
-    }
-
-    private function cleanupDeferredLocalizedPaths(): void
-    {
-        if ($this->localizedCleanupPaths === []) {
-            return;
-        }
-
-        foreach (array_keys($this->localizedCleanupPaths) as $path) {
-            $this->cleanupLocalizedPath($path);
-        }
-
-        $this->localizedCleanupPaths = [];
-    }
-
-    private function cleanupLocalizedPath(?string $path): void
-    {
-        if (!is_string($path) || $path === '' || !file_exists($path)) {
-            return;
-        }
-
-        if (is_file($path)) {
-            @unlink($path);
-
-            return;
-        }
-
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($path, \FilesystemIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::CHILD_FIRST,
-        );
-
-        foreach ($iterator as $item) {
-            if ($item->isDir()) {
-                @rmdir($item->getPathname());
-            } else {
-                @unlink($item->getPathname());
-            }
-        }
-
-        @rmdir($path);
-    }
-
-
-    /**
-     * Closes the current ZIP archive.
-     *
-     * If the archive is currently open, this method will close it using the
-     * ZipArchive::close() method. The $isOpen flag is then set to false to
-     * indicate that the archive is no longer open.
-     */
-    private function closeZip(): void
-    {
-        if ($this->isOpen) {
-            $this->zip->close();
-            $this->isOpen = false;
-            $this->syncWorkingZipIfNeeded();
-        }
-
-        $this->cleanupDeferredLocalizedPaths();
-    }
-
-    private function copyLocalDirectoryToFlysystem(string $localSource, string $destination): void
-    {
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($localSource, \FilesystemIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::SELF_FIRST,
-        );
-
-        foreach ($iterator as $item) {
-            $relative = $this->getRelativePath($item->getPathname(), $localSource);
-            if ($relative === '') {
-                continue;
-            }
-
-            $targetPath = PathHelper::join($destination, $relative);
-
-            if ($item->isDir()) {
-                FlysystemHelper::createDirectory($targetPath);
-                continue;
-            }
-
-            $stream = fopen($item->getPathname(), 'rb');
-            if (!is_resource($stream)) {
-                throw new CompressionException("Unable to read extracted file: {$item->getPathname()}");
-            }
-
-            try {
-                FlysystemHelper::writeStream($targetPath, $stream);
-            } finally {
-                fclose($stream);
-            }
-        }
-    }
-
-    private function countFilesForCompression(string $source, array $extensions = []): int
-    {
-        if (is_file($source)) {
-            $relative = basename($source);
-            if (!empty($extensions) && !in_array(pathinfo($source, PATHINFO_EXTENSION), $extensions, true)) {
-                return 0;
-            }
-            return $this->shouldIncludePath($relative) ? 1 : 0;
-        }
-
-        if (!is_dir($source)) {
-            return 0;
-        }
-
-        $count = 0;
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($source, \FilesystemIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::SELF_FIRST,
-        );
-
-        foreach ($iterator as $item) {
-            if ($item->isDir()) {
-                continue;
-            }
-
-            $relative = $this->getRelativePath($item->getPathname(), $source);
-            if (!empty($extensions) && !in_array(pathinfo((string) $item->getPathname(), PATHINFO_EXTENSION), $extensions, true)) {
-                continue;
-            }
-            if ($this->shouldIncludePath($relative)) {
-                $count++;
-            }
-        }
-
-        return $count;
-    }
-
-    private function createExtractionTempDirectory(): string
-    {
-        $extractTempDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('pathwise_extract_', true);
-        if (!@mkdir($extractTempDir, 0755, true) && !is_dir($extractTempDir)) {
-            throw new CompressionException("Unable to create extraction directory: {$extractTempDir}");
-        }
-
-        return PathHelper::normalize($extractTempDir);
-    }
-
-    private function deferLocalizedCleanupPath(?string $path): void
-    {
-        if (!is_string($path) || $path === '') {
-            return;
-        }
-
-        $this->localizedCleanupPaths[$path] = true;
-    }
-
-    private function emitDecompressionProgress(): void
-    {
-        if (!is_callable($this->progressCallback)) {
-            return;
-        }
-
-        $total = $this->zip->numFiles;
-        for ($i = 0; $i < $total; $i++) {
-            ($this->progressCallback)([
-                'operation' => 'decompress',
-                'path' => (string) $this->zip->getNameIndex($i),
-                'current' => $i + 1,
-                'total' => $total,
-            ]);
-        }
-    }
-
-    private function extractArchive(string $extractDestination, string $destination, bool $isRemoteDestination): void
-    {
-        if (!$this->zip->extractTo($extractDestination)) {
-            throw new CompressionException("Failed to extract ZIP archive.");
-        }
-
-        if ($isRemoteDestination) {
-            $this->copyLocalDirectoryToFlysystem($extractDestination, $destination);
-        }
-    }
-
-    /**
-     * Build a ZIP-safe relative path.
-     */
-    private function getRelativePath(string $path, string $baseDir): string
-    {
-        $normalizedPath = str_replace('\\', '/', PathHelper::normalize($path));
-        $normalizedBase = rtrim(str_replace('\\', '/', PathHelper::normalize($baseDir)), '/');
-
-        if ($normalizedPath === $normalizedBase) {
-            return '';
-        }
-
-        if (str_starts_with($normalizedPath, $normalizedBase . '/')) {
-            return substr($normalizedPath, strlen($normalizedBase) + 1);
-        }
-
-        return ltrim($normalizedPath, '/');
-    }
-
-    private function initializeProgress(string $source, array $extensions = []): void
-    {
-        $this->progressCurrent = 0;
-        $this->progressTotal = $this->countFilesForCompression($source, $extensions);
-    }
-
-    private function isLocalFilesystemPath(string $path): bool
-    {
-        return !PathHelper::hasScheme($path) && is_file($path);
-    }
-
-    private function isRemotePath(string $path): bool
-    {
-        return PathHelper::hasScheme($path) || (FlysystemHelper::hasDefaultFilesystem() && !PathHelper::isAbsolute($path));
-    }
-
-    private function loadIgnorePatterns(string $source): void
-    {
-        $this->doLoadIgnorePatterns($source);
-    }
-
-    private function localizeCompressionSource(string $source, ?string &$cleanupPath = null): string
-    {
-        return $this->doLocalizeCompressionSource($source, $cleanupPath);
-    }
-
-
-    /**
-     * Logs a message using the registered logger callback.
-     *
-     * If a logger function is set, this method will invoke it
-     * with the provided message.
-     *
-     * @param string $message The message to log.
-     */
-    private function log(string $message): void
-    {
-        if (is_callable($this->logger)) {
-            ($this->logger)($message);
-        }
-    }
-
-    private function normalizeZipPath(string $path): string
-    {
-        $hadTrailingSlash = str_ends_with(str_replace('\\', '/', $path), '/');
-        $normalized = ltrim(str_replace('\\', '/', PathHelper::normalize($path)), '/');
-
-        if ($hadTrailingSlash && $normalized !== '' && !str_ends_with($normalized, '/')) {
-            $normalized .= '/';
-        }
-
-        return $normalized;
-    }
-
-
-    /**
-     * Opens the ZIP archive with the specified flags.
-     *
-     * This method attempts to open the ZIP archive located at the specified
-     * file path using the provided flags. If the archive cannot be opened,
-     * an exception is thrown with the corresponding error code.
-     *
-     * @param int $flags Optional flags to use when opening the ZIP archive.
-     * @throws CompressionException if the ZIP archive cannot be opened.
-     */
-    private function openZip(int $flags = 0): void
-    {
-        if (($flags & ZipArchive::CREATE) === 0 && !FlysystemHelper::fileExists($this->zipFilePath)) {
-            throw new CompressionException("ZIP archive does not exist: {$this->zipFilePath}");
-        }
-
-        $result = $this->zip->open($this->workingZipPath, $flags);
-        if ($result !== true) {
-            throw new CompressionException("Failed to open ZIP archive at {$this->zipFilePath}. Error: $result");
-        }
-        $this->isOpen = true;
-    }
-
-    private function prepareExtractionDestination(string $destination): array
-    {
-        $isRemoteDestination = $this->isRemotePath($destination);
-        if ($isRemoteDestination) {
-            $extractDestination = $this->createExtractionTempDirectory();
-
-            return [
-                'extractDestination' => $extractDestination,
-                'extractTempDir' => $extractDestination,
-                'isRemote' => true,
-            ];
-        }
-
-        if (!FlysystemHelper::directoryExists($destination)) {
-            FlysystemHelper::createDirectory($destination);
-        }
-
-        return [
-            'extractDestination' => $destination,
-            'extractTempDir' => null,
-            'isRemote' => false,
-        ];
-    }
-
-
-    /**
-     * Reopen the ZIP archive if it has been closed.
-     *
-     * If the archive is already open, this method is a no-op.
-     * @throws CompressionException
-     */
-    private function reopenIfNeeded(): void
-    {
-        if (!$this->isOpen) {
-            $this->openZip();
-        }
-    }
-
-    private function resolveDecompressionDestination(?string $destination): string
-    {
-        $destination ??= $this->defaultDecompressionPath;
-        if (!$destination) {
-            throw new CompressionException("No destination path provided for decompression.");
-        }
-
-        return PathHelper::normalize($destination);
-    }
-
-    private function resolveWorkingZipPath(bool $create): string
-    {
-        return $this->doResolveWorkingZipPath($create);
-    }
-
-    private function shouldAttemptNativeCompression(): bool
-    {
-        if ($this->executionStrategy === ExecutionStrategy::PHP) {
-            return false;
-        }
-
-        // Native path currently targets whole-source archive operations only.
-        return $this->password === null
-            && $this->includePatterns === []
-            && $this->excludePatterns === []
-            && $this->ignorePatterns === []
-            && $this->hooks === [];
-    }
-
-    private function shouldIncludePath(string $relativePath): bool
-    {
-        return $this->doShouldIncludePath($relativePath);
-    }
-
-    private function shouldTraverseDirectory(string $relativePath): bool
-    {
-        return $this->doShouldTraverseDirectory($relativePath);
-    }
-
-    private function syncWorkingZipIfNeeded(): void
-    {
-        $this->doSyncWorkingZipIfNeeded();
-    }
-
-
-    /**
-     * Triggers all registered hooks for a specified event.
-     *
-     * This method iterates over the registered callbacks for the given event
-     * and executes each callback with the provided arguments. If no hooks are
-     * registered for the event, the method does nothing.
-     *
-     * @param string $event The name of the event to trigger hooks for.
-     * @param mixed ...$args Arguments to pass to the callback functions.
-     */
-    private function triggerHook(string $event, mixed ...$args): void
-    {
-        foreach ($this->hooks[$event] ?? [] as $callback) {
-            $callback(...$args);
-        }
     }
 }

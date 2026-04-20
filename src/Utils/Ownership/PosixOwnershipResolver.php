@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Infocyph\Pathwise\Utils\Ownership;
 
 final class PosixOwnershipResolver implements OwnershipResolverInterface
@@ -22,13 +24,15 @@ final class PosixOwnershipResolver implements OwnershipResolverInterface
         }
 
         $ownerInfo = posix_getpwuid($ownerId);
-        return is_array($ownerInfo) ? ($ownerInfo['name'] ?? null) : null;
+
+        return is_array($ownerInfo) ? $ownerInfo['name'] : null;
     }
+
     /**
      * Get ownership details for a file.
      *
      * @param string $path The file path.
-     * @return array|null Array with 'owner' and 'group' keys, or null if the file doesn't exist.
+     * @return array{owner: ?string, group: ?string}|null Array with 'owner' and 'group' keys, or null if the file doesn't exist.
      */
     public function getOwnershipDetails(string $path): ?array
     {
@@ -42,8 +46,10 @@ final class PosixOwnershipResolver implements OwnershipResolverInterface
             return null;
         }
 
-        $owner = posix_getpwuid($ownerId)['name'] ?? null;
-        $group = posix_getgrgid($groupId)['name'] ?? null;
+        $ownerInfo = posix_getpwuid($ownerId);
+        $groupInfo = posix_getgrgid($groupId);
+        $owner = is_array($ownerInfo) ? $ownerInfo['name'] : null;
+        $group = is_array($groupInfo) ? $groupInfo['name'] : null;
 
         return compact('owner', 'group');
     }

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Infocyph\Pathwise\Observability;
 
 use DateTimeInterface;
@@ -30,7 +32,7 @@ final readonly class AuditTrail
      * Log an operation with context.
      *
      * @param string $operation The operation name.
-     * @param array $context Additional context data.
+     * @param array<string, mixed> $context Additional context data.
      */
     public function log(string $operation, array $context = []): void
     {

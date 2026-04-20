@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Infocyph\Pathwise\Utils\Ownership;
 
 final class FallbackOwnershipResolver implements OwnershipResolverInterface
@@ -17,13 +19,15 @@ final class FallbackOwnershipResolver implements OwnershipResolverInterface
         }
 
         $user = get_current_user();
+
         return $user !== '' ? $user : null;
     }
+
     /**
      * Get ownership details for a file.
      *
      * @param string $path The file path.
-     * @return array|null Array with 'owner' and 'group' keys, or null if the file doesn't exist.
+     * @return array{owner: ?string, group: ?string}|null Array with 'owner' and 'group' keys, or null if the file doesn't exist.
      */
     public function getOwnershipDetails(string $path): ?array
     {
