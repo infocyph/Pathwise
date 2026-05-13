@@ -57,14 +57,7 @@ if (!function_exists('deleteDirectory')) {
      */
     function deleteDirectory(string $directoryPath): bool
     {
-        $isLocalDirectory = !PathHelper::hasScheme($directoryPath) && is_dir($directoryPath);
-        if (!$isLocalDirectory && !FlysystemHelper::directoryExists($directoryPath)) {
-            return false;
-        }
-
-        FlysystemHelper::deleteDirectory($directoryPath);
-
-        return !FlysystemHelper::directoryExists($directoryPath);
+        return PathHelper::deleteDirectory($directoryPath);
     }
 }
 

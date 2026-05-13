@@ -6,6 +6,7 @@ namespace Infocyph\Pathwise\StreamHandler\Concerns;
 
 use Infocyph\Pathwise\Exceptions\FileSizeExceededException;
 use Infocyph\Pathwise\Exceptions\UploadException;
+use Infocyph\Pathwise\Utils\ExtensionPolicy;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\MetadataHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
@@ -316,21 +317,17 @@ trait UploadProcessorValidationConcern
     private function validateFileExtension(string $extension): void
     {
         $normalized = $this->normalizeExtension($extension);
-        if ($normalized === '') {
-            if ($this->allowedExtensions !== []) {
-                throw new UploadException('File extension is required.');
-            }
-
+        $error = ExtensionPolicy::validate($normalized, $this->allowedExtensions, $this->blockedExtensions);
+        if ($error === null) {
             return;
         }
 
-        if (in_array($normalized, $this->blockedExtensions, true)) {
-            throw new UploadException('Blocked file extension.');
-        }
-
-        if ($this->allowedExtensions !== [] && !in_array($normalized, $this->allowedExtensions, true)) {
-            throw new UploadException('File extension is not allowed.');
-        }
+        throw new UploadException(ExtensionPolicy::messageFor(
+            $error,
+            'File extension is required.',
+            'Blocked file extension.',
+            'File extension is not allowed.',
+        ));
     }
 
     /**
@@ -358,19 +355,8 @@ trait UploadProcessorValidationConcern
 
     private function validateFinalizedUpload(string $destination): void
     {
-        $finalSize = FlysystemHelper::size($destination);
-        $this->validateFileSize($finalSize);
-
-        $fileType = $this->getFileMimeType($destination);
         $extension = pathinfo($destination, PATHINFO_EXTENSION);
-        $this->validateFileExtension($extension);
-        $this->validateFileType($fileType);
-        $this->validateContentTypeIntegrity($destination, $fileType, $extension);
-        if ($this->isImage($fileType)) {
-            $this->validateImageDimensions($destination);
-        }
-
-        $this->scanForMalware($destination, $fileType);
+        $this->validateUploadedPayload($destination, $extension, true);
     }
 
     /**
@@ -452,5 +438,24 @@ trait UploadProcessorValidationConcern
         if (!in_array($normalizedMime, $allowedMimes, true)) {
             throw new UploadException('File content type does not match extension.');
         }
+    }
+
+    private function validateUploadedPayload(string $filePath, string $extension, bool $validateSize): string
+    {
+        if ($validateSize) {
+            $this->validateFileSize(FlysystemHelper::size($filePath));
+        }
+
+        $fileType = $this->getFileMimeType($filePath);
+        $this->validateFileExtension($extension);
+        $this->validateFileType($fileType);
+        $this->validateContentTypeIntegrity($filePath, $fileType, $extension);
+        if ($this->isImage($fileType)) {
+            $this->validateImageDimensions($filePath);
+        }
+
+        $this->scanForMalware($filePath, $fileType);
+
+        return $fileType;
     }
 }

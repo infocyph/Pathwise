@@ -361,14 +361,8 @@ final class StorageFactory
      */
     private static function resolveAdapter(array $config): ?FilesystemAdapter
     {
-        if (!array_key_exists('adapter', $config)) {
-            return null;
-        }
-
-        $adapter = $config['adapter'];
-        if (!$adapter instanceof FilesystemAdapter) {
-            throw new \InvalidArgumentException('The "adapter" config value must implement FilesystemAdapter.');
-        }
+        /** @var FilesystemAdapter|null $adapter */
+        $adapter = self::resolveTypedConfigObject($config, 'adapter', FilesystemAdapter::class);
 
         return $adapter;
     }
@@ -419,15 +413,31 @@ final class StorageFactory
      */
     private static function resolveProvidedFilesystem(array $config): ?FilesystemOperator
     {
-        if (!array_key_exists('filesystem', $config)) {
+        /** @var FilesystemOperator|null $filesystem */
+        $filesystem = self::resolveTypedConfigObject($config, 'filesystem', FilesystemOperator::class);
+
+        return $filesystem;
+    }
+
+    /**
+     * @template T of object
+     * @param array<string, mixed> $config
+     * @param class-string<T> $expectedClass
+     * @return T|null
+     */
+    private static function resolveTypedConfigObject(array $config, string $key, string $expectedClass): ?object
+    {
+        if (!array_key_exists($key, $config)) {
             return null;
         }
 
-        $filesystem = $config['filesystem'];
-        if (!$filesystem instanceof FilesystemOperator) {
-            throw new \InvalidArgumentException('The "filesystem" config value must implement FilesystemOperator.');
+        $value = $config[$key];
+        if (!$value instanceof $expectedClass) {
+            throw new \InvalidArgumentException(
+                sprintf('The "%s" config value must implement %s.', $key, $expectedClass),
+            );
         }
 
-        return $filesystem;
+        return $value;
     }
 }

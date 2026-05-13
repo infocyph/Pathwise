@@ -4,11 +4,10 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\Indexing;
 
-use FilesystemIterator;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
+use Infocyph\Pathwise\Utils\FlysystemPathResolver;
+use Infocyph\Pathwise\Utils\LocalFileIterator;
 use Infocyph\Pathwise\Utils\PathHelper;
-use RecursiveDirectoryIterator;
-use RecursiveIteratorIterator;
 
 final class ChecksumIndexer
 {
@@ -145,25 +144,8 @@ final class ChecksumIndexer
      */
     private static function iterFilesLocal(string $directory): array
     {
-        if (!is_dir($directory)) {
-            return [];
-        }
-
         $paths = [];
-        $iterator = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($directory, FilesystemIterator::SKIP_DOTS),
-            RecursiveIteratorIterator::SELF_FIRST,
-        );
-
-        foreach ($iterator as $item) {
-            if (!$item instanceof \SplFileInfo) {
-                continue;
-            }
-
-            if ($item->isDir()) {
-                continue;
-            }
-
+        foreach (LocalFileIterator::files($directory) as $item) {
             $paths[] = $item->getPathname();
         }
 
@@ -176,28 +158,11 @@ final class ChecksumIndexer
     private static function iterFilesViaFlysystem(string $directory): array
     {
         $paths = [];
-        [, $baseLocation] = FlysystemHelper::resolveDirectory($directory);
-        $base = trim(str_replace('\\', '/', $baseLocation), '/');
+        $base = FlysystemPathResolver::resolveDirectoryBase($directory);
 
         foreach (FlysystemHelper::listContents($directory, true) as $item) {
-            if (($item['type'] ?? null) !== 'file') {
-                continue;
-            }
-
-            $itemPathRaw = $item['path'] ?? null;
-            if (!is_string($itemPathRaw)) {
-                continue;
-            }
-
-            $itemPath = trim($itemPathRaw, '/');
-            if ($itemPath === '') {
-                continue;
-            }
-
-            $relative = $base !== '' && str_starts_with($itemPath, $base . '/')
-                ? substr($itemPath, strlen($base) + 1)
-                : ($itemPath === $base ? '' : $itemPath);
-            if ($relative === '') {
+            $relative = FlysystemPathResolver::relativePathFromItem($item, $base, 'file');
+            if ($relative === null) {
                 continue;
             }
 

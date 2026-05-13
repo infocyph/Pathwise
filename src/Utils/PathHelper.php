@@ -94,14 +94,7 @@ class PathHelper
      */
     public static function deleteDirectory(string $directory): bool
     {
-        $isLocalDirectory = !self::hasScheme($directory) && is_dir($directory);
-        if (!$isLocalDirectory && !FlysystemHelper::directoryExists($directory)) {
-            return false;
-        }
-
-        FlysystemHelper::deleteDirectory($directory);
-
-        return !FlysystemHelper::directoryExists($directory);
+        return self::deletePath($directory, true);
     }
 
     /**
@@ -112,14 +105,7 @@ class PathHelper
      */
     public static function deleteFile(string $file): bool
     {
-        $isLocalFile = !self::hasScheme($file) && is_file($file);
-        if (!$isLocalFile && !FlysystemHelper::fileExists($file)) {
-            return false;
-        }
-
-        FlysystemHelper::delete($file);
-
-        return !FlysystemHelper::fileExists($file);
+        return self::deletePath($file, false);
     }
 
     /**
@@ -365,6 +351,25 @@ class PathHelper
         }
 
         return $normalized;
+    }
+
+    private static function deletePath(string $path, bool $directory): bool
+    {
+        $isLocalPath = !self::hasScheme($path) && ($directory ? is_dir($path) : is_file($path));
+        $exists = $directory
+            ? FlysystemHelper::directoryExists(...)
+            : FlysystemHelper::fileExists(...);
+        $delete = $directory
+            ? FlysystemHelper::deleteDirectory(...)
+            : FlysystemHelper::delete(...);
+
+        if (!$isLocalPath && !$exists($path)) {
+            return false;
+        }
+
+        $delete($path);
+
+        return !$exists($path);
     }
 
     /**

@@ -16,11 +16,7 @@ trait SafeFileWriterWriteConcern
      */
     private function optionalBoolParam(array $params, int $index, bool $default): bool
     {
-        $value = $params[$index] ?? null;
-        if ($value === null) {
-            return $default;
-        }
-
+        $value = $this->optionalParamValue($params, $index, $default);
         if (!is_bool($value)) {
             throw new Exception("Expected bool parameter at index {$index}.");
         }
@@ -31,13 +27,17 @@ trait SafeFileWriterWriteConcern
     /**
      * @param list<mixed> $params
      */
+    private function optionalParamValue(array $params, int $index, mixed $default): mixed
+    {
+        return $params[$index] ?? $default;
+    }
+
+    /**
+     * @param list<mixed> $params
+     */
     private function optionalStringParam(array $params, int $index, string $default): string
     {
-        $value = $params[$index] ?? null;
-        if ($value === null) {
-            return $default;
-        }
-
+        $value = $this->optionalParamValue($params, $index, $default);
         if (!is_string($value)) {
             throw new Exception("Expected string parameter at index {$index}.");
         }
@@ -254,14 +254,7 @@ trait SafeFileWriterWriteConcern
      */
     private function writeJSON(mixed $data, bool $prettyPrint = false): int|false
     {
-        $jsonOptions = $prettyPrint ? JSON_PRETTY_PRINT : 0;
-        $jsonData = json_encode($data, $jsonOptions);
-        if ($jsonData === false) {
-            throw new Exception('JSON encoding failed: ' . json_last_error_msg());
-        }
-        $this->writeCount++;
-
-        return $this->requireFileHandle()->fwrite($jsonData . PHP_EOL);
+        return $this->writeJsonEncodedLine($data, $prettyPrint);
     }
 
     /**
@@ -274,6 +267,11 @@ trait SafeFileWriterWriteConcern
      * @throws Exception If the JSON encoding fails.
      */
     private function writeJSONArray(array $data, bool $prettyPrint = false): int|false
+    {
+        return $this->writeJsonEncodedLine($data, $prettyPrint);
+    }
+
+    private function writeJsonEncodedLine(mixed $data, bool $prettyPrint): int|false
     {
         $jsonOptions = $prettyPrint ? JSON_PRETTY_PRINT : 0;
         $jsonData = json_encode($data, $jsonOptions);

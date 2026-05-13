@@ -118,48 +118,38 @@ final class NativeOperationsAdapter
         $source = PathHelper::normalize($source);
         $destination = PathHelper::normalize($destination);
 
-        if (PHP_OS_FAMILY === 'Windows' && NativeCommandRunner::commandExists('robocopy')) {
+        if (PHP_OS_FAMILY === 'Windows') {
             $flags = $mirror ? '/MIR' : '/E';
-            $command = sprintf(
-                'robocopy %s %s %s /R:1 /W:1 /NFL /NDL /NJH /NJS /NP',
-                escapeshellarg($source),
-                escapeshellarg($destination),
-                $flags,
+            $result = self::runCommandIfAvailable(
+                'robocopy',
+                static fn(): string => sprintf(
+                    'robocopy %s %s %s /R:1 /W:1 /NFL /NDL /NJH /NJS /NP',
+                    escapeshellarg($source),
+                    escapeshellarg($destination),
+                    $flags,
+                ),
+                static fn(array $result): bool => $result['code'] <= 7,
             );
-            $result = NativeCommandRunner::run($command);
-
-            // Robocopy exit codes 0-7 are considered successful copies.
-            $success = $result['code'] <= 7;
-
-            return [
-                'success' => $success,
-                'command' => $command,
-                'code' => $result['code'],
-            ];
+            if ($result !== null) {
+                return $result;
+            }
         }
 
-        if (NativeCommandRunner::commandExists('rsync')) {
-            $deleteFlag = $mirror ? ' --delete' : '';
-            $command = sprintf(
+        $deleteFlag = $mirror ? ' --delete' : '';
+        $result = self::runCommandIfAvailable(
+            'rsync',
+            static fn(): string => sprintf(
                 'rsync -a%s %s/ %s/',
                 $deleteFlag,
                 escapeshellarg($source),
                 escapeshellarg($destination),
-            );
-            $result = NativeCommandRunner::run($command);
-
-            return [
-                'success' => $result['success'],
-                'command' => $command,
-                'code' => $result['code'],
-            ];
+            ),
+        );
+        if ($result !== null) {
+            return $result;
         }
 
-        return [
-            'success' => false,
-            'command' => '',
-            'code' => 127,
-        ];
+        return self::unsupportedResult();
     }
 
     /**
@@ -167,44 +157,22 @@ final class NativeOperationsAdapter
      */
     public static function copyFile(string $source, string $destination): array
     {
-        $source = PathHelper::normalize($source);
-        $destination = PathHelper::normalize($destination);
-
-        if (PHP_OS_FAMILY === 'Windows' && NativeCommandRunner::commandExists('cmd')) {
-            $command = sprintf(
+        return self::runDualPathOperation(
+            $source,
+            $destination,
+            'cmd',
+            static fn(string $normalizedSource, string $normalizedDestination): string => sprintf(
                 'cmd /C copy /Y %s %s >NUL',
-                escapeshellarg($source),
-                escapeshellarg($destination),
-            );
-            $result = NativeCommandRunner::run($command);
-
-            return [
-                'success' => $result['success'],
-                'command' => $command,
-                'code' => $result['code'],
-            ];
-        }
-
-        if (NativeCommandRunner::commandExists('cp')) {
-            $command = sprintf(
+                escapeshellarg($normalizedSource),
+                escapeshellarg($normalizedDestination),
+            ),
+            'cp',
+            static fn(string $normalizedSource, string $normalizedDestination): string => sprintf(
                 'cp -f %s %s',
-                escapeshellarg($source),
-                escapeshellarg($destination),
-            );
-            $result = NativeCommandRunner::run($command);
-
-            return [
-                'success' => $result['success'],
-                'command' => $command,
-                'code' => $result['code'],
-            ];
-        }
-
-        return [
-            'success' => false,
-            'command' => '',
-            'code' => 127,
-        ];
+                escapeshellarg($normalizedSource),
+                escapeshellarg($normalizedDestination),
+            ),
+        );
     }
 
     /**
@@ -212,39 +180,98 @@ final class NativeOperationsAdapter
      */
     public static function decompressZip(string $zipPath, string $destination): array
     {
-        $zipPath = PathHelper::normalize($zipPath);
-        $destination = PathHelper::normalize($destination);
-
-        if (PHP_OS_FAMILY === 'Windows' && NativeCommandRunner::commandExists('powershell')) {
-            $command = sprintf(
+        return self::runDualPathOperation(
+            $zipPath,
+            $destination,
+            'powershell',
+            static fn(string $normalizedZipPath, string $normalizedDestination): string => sprintf(
                 'powershell -NoProfile -Command "Expand-Archive -Path %s -DestinationPath %s -Force"',
-                escapeshellarg($zipPath),
-                escapeshellarg($destination),
-            );
-            $result = NativeCommandRunner::run($command);
-
-            return [
-                'success' => $result['success'],
-                'command' => $command,
-                'code' => $result['code'],
-            ];
-        }
-
-        if (NativeCommandRunner::commandExists('unzip')) {
-            $command = sprintf(
+                escapeshellarg($normalizedZipPath),
+                escapeshellarg($normalizedDestination),
+            ),
+            'unzip',
+            static fn(string $normalizedZipPath, string $normalizedDestination): string => sprintf(
                 'unzip -o %s -d %s',
-                escapeshellarg($zipPath),
-                escapeshellarg($destination),
-            );
-            $result = NativeCommandRunner::run($command);
+                escapeshellarg($normalizedZipPath),
+                escapeshellarg($normalizedDestination),
+            ),
+        );
+    }
 
-            return [
-                'success' => $result['success'],
-                'command' => $command,
-                'code' => $result['code'],
-            ];
+    /**
+     * @param callable(): string $commandBuilder
+     * @param callable(array{success: bool, output: array<int, string>, code: int}): bool|null $successResolver
+     * @return array{success: bool, command: string, code: int}|null
+     */
+    private static function runCommandIfAvailable(
+        string $command,
+        callable $commandBuilder,
+        ?callable $successResolver = null,
+    ): ?array {
+        if (!NativeCommandRunner::commandExists($command)) {
+            return null;
         }
 
+        $builtCommand = $commandBuilder();
+        $result = NativeCommandRunner::run($builtCommand);
+
+        return [
+            'success' => $successResolver !== null ? (bool) $successResolver($result) : $result['success'],
+            'command' => $builtCommand,
+            'code' => $result['code'],
+        ];
+    }
+
+    /**
+     * @param callable(string, string): string $windowsCommandBuilder
+     * @param callable(string, string): string $unixCommandBuilder
+     * @return array{success: bool, command: string, code: int}
+     */
+    private static function runDualPathOperation(
+        string $sourcePath,
+        string $destinationPath,
+        string $windowsCommand,
+        callable $windowsCommandBuilder,
+        string $unixCommand,
+        callable $unixCommandBuilder,
+    ): array {
+        $normalizedSourcePath = PathHelper::normalize($sourcePath);
+        $normalizedDestinationPath = PathHelper::normalize($destinationPath);
+
+        return self::runWindowsThenUnix(
+            $windowsCommand,
+            static fn(): string => $windowsCommandBuilder($normalizedSourcePath, $normalizedDestinationPath),
+            $unixCommand,
+            static fn(): string => $unixCommandBuilder($normalizedSourcePath, $normalizedDestinationPath),
+        );
+    }
+
+    /**
+     * @param callable(): string $windowsCommandBuilder
+     * @param callable(): string $unixCommandBuilder
+     * @return array{success: bool, command: string, code: int}
+     */
+    private static function runWindowsThenUnix(
+        string $windowsCommand,
+        callable $windowsCommandBuilder,
+        string $unixCommand,
+        callable $unixCommandBuilder,
+    ): array {
+        if (PHP_OS_FAMILY === 'Windows') {
+            $windowsResult = self::runCommandIfAvailable($windowsCommand, $windowsCommandBuilder);
+            if ($windowsResult !== null) {
+                return $windowsResult;
+            }
+        }
+
+        return self::runCommandIfAvailable($unixCommand, $unixCommandBuilder) ?? self::unsupportedResult();
+    }
+
+    /**
+     * @return array{success: bool, command: string, code: int}
+     */
+    private static function unsupportedResult(): array
+    {
         return [
             'success' => false,
             'command' => '',

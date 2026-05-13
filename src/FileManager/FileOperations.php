@@ -45,13 +45,7 @@ class FileOperations
     public function append(string $content): self
     {
         $this->assertPolicy('append', $this->filePath);
-        $previousContent = $this->exists() ? $this->read() : null;
-        $this->recordRollback(function () use ($previousContent): void {
-            if ($previousContent === null) {
-                return;
-            }
-            FlysystemHelper::write($this->filePath, $previousContent);
-        });
+        $previousContent = $this->snapshotRollbackContent();
         $newContent = ($previousContent ?? '') . $content;
         FlysystemHelper::write($this->filePath, $newContent);
         $this->audit('append', ['path' => $this->filePath, 'bytes' => strlen($content)]);
@@ -427,13 +421,12 @@ class FileOperations
      */
     public function setGroup(int $groupId): self
     {
-        $this->assertPolicy('set-group', $this->filePath);
-        if (!chgrp($this->filePath, $groupId)) {
-            throw new FileAccessException("Unable to change group for file: {$this->filePath}.");
-        }
-        $this->audit('set-group', ['path' => $this->filePath, 'group' => $groupId]);
-
-        return $this;
+        return $this->applyOwnershipChange(
+            'set-group',
+            $groupId,
+            static fn(string $path, int $id): bool => chgrp($path, $id),
+            'group',
+        );
     }
 
     /**
@@ -441,13 +434,12 @@ class FileOperations
      */
     public function setOwner(int $ownerId): self
     {
-        $this->assertPolicy('set-owner', $this->filePath);
-        if (!chown($this->filePath, $ownerId)) {
-            throw new FileAccessException("Unable to change owner for file: {$this->filePath}.");
-        }
-        $this->audit('set-owner', ['path' => $this->filePath, 'owner' => $ownerId]);
-
-        return $this;
+        return $this->applyOwnershipChange(
+            'set-owner',
+            $ownerId,
+            static fn(string $path, int $id): bool => chown($path, $id),
+            'owner',
+        );
     }
 
     /**
@@ -557,13 +549,7 @@ class FileOperations
     public function update(string $content): self
     {
         $this->assertPolicy('update', $this->filePath);
-        $previous = $this->exists() ? $this->read() : null;
-        $this->recordRollback(function () use ($previous): void {
-            if ($previous === null) {
-                return;
-            }
-            FlysystemHelper::write($this->filePath, $previous);
-        });
+        $this->snapshotRollbackContent();
         FlysystemHelper::write($this->filePath, $content);
         $this->audit('update', ['path' => $this->filePath, 'bytes' => strlen($content)]);
 
@@ -652,6 +638,18 @@ class FileOperations
         return $this;
     }
 
+    private function applyOwnershipChange(string $action, int $value, callable $updater, string $label): self
+    {
+        $this->assertPolicy($action, $this->filePath);
+        if (!$updater($this->filePath, $value)) {
+            throw new FileAccessException("Unable to change {$label} for file: {$this->filePath}.");
+        }
+
+        $this->audit($action, ['path' => $this->filePath, $label => $value]);
+
+        return $this;
+    }
+
     /**
      * @param array<string, mixed> $context
      */
@@ -715,5 +713,19 @@ class FileOperations
         }
 
         return $this->file;
+    }
+
+    private function snapshotRollbackContent(): ?string
+    {
+        $previousContent = $this->exists() ? $this->read() : null;
+        $this->recordRollback(function () use ($previousContent): void {
+            if ($previousContent === null) {
+                return;
+            }
+
+            FlysystemHelper::write($this->filePath, $previousContent);
+        });
+
+        return $previousContent;
     }
 }

@@ -242,16 +242,7 @@ class UploadProcessor
             $this->validateFile($file);
             $tmpName = $file['tmp_name'];
             $extension = pathinfo($file['name'], PATHINFO_EXTENSION);
-            $this->validateFileExtension($extension);
-
-            $fileType = $this->getFileMimeType($tmpName);
-            $this->validateFileType($fileType);
-            $this->validateContentTypeIntegrity($tmpName, $fileType, $extension);
-
-            if ($this->isImage($fileType)) {
-                $this->validateImageDimensions($tmpName);
-            }
-            $this->scanForMalware($tmpName, $fileType);
+            $fileType = $this->validateUploadedPayload($tmpName, $extension, false);
 
             $fileName = $this->generateFileName($tmpName, $extension);
             $destination = $this->getUniqueDestination($fileName);
