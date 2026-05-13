@@ -7,6 +7,7 @@ namespace Infocyph\Pathwise\StreamHandler;
 use Infocyph\Pathwise\Exceptions\DownloadException;
 use Infocyph\Pathwise\Exceptions\FileNotFoundException;
 use Infocyph\Pathwise\Exceptions\FileSizeExceededException;
+use Infocyph\Pathwise\Utils\ExtensionPolicy;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\MetadataHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
@@ -564,21 +565,18 @@ class DownloadProcessor
     private function validateExtension(string $extension): void
     {
         $normalized = $this->normalizeExtension($extension);
-        if ($normalized === '') {
-            if ($this->allowedExtensions !== []) {
-                throw new DownloadException('File extension is required for download.');
-            }
-
+        $error = ExtensionPolicy::validate($normalized, $this->allowedExtensions, $this->blockedExtensions);
+        if ($error === null) {
             return;
         }
 
-        if (in_array($normalized, $this->blockedExtensions, true)) {
-            throw new DownloadException('Blocked file extension for download.');
-        }
-
-        if ($this->allowedExtensions !== [] && !in_array($normalized, $this->allowedExtensions, true)) {
-            throw new DownloadException('File extension is not allowed for download.');
-        }
+        throw new DownloadException(ExtensionPolicy::messageFor(
+            $error,
+            'File extension is required for download.',
+            'Blocked file extension for download.',
+            'File extension is not allowed for download.',
+            'Invalid file extension for download.',
+        ));
     }
 
     private function writeFully(mixed $stream, string $payload): int

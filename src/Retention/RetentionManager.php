@@ -4,11 +4,10 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\Retention;
 
-use FilesystemIterator;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
+use Infocyph\Pathwise\Utils\FlysystemPathResolver;
+use Infocyph\Pathwise\Utils\LocalFileIterator;
 use Infocyph\Pathwise\Utils\PathHelper;
-use RecursiveDirectoryIterator;
-use RecursiveIteratorIterator;
 
 final class RetentionManager
 {
@@ -75,25 +74,8 @@ final class RetentionManager
      */
     private static function collectFilesLocal(string $directory): array
     {
-        if (!is_dir($directory)) {
-            return [];
-        }
-
         $files = [];
-        $iterator = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($directory, FilesystemIterator::SKIP_DOTS),
-            RecursiveIteratorIterator::SELF_FIRST,
-        );
-
-        foreach ($iterator as $item) {
-            if (!$item instanceof \SplFileInfo) {
-                continue;
-            }
-
-            if ($item->isDir()) {
-                continue;
-            }
-
+        foreach (LocalFileIterator::files($directory) as $item) {
             $files[] = [
                 'path' => $item->getPathname(),
                 'mtime' => (int) $item->getMTime(),
@@ -110,8 +92,7 @@ final class RetentionManager
     private static function collectFilesViaFlysystem(string $directory): array
     {
         $files = [];
-        [, $baseLocation] = FlysystemHelper::resolveDirectory($directory);
-        $base = trim(str_replace('\\', '/', $baseLocation), '/');
+        $base = FlysystemPathResolver::resolveDirectoryBase($directory);
 
         foreach (FlysystemHelper::listContents($directory, true) as $item) {
             $entry = self::normalizeFlysystemEntry($directory, $base, $item);
@@ -131,32 +112,12 @@ final class RetentionManager
      */
     private static function normalizeFlysystemEntry(string $directory, string $base, array $item): ?array
     {
-        $type = $item['type'] ?? null;
-        if (!is_string($type) || $type !== 'file') {
+        $relative = FlysystemPathResolver::relativePathFromItem($item, $base, 'file');
+        if ($relative === null) {
             return null;
         }
 
-        $itemPathRaw = $item['path'] ?? null;
-        if (!is_string($itemPathRaw)) {
-            return null;
-        }
-
-        $itemPath = trim($itemPathRaw, '/');
-        if ($itemPath === '') {
-            return null;
-        }
-
-        $relative = $base !== '' && str_starts_with($itemPath, $base . '/')
-            ? substr($itemPath, strlen($base) + 1)
-            : ($itemPath === $base ? '' : $itemPath);
-        if ($relative === '') {
-            return null;
-        }
-
-        $lastModified = $item['last_modified'] ?? 0;
-        $mtime = is_int($lastModified)
-            ? $lastModified
-            : (is_numeric($lastModified) ? (int) $lastModified : 0);
+        $mtime = FlysystemPathResolver::intFromMixed($item['last_modified'] ?? 0);
 
         return [
             'path' => PathHelper::join($directory, $relative),

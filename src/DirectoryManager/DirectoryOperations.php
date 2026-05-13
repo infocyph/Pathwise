@@ -173,20 +173,11 @@ class DirectoryOperations
     public function find(array $criteria = []): array
     {
         $results = [];
-        $sourceLocation = $this->storageLocation($this->path);
         $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
 
-        foreach ($this->listStorageEntries($this->path, true) as $item) {
-            if ($this->entryType($item) !== 'file') {
-                continue;
-            }
-
-            $relative = $this->relativeStoragePath($sourceLocation, $this->entryPath($item));
-            if ($relative === '') {
-                continue;
-            }
-
-            $resolvedPath = $this->buildPath($this->path, $relative);
+        foreach ($this->iterateResolvedEntries(true, true) as $entry) {
+            $resolvedPath = $entry['path'];
+            $item = $entry['item'];
             $size = $this->entrySize($item);
 
             if (!$this->matchesFindCriteria($criteria, $resolvedPath, $size, $isWindows)) {
@@ -209,19 +200,9 @@ class DirectoryOperations
     public function flatten(?callable $filter = null): array
     {
         $flattened = [];
-        $sourceLocation = $this->storageLocation($this->path);
-
-        foreach ($this->listStorageEntries($this->path, true) as $item) {
-            if ($this->entryType($item) !== 'file') {
-                continue;
-            }
-
-            $relative = $this->relativeStoragePath($sourceLocation, $this->entryPath($item));
-            if ($relative === '') {
-                continue;
-            }
-
-            $resolvedPath = $this->buildPath($this->path, $relative);
+        foreach ($this->iterateResolvedEntries(true, true) as $entry) {
+            $resolvedPath = $entry['path'];
+            $item = $entry['item'];
             if (!$this->invokeFilter($filter, $resolvedPath, $item)) {
                 continue;
             }
@@ -240,14 +221,8 @@ class DirectoryOperations
     public function getDepth(): int
     {
         $maxDepth = 0;
-        $sourceLocation = $this->storageLocation($this->path);
-
-        foreach ($this->listStorageEntries($this->path, true) as $item) {
-            $relative = $this->relativeStoragePath($sourceLocation, $this->entryPath($item));
-            if ($relative === '') {
-                continue;
-            }
-
+        foreach ($this->iterateResolvedEntries(true, false) as $entry) {
+            $relative = $entry['relative'];
             $depth = substr_count(trim(str_replace('\\', '/', $relative), '/'), '/');
             $maxDepth = max($maxDepth, $depth);
         }
@@ -301,15 +276,9 @@ class DirectoryOperations
     public function listContents(bool $detailed = false, ?callable $filter = null): array
     {
         $contents = [];
-        $sourceLocation = $this->storageLocation($this->path);
-
-        foreach ($this->listStorageEntries($this->path, true) as $item) {
-            $relative = $this->relativeStoragePath($sourceLocation, $this->entryPath($item));
-            if ($relative === '') {
-                continue;
-            }
-
-            $resolvedPath = $this->buildPath($this->path, $relative);
+        foreach ($this->iterateResolvedEntries(true, false) as $entry) {
+            $resolvedPath = $entry['path'];
+            $item = $entry['item'];
             if (!$this->invokeFilter($filter, $resolvedPath, $item)) {
                 continue;
             }
@@ -355,15 +324,10 @@ class DirectoryOperations
      */
     public function listSortedContents(string $sortOrder = 'asc'): array
     {
-        $sourceLocation = $this->storageLocation($this->path);
         $contents = [];
 
-        foreach ($this->listStorageEntries($this->path, false) as $item) {
-            $relative = $this->relativeStoragePath($sourceLocation, $this->entryPath($item));
-            if ($relative === '') {
-                continue;
-            }
-
+        foreach ($this->iterateResolvedEntries(false, false) as $entry) {
+            $relative = $entry['relative'];
             $contents[] = basename(str_replace('\\', '/', $relative));
         }
 
@@ -443,19 +407,9 @@ class DirectoryOperations
     public function size(?callable $filter = null): int
     {
         $size = 0;
-        $sourceLocation = $this->storageLocation($this->path);
-
-        foreach ($this->listStorageEntries($this->path, true) as $item) {
-            if ($this->entryType($item) !== 'file') {
-                continue;
-            }
-
-            $relative = $this->relativeStoragePath($sourceLocation, $this->entryPath($item));
-            if ($relative === '') {
-                continue;
-            }
-
-            $resolvedPath = $this->buildPath($this->path, $relative);
+        foreach ($this->iterateResolvedEntries(true, true) as $entry) {
+            $resolvedPath = $entry['path'];
+            $item = $entry['item'];
             if (!$this->invokeFilter($filter, $resolvedPath, $item)) {
                 continue;
             }
@@ -572,5 +526,30 @@ class DirectoryOperations
         }
 
         return true;
+    }
+
+    /**
+     * @return \Generator<int, array{path: string, relative: string, item: StorageEntry}>
+     */
+    private function iterateResolvedEntries(bool $deep, bool $filesOnly): \Generator
+    {
+        $sourceLocation = $this->storageLocation($this->path);
+
+        foreach ($this->listStorageEntries($this->path, $deep) as $item) {
+            if ($filesOnly && $this->entryType($item) !== 'file') {
+                continue;
+            }
+
+            $relative = $this->relativeStoragePath($sourceLocation, $this->entryPath($item));
+            if ($relative === '') {
+                continue;
+            }
+
+            yield [
+                'path' => $this->buildPath($this->path, $relative),
+                'relative' => $relative,
+                'item' => $item,
+            ];
+        }
     }
 }

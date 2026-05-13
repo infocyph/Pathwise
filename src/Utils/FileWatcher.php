@@ -154,61 +154,23 @@ final class FileWatcher
         return $snapshot;
     }
 
-    private static function intFromMixed(mixed $value): int
-    {
-        if (is_int($value)) {
-            return $value;
-        }
-
-        return is_numeric($value) ? (int) $value : 0;
-    }
-
-    private static function resolveFlysystemRelativePath(mixed $item, string $base): ?string
-    {
-        if (!is_array($item)) {
-            return null;
-        }
-
-        $type = $item['type'] ?? null;
-        if (!is_string($type) || $type !== 'file') {
-            return null;
-        }
-
-        $itemPathRaw = $item['path'] ?? null;
-        if (!is_string($itemPathRaw)) {
-            return null;
-        }
-
-        $itemPath = trim($itemPathRaw, '/');
-        if ($itemPath === '') {
-            return null;
-        }
-
-        if ($base !== '' && str_starts_with($itemPath, $base . '/')) {
-            return substr($itemPath, strlen($base) + 1);
-        }
-
-        return $itemPath === $base ? null : $itemPath;
-    }
-
     /**
      * @return SnapshotMap
      */
     private static function snapshotViaFlysystem(string $path, bool $recursive): array
     {
         $entries = [];
-        [, $baseLocation] = FlysystemHelper::resolveDirectory($path);
-        $base = trim(str_replace('\\', '/', $baseLocation), '/');
+        $base = FlysystemPathResolver::resolveDirectoryBase($path);
 
         foreach (FlysystemHelper::listContents($path, $recursive) as $item) {
-            $relative = self::resolveFlysystemRelativePath($item, $base);
+            $relative = FlysystemPathResolver::relativePathFromItem($item, $base, 'file');
             if ($relative === null) {
                 continue;
             }
 
             $resolved = PathHelper::join($path, $relative);
-            $lastModified = self::intFromMixed($item['last_modified'] ?? 0);
-            $fileSize = self::intFromMixed($item['file_size'] ?? 0);
+            $lastModified = FlysystemPathResolver::intFromMixed($item['last_modified'] ?? 0);
+            $fileSize = FlysystemPathResolver::intFromMixed($item['file_size'] ?? 0);
 
             $entries[$resolved] = [
                 'mtime' => $lastModified,

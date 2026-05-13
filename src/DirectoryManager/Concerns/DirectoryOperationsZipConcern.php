@@ -215,23 +215,13 @@ trait DirectoryOperationsZipConcern
             throw new DirectoryOperationException('Unable to create temporary ZIP source.');
         }
 
-        $sourceStream = FlysystemHelper::readStream($source);
-        $targetStream = fopen($tempSource, 'wb');
-        if (!is_resource($sourceStream) || !is_resource($targetStream)) {
-            if (is_resource($sourceStream)) {
-                fclose($sourceStream);
-            }
-            if (is_resource($targetStream)) {
-                fclose($targetStream);
-            }
+        try {
+            FlysystemHelper::copy($source, $tempSource);
+        } catch (\Throwable) {
             $this->unlinkFileSilently($tempSource);
 
             throw new DirectoryOperationException("Unable to read ZIP source: {$source}");
         }
-
-        stream_copy_to_stream($sourceStream, $targetStream);
-        fclose($sourceStream);
-        fclose($targetStream);
 
         return [$tempSource, true];
     }

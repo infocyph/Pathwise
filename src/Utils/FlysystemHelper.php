@@ -521,19 +521,49 @@ final class FlysystemHelper
     /**
      * @return array{FilesystemOperator, string}
      */
-    private static function filesystemForDirectory(string $path): array
+    private static function filesystemFor(string $path, bool $directory): array
     {
         [$mountedFilesystem, $mountedLocation] = self::resolveMountedFilesystem($path);
         if ($mountedFilesystem !== null) {
-            return [$mountedFilesystem, rtrim($mountedLocation, '/')];
+            $location = $directory ? rtrim($mountedLocation, '/') : ltrim($mountedLocation, '/');
+
+            return [$mountedFilesystem, $location];
         }
 
         if (self::$defaultFilesystem !== null && !PathHelper::isAbsolute($path)) {
-            return [self::$defaultFilesystem, trim(str_replace('\\', '/', $path), '/')];
+            $normalizedPath = str_replace('\\', '/', $path);
+            $location = $directory ? trim($normalizedPath, '/') : ltrim($normalizedPath, '/');
+
+            return [self::$defaultFilesystem, $location];
         }
 
-        $path = PathHelper::normalize(rtrim($path, '/\\'));
+        return $directory
+            ? self::filesystemForLocalDirectory($path)
+            : self::filesystemForLocalFile($path);
+    }
 
+    /**
+     * @return array{FilesystemOperator, string}
+     */
+    private static function filesystemForDirectory(string $path): array
+    {
+        return self::filesystemFor($path, true);
+    }
+
+    /**
+     * @return array{FilesystemOperator, string}
+     */
+    private static function filesystemForFile(string $path): array
+    {
+        return self::filesystemFor($path, false);
+    }
+
+    /**
+     * @return array{FilesystemOperator, string}
+     */
+    private static function filesystemForLocalDirectory(string $path): array
+    {
+        $path = PathHelper::normalize(rtrim($path, '/\\'));
         if ($path === '' || $path === DIRECTORY_SEPARATOR) {
             return [new Filesystem(new LocalFilesystemAdapter(DIRECTORY_SEPARATOR)), ''];
         }
@@ -550,17 +580,8 @@ final class FlysystemHelper
     /**
      * @return array{FilesystemOperator, string}
      */
-    private static function filesystemForFile(string $path): array
+    private static function filesystemForLocalFile(string $path): array
     {
-        [$mountedFilesystem, $mountedLocation] = self::resolveMountedFilesystem($path);
-        if ($mountedFilesystem !== null) {
-            return [$mountedFilesystem, ltrim($mountedLocation, '/')];
-        }
-
-        if (self::$defaultFilesystem !== null && !PathHelper::isAbsolute($path)) {
-            return [self::$defaultFilesystem, ltrim(str_replace('\\', '/', $path), '/')];
-        }
-
         $path = PathHelper::normalize($path);
         $directory = dirname($path);
         $location = basename($path);
@@ -576,23 +597,7 @@ final class FlysystemHelper
      */
     private static function filesystemForPath(string $path): array
     {
-        [$mountedFilesystem, $mountedLocation] = self::resolveMountedFilesystem($path);
-        if ($mountedFilesystem !== null) {
-            return [$mountedFilesystem, ltrim($mountedLocation, '/')];
-        }
-
-        if (self::$defaultFilesystem !== null && !PathHelper::isAbsolute($path)) {
-            return [self::$defaultFilesystem, ltrim(str_replace('\\', '/', $path), '/')];
-        }
-
-        $normalized = PathHelper::normalize($path);
-        $directory = dirname($normalized);
-        $location = basename($normalized);
-
-        return [
-            new Filesystem(new LocalFilesystemAdapter($directory)),
-            str_replace('\\', '/', $location),
-        ];
+        return self::filesystemFor($path, false);
     }
 
     private static function normalizeMountName(string $name): string

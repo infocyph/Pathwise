@@ -243,9 +243,7 @@ class FileCompression
     public function compress(string $source): self
     {
         $this->reopenIfNeeded();
-        $cleanupPath = null;
-        $resolvedSource = $this->localizeCompressionSource($source, $cleanupPath);
-        $this->deferLocalizedCleanupPath($cleanupPath);
+        $resolvedSource = $this->prepareCompressionSource($source);
 
         if ($this->shouldAttemptNativeCompression() && NativeOperationsAdapter::canUseNativeCompression()) {
             $this->closeZip();
@@ -290,9 +288,7 @@ class FileCompression
     public function compressWithFilter(string $source, array $extensions = []): self
     {
         $this->reopenIfNeeded();
-        $cleanupPath = null;
-        $resolvedSource = $this->localizeCompressionSource($source, $cleanupPath);
-        $this->deferLocalizedCleanupPath($cleanupPath);
+        $resolvedSource = $this->prepareCompressionSource($source);
 
         $this->loadIgnorePatterns($resolvedSource);
         $this->initializeProgress($resolvedSource, $extensions);
@@ -560,5 +556,14 @@ class FileCompression
         $this->progressCallback = $progressCallback;
 
         return $this;
+    }
+
+    private function prepareCompressionSource(string $source): string
+    {
+        $cleanupPath = null;
+        $resolvedSource = $this->localizeCompressionSource($source, $cleanupPath);
+        $this->deferLocalizedCleanupPath($cleanupPath);
+
+        return $resolvedSource;
     }
 }

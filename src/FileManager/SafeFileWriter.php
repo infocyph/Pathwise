@@ -12,6 +12,7 @@ use Infocyph\Pathwise\Exceptions\FileAccessException;
 use Infocyph\Pathwise\FileManager\Concerns\SafeFileWriterWriteConcern;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
+use Infocyph\Pathwise\Utils\StreamTransferHelper;
 use JsonSerializable;
 use SplFileObject;
 use Stringable;
@@ -210,16 +211,9 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      */
     public function getCreationDate(): DateTime
     {
-        $target = $this->getActiveOrFinalPath();
-        if (is_file($target)) {
-            return new DateTime('@' . filectime($target));
-        }
-
-        if (FlysystemHelper::fileExists($this->filename)) {
-            return new DateTime('@' . FlysystemHelper::lastModified($this->filename));
-        }
-
-        return new DateTime();
+        return $this->resolveFileDate(
+            static fn(string $path): int => (int) filectime($path),
+        );
     }
 
     /**
@@ -229,16 +223,9 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      */
     public function getModificationDate(): DateTime
     {
-        $target = $this->getActiveOrFinalPath();
-        if (is_file($target)) {
-            return new DateTime('@' . filemtime($target));
-        }
-
-        if (FlysystemHelper::fileExists($this->filename)) {
-            return new DateTime('@' . FlysystemHelper::lastModified($this->filename));
-        }
-
-        return new DateTime();
+        return $this->resolveFileDate(
+            static fn(string $path): int => (int) filemtime($path),
+        );
     }
 
     /**
@@ -520,22 +507,30 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
             return;
         }
 
-        $source = FlysystemHelper::readStream($this->filename);
-        $target = fopen($this->localWorkingPath, 'wb');
-        if (!is_resource($source) || !is_resource($target)) {
-            if (is_resource($source)) {
-                fclose($source);
-            }
-            if (is_resource($target)) {
-                fclose($target);
-            }
-
+        try {
+            FlysystemHelper::copy($this->filename, $this->localWorkingPath);
+        } catch (\Throwable) {
             throw new FileAccessException("Cannot write to file: {$this->filename}");
         }
+    }
 
-        stream_copy_to_stream($source, $target);
-        fclose($source);
-        fclose($target);
+    /**
+     * @param callable(string): int $localDateResolver
+     */
+    private function resolveFileDate(callable $localDateResolver): DateTime
+    {
+        $target = $this->getActiveOrFinalPath();
+        if (is_file($target)) {
+            $timestamp = $localDateResolver($target);
+
+            return new DateTime('@' . $timestamp);
+        }
+
+        if (FlysystemHelper::fileExists($this->filename)) {
+            return new DateTime('@' . FlysystemHelper::lastModified($this->filename));
+        }
+
+        return new DateTime();
     }
 
     private function resolveNonAtomicTargetFilePath(): string
@@ -579,20 +574,12 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
 
     private function syncWorkingCopyBack(): void
     {
-        if (!$this->syncBackOnClose || !is_string($this->localWorkingPath) || !is_file($this->localWorkingPath)) {
-            return;
-        }
-
-        $stream = fopen($this->localWorkingPath, 'rb');
-        if (!is_resource($stream)) {
-            throw new FileAccessException("Cannot write to file: {$this->filename}");
-        }
-
-        try {
-            FlysystemHelper::writeStream($this->filename, $stream);
-        } finally {
-            fclose($stream);
-        }
+        StreamTransferHelper::syncLocalFileToPathOrThrow(
+            $this->syncBackOnClose,
+            $this->localWorkingPath,
+            $this->filename,
+            fn(): \Throwable => new FileAccessException("Cannot write to file: {$this->filename}"),
+        );
     }
 
     private function unlinkPathSilently(string $path): void

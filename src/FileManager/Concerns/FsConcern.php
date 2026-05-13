@@ -6,7 +6,9 @@ namespace Infocyph\Pathwise\FileManager\Concerns;
 
 use Infocyph\Pathwise\Exceptions\CompressionException;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
+use Infocyph\Pathwise\Utils\FlysystemPathResolver;
 use Infocyph\Pathwise\Utils\PathHelper;
+use Infocyph\Pathwise\Utils\StreamTransferHelper;
 
 trait FsConcern
 {
@@ -14,22 +16,11 @@ trait FsConcern
     {
         $this->doEnsureLocalDirectoryExists(dirname($localTarget));
 
-        $stream = FlysystemHelper::readStream($sourcePath);
-        $target = fopen($localTarget, 'wb');
-        if (!is_resource($stream) || !is_resource($target)) {
-            if (is_resource($stream)) {
-                fclose($stream);
-            }
-            if (is_resource($target)) {
-                fclose($target);
-            }
-
+        try {
+            FlysystemHelper::copy($sourcePath, $localTarget);
+        } catch (\Throwable) {
             throw new CompressionException("Unable to read source path: {$sourcePath}");
         }
-
-        stream_copy_to_stream($stream, $target);
-        fclose($stream);
-        fclose($target);
     }
 
     private function doEnsureLocalDirectoryExists(string $path): void
@@ -110,23 +101,13 @@ trait FsConcern
             throw new CompressionException("Unable to localize source path: {$originalSource}");
         }
 
-        $stream = FlysystemHelper::readStream($normalizedSource);
-        $target = fopen($tempFile, 'wb');
-        if (!is_resource($stream) || !is_resource($target)) {
-            if (is_resource($stream)) {
-                fclose($stream);
-            }
-            if (is_resource($target)) {
-                fclose($target);
-            }
+        try {
+            $this->doCopyFlysystemFileToLocal($normalizedSource, $tempFile);
+        } catch (\Throwable) {
             $this->doUnlinkFileSilently($tempFile);
 
             throw new CompressionException("Unable to localize source path: {$originalSource}");
         }
-
-        stream_copy_to_stream($stream, $target);
-        fclose($stream);
-        fclose($target);
 
         return PathHelper::normalize($tempFile);
     }
@@ -155,36 +136,12 @@ trait FsConcern
 
     private function doResolveMaterializationBase(string $sourcePath): string
     {
-        [, $baseLocation] = FlysystemHelper::resolveDirectory($sourcePath);
-
-        return trim(str_replace('\\', '/', $baseLocation), '/');
+        return FlysystemPathResolver::resolveDirectoryBase($sourcePath);
     }
 
     private function doResolveMaterializedRelativePath(mixed $item, string $base): ?string
     {
-        if (!is_array($item)) {
-            return null;
-        }
-
-        $itemPathRaw = $item['path'] ?? null;
-        if (!is_string($itemPathRaw)) {
-            return null;
-        }
-
-        $itemPath = trim($itemPathRaw, '/');
-        if ($itemPath === '') {
-            return null;
-        }
-
-        if ($base !== '' && str_starts_with($itemPath, $base . '/')) {
-            return substr($itemPath, strlen($base) + 1);
-        }
-
-        if ($itemPath === $base) {
-            return null;
-        }
-
-        return $itemPath;
+        return FlysystemPathResolver::relativePathFromItem($item, $base);
     }
 
     private function doResolveWorkingZipPath(bool $create): string
@@ -203,22 +160,11 @@ trait FsConcern
         $normalizedTemp = PathHelper::normalize($tempFile);
 
         if (FlysystemHelper::fileExists($this->zipFilePath)) {
-            $source = FlysystemHelper::readStream($this->zipFilePath);
-            $target = fopen($normalizedTemp, 'wb');
-            if (!is_resource($source) || !is_resource($target)) {
-                if (is_resource($source)) {
-                    fclose($source);
-                }
-                if (is_resource($target)) {
-                    fclose($target);
-                }
-
+            try {
+                $this->doCopyFlysystemFileToLocal($this->zipFilePath, $normalizedTemp);
+            } catch (\Throwable) {
                 throw new CompressionException("Unable to read ZIP archive: {$this->zipFilePath}");
             }
-
-            stream_copy_to_stream($source, $target);
-            fclose($source);
-            fclose($target);
         } elseif (!$create) {
             $this->doUnlinkFileSilently($normalizedTemp);
 
@@ -290,20 +236,12 @@ trait FsConcern
 
     private function doSyncWorkingZipIfNeeded(): void
     {
-        if (!$this->syncWorkingZipOnClose || !is_file($this->workingZipPath)) {
-            return;
-        }
-
-        $stream = fopen($this->workingZipPath, 'rb');
-        if (!is_resource($stream)) {
-            throw new CompressionException("Unable to stream ZIP archive: {$this->workingZipPath}");
-        }
-
-        try {
-            FlysystemHelper::writeStream($this->zipFilePath, $stream);
-        } finally {
-            fclose($stream);
-        }
+        StreamTransferHelper::syncLocalFileToPathOrThrow(
+            $this->syncWorkingZipOnClose,
+            $this->workingZipPath,
+            $this->zipFilePath,
+            fn(): \Throwable => new CompressionException("Unable to stream ZIP archive: {$this->workingZipPath}"),
+        );
     }
 
     private function doUnlinkFileSilently(string $path): void
