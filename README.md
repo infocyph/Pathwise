@@ -256,8 +256,6 @@ $compression->compress('/path/to/directory');
 $compression->decompress('/path/to/extract/');
 ```
 
-
-
 ## **DirectoryManager**
 
 The `DirectoryManager` module offers tools for handling directory creation, deletion and traversal.
@@ -286,8 +284,6 @@ $dirOps->create();
 $contents = $dirOps->listContents(detailed: true);
 print_r($contents);
 ```
-
-
 
 ## **Utils**
 
@@ -430,9 +426,18 @@ $success = copyDirectory('/source/directory', '/destination/directory');
 echo $success ? 'Copied successfully' : 'Failed to copy';
 ```
 
----
-## **Support**
-Having trouble? Create an issue!
+## Security
 
-## **License**
-Pathwise is licensed under the [MIT License](LICENSE).
+Protected by [PHPForge](https://github.com/infocyph/PHPForge) — an automated quality and security gate for PHP projects.
+
+---
+
+<div align="center">
+  <sub><strong>Made with ❤️ for the PHP community</strong></sub><br />
+  <sub><a href="LICENSE">MIT Licensed</a></sub><br />
+  <a href="https://docs.infocyph.com/projects/Pathwise">Documentation</a> •
+  <a href="SECURITY.md">Security</a> •
+  <a href="CODE_OF_CONDUCT.md">Code of Conduct</a> •
+  <a href="CONTRIBUTING.md">Contributing</a> •
+  <a href="https://github.com/infocyph/Pathwise/issues">Report | Request | Suggest</a>
+</div>
