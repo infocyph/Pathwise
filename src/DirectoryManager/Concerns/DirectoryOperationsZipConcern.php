@@ -128,15 +128,14 @@ trait DirectoryOperationsZipConcern
         }
     }
 
-    private function extractSingleZipEntry(ZipArchive $zip, int $index): void
+    private function extractSingleZipEntry(ZipArchive $zip, int $index, string $entry): void
     {
-        $entry = $this->sanitizeZipEntryPath((string) $zip->getNameIndex($index));
         if ($entry === '') {
             return;
         }
 
-        if (str_ends_with((string) $entry, '/')) {
-            FlysystemHelper::createDirectory($this->buildPath($this->path, rtrim((string) $entry, '/')));
+        if (str_ends_with($entry, '/')) {
+            FlysystemHelper::createDirectory($this->buildPath($this->path, rtrim($entry, '/')));
 
             return;
         }
@@ -150,7 +149,10 @@ trait DirectoryOperationsZipConcern
         FlysystemHelper::write($this->buildPath($this->path, $entry), $contents);
     }
 
-    private function extractZipContents(string $localSource, string $source): void
+    /**
+     * @param array<int, string> $validatedEntries
+     */
+    private function extractZipContents(string $localSource, string $source, array $validatedEntries): void
     {
         $zip = new ZipArchive();
         if ($zip->open($localSource) !== true) {
@@ -159,7 +161,7 @@ trait DirectoryOperationsZipConcern
 
         try {
             for ($i = 0; $i < $zip->numFiles; $i++) {
-                $this->extractSingleZipEntry($zip, $i);
+                $this->extractSingleZipEntry($zip, $i, $validatedEntries[$i] ?? '');
             }
         } finally {
             $zip->close();
@@ -317,5 +319,35 @@ trait DirectoryOperationsZipConcern
         }
 
         return false;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function validateZipEntries(string $localSource, string $source): array
+    {
+        $zip = new ZipArchive();
+        if ($zip->open($localSource) !== true) {
+            throw new DirectoryOperationException("Unable to open ZIP source: {$source}");
+        }
+
+        $validatedEntries = [];
+
+        try {
+            for ($i = 0; $i < $zip->numFiles; $i++) {
+                $entryName = $zip->getNameIndex($i);
+                if (!is_string($entryName)) {
+                    $validatedEntries[$i] = '';
+
+                    continue;
+                }
+
+                $validatedEntries[$i] = $this->sanitizeZipEntryPath($entryName);
+            }
+        } finally {
+            $zip->close();
+        }
+
+        return $validatedEntries;
     }
 }

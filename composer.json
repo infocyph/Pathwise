@@ -12,7 +12,7 @@
     "require": {
         "php": ">=8.4",
         "ext-fileinfo": "*",
-        "league/flysystem": "^3.33"
+        "league/flysystem": "^3.34"
     },
     "require-dev": {
         "infocyph/phpforge": "dev-main"

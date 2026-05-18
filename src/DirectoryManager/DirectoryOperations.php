@@ -469,11 +469,13 @@ class DirectoryOperations
         [$localSource, $cleanupSource] = $this->prepareLocalZipSource($source);
 
         try {
+            $validatedEntries = $this->validateZipEntries($localSource, $source);
+
             if ($this->tryNativeUnzip($localSource, $source)) {
                 return true;
             }
 
-            $this->extractZipContents($localSource, $source);
+            $this->extractZipContents($localSource, $source, $validatedEntries);
 
             return true;
         } finally {
