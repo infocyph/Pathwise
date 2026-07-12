@@ -116,8 +116,6 @@ class FileCompression
      * @param string|null $zipPath The path in the ZIP archive where the file should be stored.
      *                             If not provided, the file will be stored in the root directory of the ZIP file,
      *                             with its original name.
-     *
-     * @return $this
      */
     public function addFile(string $filePath, ?string $zipPath = null): self
     {
@@ -146,7 +144,6 @@ class FileCompression
      *                                              desired paths inside the ZIP archive. If a value is not provided for
      *                                              a key, the basename of the file will be used as the path in the ZIP
      *                                              archive.
-     * @return $this
      */
     public function batchAddFiles(array $files): self
     {
@@ -238,7 +235,6 @@ class FileCompression
      * Compress a file or directory into the ZIP archive.
      *
      * @param string $source The path to the file or directory to compress.
-     * @return static
      */
     public function compress(string $source): self
     {
@@ -283,7 +279,6 @@ class FileCompression
      *
      * @param string $source The path to the file or directory to compress.
      * @param list<string> $extensions An array of file extensions to include.
-     * @return static
      */
     public function compressWithFilter(string $source, array $extensions = []): self
     {
@@ -309,7 +304,6 @@ class FileCompression
      * decrypted with this password.
      *
      * @param string|null $destination The path to decompress the ZIP archive to.
-     * @return static
      * @throws CompressionException
      */
     public function decompress(?string $destination = null): self
@@ -443,7 +437,6 @@ class FileCompression
      * `decompress()`.
      *
      * @param string $path The default path to use for decompression.
-     * @return static
      */
     public function setDefaultDecompressionPath(string $path): self
     {
