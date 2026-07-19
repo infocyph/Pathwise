@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use Infocyph\Pathwise\Queue\FileJobQueue;
 
 beforeEach(function () {
@@ -42,3 +44,26 @@ test('it tracks failed jobs', function () {
         ->and($stats['failed'])->toBe(1);
 });
 
+test('it limits processing attempts even when jobs fail', function () {
+    $queue = new FileJobQueue($this->queueFile);
+    $queue->enqueue('first');
+    $queue->enqueue('second');
+
+    $result = $queue->process(static function (): void {
+        throw new RuntimeException('boom');
+    }, 1);
+    $stats = $queue->stats();
+
+    expect($result)->toBe(['processed' => 0, 'failed' => 1])
+        ->and($stats)->toMatchArray(['pending' => 1, 'processing' => 0, 'failed' => 1]);
+});
+
+test('it creates opaque job identifiers and rejects corrupt queue data', function () {
+    $queue = new FileJobQueue($this->queueFile);
+    $jobId = $queue->enqueue('opaque');
+
+    expect($jobId)->toMatch('/^job_[a-f0-9]{32}$/');
+
+    file_put_contents($this->queueFile, '{invalid');
+    expect(fn() => $queue->stats())->toThrow(RuntimeException::class, 'invalid JSON');
+});

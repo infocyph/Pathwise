@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use Infocyph\Pathwise\PathwiseFacade;
 use Infocyph\Pathwise\Storage\StorageFactory;
 use Infocyph\Pathwise\Utils\FlysystemHelper;

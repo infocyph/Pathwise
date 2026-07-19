@@ -6,6 +6,8 @@ namespace Infocyph\Pathwise\Utils;
 
 class PathHelper
 {
+    private const int NORMALIZATION_CACHE_LIMIT = 1024;
+
     /** @var array<string, string> */
     private static array $cache = [];
 
@@ -70,9 +72,23 @@ class PathHelper
      */
     public static function createTempDirectory(string $prefix = 'temp_'): string|false
     {
-        $tempDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . $prefix . uniqid();
+        $safePrefix = preg_replace('/[^A-Za-z0-9_.-]/', '_', $prefix) ?? 'temp_';
+        $safePrefix = substr($safePrefix !== '' ? $safePrefix : 'temp_', 0, 32);
 
-        return mkdir($tempDir) ? $tempDir : false;
+        set_error_handler(static fn(): bool => true);
+
+        try {
+            for ($attempt = 0; $attempt < 10; $attempt++) {
+                $tempDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . $safePrefix . bin2hex(random_bytes(16));
+                if (mkdir($tempDir, 0700)) {
+                    return self::normalize($tempDir);
+                }
+            }
+        } finally {
+            restore_error_handler();
+        }
+
+        return false;
     }
 
     /**
@@ -83,7 +99,9 @@ class PathHelper
      */
     public static function createTempFile(string $prefix = 'temp_'): string|false
     {
-        return tempnam(sys_get_temp_dir(), $prefix);
+        $safePrefix = preg_replace('/[^A-Za-z0-9_.-]/', '_', $prefix) ?? 'temp_';
+
+        return tempnam(sys_get_temp_dir(), substr($safePrefix !== '' ? $safePrefix : 'temp_', 0, 32));
     }
 
     /**
@@ -256,9 +274,16 @@ class PathHelper
      */
     public static function normalize(string $path): string
     {
-        $originalPath = $path;
+        if (isset(self::$cache[$path])) {
+            return self::$cache[$path];
+        }
 
-        return self::$cache[$originalPath] ?? self::$cache[$originalPath] = self::normalizeUncached($path);
+        $normalized = self::normalizeUncached($path);
+        if (count(self::$cache) >= self::NORMALIZATION_CACHE_LIMIT) {
+            self::$cache = [];
+        }
+
+        return self::$cache[$path] = $normalized;
     }
 
     /**

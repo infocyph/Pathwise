@@ -6,6 +6,9 @@ namespace Infocyph\Pathwise\Queue;
 
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
+use InvalidArgumentException;
+use JsonException;
+use RuntimeException;
 
 /**
  * @phpstan-type QueueJob array{
@@ -31,8 +34,10 @@ final readonly class FileJobQueue
         if (!FlysystemHelper::directoryExists($directory)) {
             FlysystemHelper::createDirectory($directory);
         }
-        if (!FlysystemHelper::fileExists($this->queueFilePath)) {
-            FlysystemHelper::write($this->queueFilePath, (string) json_encode(['pending' => [], 'processing' => [], 'failed' => []], JSON_PRETTY_PRINT));
+        if ($this->isLocalQueuePath()) {
+            $this->initializeLocalQueue();
+        } elseif (!FlysystemHelper::fileExists($this->queueFilePath)) {
+            FlysystemHelper::write($this->queueFilePath, $this->encodeQueueData($this->emptyQueueData()));
         }
     }
 
@@ -46,20 +51,25 @@ final readonly class FileJobQueue
      */
     public function enqueue(string $type, array $payload = [], int $priority = 0): string
     {
-        $jobId = uniqid('job_', true);
-        $data = $this->readQueueData();
-        $data['pending'][] = [
-            'id' => $jobId,
-            'type' => $type,
-            'payload' => $payload,
-            'priority' => $priority,
-            'createdAt' => time(),
-        ];
+        if (trim($type) === '') {
+            throw new InvalidArgumentException('Queue job type must not be empty.');
+        }
 
-        usort($data['pending'], static fn(array $a, array $b): int => $b['priority'] <=> $a['priority']);
-        $this->writeQueueData($data);
+        $jobId = 'job_' . bin2hex(random_bytes(16));
 
-        return $jobId;
+        return $this->mutateQueueData(static function (array $data) use ($jobId, $type, $payload, $priority): array {
+            $data['pending'][] = [
+                'id' => $jobId,
+                'type' => $type,
+                'payload' => $payload,
+                'priority' => $priority,
+                'createdAt' => time(),
+            ];
+
+            usort($data['pending'], static fn(array $a, array $b): int => $b['priority'] <=> $a['priority']);
+
+            return [$data, $jobId];
+        });
     }
 
     /**
@@ -71,41 +81,31 @@ final readonly class FileJobQueue
      */
     public function process(callable $handler, int $maxJobs = 0): array
     {
+        if ($maxJobs < 0) {
+            throw new InvalidArgumentException('maxJobs must be greater than or equal to zero.');
+        }
+
         $processed = 0;
         $failed = 0;
+        $attempted = 0;
 
-        while (true) {
-            $data = $this->readQueueData();
-            if ($data['pending'] === []) {
+        while ($maxJobs === 0 || $attempted < $maxJobs) {
+            $job = $this->claimNextJob();
+            if ($job === null) {
                 break;
             }
-            if ($maxJobs > 0 && $processed >= $maxJobs) {
-                break;
-            }
-
-            $job = array_shift($data['pending']);
-            $data['processing'][] = $job;
-            $this->writeQueueData($data);
+            $attempted++;
 
             try {
                 $handler($job);
                 $processed++;
             } catch (\Throwable $e) {
-                $job['error'] = $e->getMessage();
+                $job['error'] = substr($e->getMessage(), 0, 4096);
                 $job['failedAt'] = time();
                 $failed++;
             }
 
-            $data = $this->readQueueData();
-            $data['processing'] = array_values(array_filter(
-                $data['processing'],
-                static fn(array $processingJob): bool => $processingJob['id'] !== $job['id'],
-            ));
-
-            if (isset($job['error'])) {
-                $data['failed'][] = $job;
-            }
-            $this->writeQueueData($data);
+            $this->completeJob($job);
         }
 
         return [
@@ -129,6 +129,165 @@ final readonly class FileJobQueue
             'failed' => count($data['failed']),
             'file' => PathHelper::normalize($this->queueFilePath),
         ];
+    }
+
+    /**
+     * @return QueueJob|null
+     */
+    private function claimNextJob(): ?array
+    {
+        return $this->mutateQueueData(static function (array $data): array {
+            if ($data['pending'] === []) {
+                return [$data, null];
+            }
+
+            $job = array_shift($data['pending']);
+            $data['processing'][] = $job;
+
+            return [$data, $job];
+        });
+    }
+
+    /**
+     * @param QueueJob $job
+     */
+    private function completeJob(array $job): void
+    {
+        $this->mutateQueueData(static function (array $data) use ($job): array {
+            foreach ($data['processing'] as $index => $processingJob) {
+                if ($processingJob['id'] !== $job['id']) {
+                    continue;
+                }
+
+                array_splice($data['processing'], $index, 1);
+
+                break;
+            }
+
+            if (isset($job['error'])) {
+                $data['failed'][] = $job;
+            }
+
+            return [$data, null];
+        });
+    }
+
+    /**
+     * @return QueueState
+     */
+    private function decodeQueueData(string $content): array
+    {
+        if ($content === '') {
+            return $this->emptyQueueData();
+        }
+
+        try {
+            $decoded = json_decode($content, true, 512, JSON_THROW_ON_ERROR);
+        } catch (JsonException $exception) {
+            throw new RuntimeException("Queue file contains invalid JSON: {$this->queueFilePath}", 0, $exception);
+        }
+
+        if (!is_array($decoded)) {
+            throw new RuntimeException("Queue file does not contain an object: {$this->queueFilePath}");
+        }
+
+        return [
+            'pending' => $this->normalizeJobList($decoded['pending'] ?? []),
+            'processing' => $this->normalizeJobList($decoded['processing'] ?? []),
+            'failed' => $this->normalizeJobList($decoded['failed'] ?? []),
+        ];
+    }
+
+    /**
+     * @return QueueState
+     */
+    private function emptyQueueData(): array
+    {
+        return ['pending' => [], 'processing' => [], 'failed' => []];
+    }
+
+    /**
+     * @param QueueState $data
+     */
+    private function encodeQueueData(array $data): string
+    {
+        return json_encode($data, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+    }
+
+    private function initializeLocalQueue(): void
+    {
+        $stream = fopen($this->queueFilePath, 'c+b');
+        if (!is_resource($stream)) {
+            throw new RuntimeException("Unable to initialize queue file: {$this->queueFilePath}");
+        }
+
+        try {
+            if (!flock($stream, LOCK_EX)) {
+                throw new RuntimeException("Unable to lock queue file: {$this->queueFilePath}");
+            }
+
+            $metadata = fstat($stream);
+            if (!is_array($metadata) || $metadata['size'] !== 0) {
+                return;
+            }
+
+            $this->writeFully($stream, $this->encodeQueueData($this->emptyQueueData()));
+            fflush($stream);
+        } finally {
+            flock($stream, LOCK_UN);
+            fclose($stream);
+        }
+    }
+
+    private function isLocalQueuePath(): bool
+    {
+        return !PathHelper::hasScheme($this->queueFilePath)
+            && (PathHelper::isAbsolute($this->queueFilePath) || !FlysystemHelper::hasDefaultFilesystem());
+    }
+
+    /**
+     * @template T
+     * @param callable(QueueState): array{0: QueueState, 1: T} $mutation
+     * @return T
+     */
+    private function mutateQueueData(callable $mutation): mixed
+    {
+        if (!$this->isLocalQueuePath()) {
+            [$data, $result] = $mutation($this->readQueueData());
+            $this->writeQueueData($data);
+
+            return $result;
+        }
+
+        $stream = fopen($this->queueFilePath, 'c+b');
+        if (!is_resource($stream)) {
+            throw new RuntimeException("Unable to open queue file: {$this->queueFilePath}");
+        }
+
+        try {
+            if (!flock($stream, LOCK_EX)) {
+                throw new RuntimeException("Unable to lock queue file: {$this->queueFilePath}");
+            }
+
+            rewind($stream);
+            $content = stream_get_contents($stream);
+            [$data, $result] = $mutation($this->decodeQueueData(is_string($content) ? $content : ''));
+            $encoded = $this->encodeQueueData($data);
+
+            rewind($stream);
+            if (!ftruncate($stream, 0)) {
+                throw new RuntimeException("Unable to truncate queue file: {$this->queueFilePath}");
+            }
+            $this->writeFully($stream, $encoded);
+            if (!fflush($stream)) {
+                throw new RuntimeException("Unable to flush queue file: {$this->queueFilePath}");
+            }
+
+            return $result;
+        } finally {
+            flock($stream, LOCK_UN);
+            fclose($stream);
+        }
     }
 
     /**
@@ -223,24 +382,47 @@ final readonly class FileJobQueue
     private function readQueueData(): array
     {
         if (!FlysystemHelper::fileExists($this->queueFilePath)) {
-            return ['pending' => [], 'processing' => [], 'failed' => []];
+            return $this->emptyQueueData();
         }
 
-        $content = FlysystemHelper::read($this->queueFilePath);
-        if ($content === '') {
-            return ['pending' => [], 'processing' => [], 'failed' => []];
+        if (!$this->isLocalQueuePath()) {
+            return $this->decodeQueueData(FlysystemHelper::read($this->queueFilePath));
         }
 
-        $decoded = json_decode($content, true);
-        if (!is_array($decoded)) {
-            return ['pending' => [], 'processing' => [], 'failed' => []];
+        $stream = fopen($this->queueFilePath, 'rb');
+        if (!is_resource($stream)) {
+            throw new RuntimeException("Unable to open queue file: {$this->queueFilePath}");
         }
 
-        return [
-            'pending' => $this->normalizeJobList($decoded['pending'] ?? []),
-            'processing' => $this->normalizeJobList($decoded['processing'] ?? []),
-            'failed' => $this->normalizeJobList($decoded['failed'] ?? []),
-        ];
+        try {
+            if (!flock($stream, LOCK_SH)) {
+                throw new RuntimeException("Unable to lock queue file: {$this->queueFilePath}");
+            }
+
+            $content = stream_get_contents($stream);
+
+            return $this->decodeQueueData(is_string($content) ? $content : '');
+        } finally {
+            flock($stream, LOCK_UN);
+            fclose($stream);
+        }
+    }
+
+    private function writeFully(mixed $stream, string $contents): void
+    {
+        if (!is_resource($stream)) {
+            throw new RuntimeException('Invalid queue stream.');
+        }
+
+        $offset = 0;
+        $length = strlen($contents);
+        while ($offset < $length) {
+            $written = fwrite($stream, substr($contents, $offset));
+            if (!is_int($written) || $written < 1) {
+                throw new RuntimeException("Unable to write queue file: {$this->queueFilePath}");
+            }
+            $offset += $written;
+        }
     }
 
     /**
@@ -248,6 +430,6 @@ final readonly class FileJobQueue
      */
     private function writeQueueData(array $data): void
     {
-        FlysystemHelper::write($this->queueFilePath, (string) json_encode($data, JSON_PRETTY_PRINT));
+        FlysystemHelper::write($this->queueFilePath, $this->encodeQueueData($data));
     }
 }

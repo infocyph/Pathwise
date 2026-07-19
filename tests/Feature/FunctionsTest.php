@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 beforeEach(function () {
     $this->tempDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('func_dir_', true);
     mkdir($this->tempDir);
@@ -17,7 +19,8 @@ afterEach(function () {
 });
 
 test('it formats file size to human readable text', function () {
-    expect(getHumanReadableFileSize(1024))->toBe('1.00 KB');
+    expect(getHumanReadableFileSize(1024))->toBe('1.00 KB')
+        ->and(getHumanReadableFileSize(1024 ** 5))->toBe('1,024.00 TB');
 });
 
 test('it reports directory empty state correctly', function () {

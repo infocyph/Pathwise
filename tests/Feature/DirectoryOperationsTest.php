@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use Infocyph\Pathwise\DirectoryManager\DirectoryOperations;
 use Infocyph\Pathwise\Exceptions\DirectoryOperationException;
 

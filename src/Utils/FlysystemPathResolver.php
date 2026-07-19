@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\Utils;
 
+use League\Flysystem\StorageAttributes;
+
 final class FlysystemPathResolver
 {
     public static function intFromMixed(mixed $value, int $default = 0): int
@@ -17,6 +19,14 @@ final class FlysystemPathResolver
 
     public static function relativePathFromItem(mixed $item, string $base, ?string $requiredType = null): ?string
     {
+        if ($item instanceof StorageAttributes) {
+            if ($requiredType !== null && $item->type() !== $requiredType) {
+                return null;
+            }
+
+            return self::relativePathFromRawPath($item->path(), $base);
+        }
+
         if (!is_array($item)) {
             return null;
         }

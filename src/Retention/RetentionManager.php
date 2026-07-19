@@ -8,6 +8,7 @@ use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\FlysystemPathResolver;
 use Infocyph\Pathwise\Utils\LocalFileIterator;
 use Infocyph\Pathwise\Utils\PathHelper;
+use InvalidArgumentException;
 
 final class RetentionManager
 {
@@ -26,13 +27,15 @@ final class RetentionManager
         ?int $maxAgeDays = null,
         string $sortBy = 'mtime',
     ): array {
+        self::validateOptions($keepLast, $maxAgeDays, $sortBy);
+
         $directory = PathHelper::normalize($directory);
         if (!FlysystemHelper::directoryExists($directory)) {
             return ['deleted' => [], 'kept' => []];
         }
 
         $files = self::collectFiles($directory);
-        usort($files, fn(array $a, array $b): int => ($b[$sortBy] ?? 0) <=> ($a[$sortBy] ?? 0));
+        usort($files, static fn(array $a, array $b): int => $b[$sortBy] <=> $a[$sortBy]);
 
         $kept = [];
         $deleted = [];
@@ -94,7 +97,7 @@ final class RetentionManager
         $files = [];
         $base = FlysystemPathResolver::resolveDirectoryBase($directory);
 
-        foreach (FlysystemHelper::listContents($directory, true) as $item) {
+        foreach (FlysystemHelper::listContentsListing($directory, true) as $item) {
             $entry = self::normalizeFlysystemEntry($directory, $base, $item);
             if ($entry === null) {
                 continue;
@@ -107,22 +110,34 @@ final class RetentionManager
     }
 
     /**
-     * @param array<string, mixed> $item
      * @return array{path: string, mtime: int, ctime: int}|null
      */
-    private static function normalizeFlysystemEntry(string $directory, string $base, array $item): ?array
+    private static function normalizeFlysystemEntry(string $directory, string $base, \League\Flysystem\StorageAttributes $item): ?array
     {
         $relative = FlysystemPathResolver::relativePathFromItem($item, $base, 'file');
         if ($relative === null) {
             return null;
         }
 
-        $mtime = FlysystemPathResolver::intFromMixed($item['last_modified'] ?? 0);
+        $mtime = $item->lastModified() ?? 0;
 
         return [
             'path' => PathHelper::join($directory, $relative),
             'mtime' => $mtime,
             'ctime' => $mtime,
         ];
+    }
+
+    private static function validateOptions(?int $keepLast, ?int $maxAgeDays, string $sortBy): void
+    {
+        if ($keepLast !== null && $keepLast < 0) {
+            throw new InvalidArgumentException('keepLast must be null or greater than or equal to zero.');
+        }
+        if ($maxAgeDays !== null && $maxAgeDays < 0) {
+            throw new InvalidArgumentException('maxAgeDays must be null or greater than or equal to zero.');
+        }
+        if ($sortBy !== 'mtime' && $sortBy !== 'ctime') {
+            throw new InvalidArgumentException("Unsupported retention sort field: {$sortBy}.");
+        }
     }
 }

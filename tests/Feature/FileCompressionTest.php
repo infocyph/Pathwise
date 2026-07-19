@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use Infocyph\Pathwise\Exceptions\CompressionException;
 use Infocyph\Pathwise\FileManager\FileCompression;
 use Infocyph\Pathwise\Utils\FlysystemHelper;

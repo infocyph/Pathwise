@@ -55,21 +55,32 @@ final class ChecksumIndexer
 
         foreach ($duplicates as $paths) {
             $canonical = array_shift($paths);
+            if (!is_string($canonical) || !self::isLocalFile($canonical)) {
+                array_push($skipped, ...$paths);
+
+                continue;
+            }
+
             foreach ($paths as $path) {
-                if (!is_string($canonical) || !self::isLocalFile($canonical) || !self::isLocalFile($path)) {
+                if (!self::isLocalFile($path)) {
                     $skipped[] = $path;
 
                     continue;
                 }
 
-                $tmp = $path . '.tmp_delete';
+                $tmp = self::temporarySiblingPath($path);
+                if ($tmp === null) {
+                    $skipped[] = $path;
+
+                    continue;
+                }
                 if (!self::runSilently(static fn(): bool => rename($path, $tmp))) {
                     $skipped[] = $path;
 
                     continue;
                 }
 
-                if (self::runSilently(static fn(): bool => link($canonical, $path))) {
+                if (self::filesAreIdentical($canonical, $tmp) && self::runSilently(static fn(): bool => link($canonical, $path))) {
                     self::unlinkSilently($tmp);
                     $linked[] = $path;
                 } else {
@@ -97,6 +108,43 @@ final class ChecksumIndexer
         $index = self::buildIndex($directory, $algorithm);
 
         return array_filter($index, static fn(array $paths): bool => count($paths) > 1);
+    }
+
+    private static function filesAreIdentical(string $firstPath, string $secondPath): bool
+    {
+        $firstSize = filesize($firstPath);
+        $secondSize = filesize($secondPath);
+        if (!is_int($firstSize) || !is_int($secondSize) || $firstSize !== $secondSize) {
+            return false;
+        }
+
+        $first = fopen($firstPath, 'rb');
+        $second = fopen($secondPath, 'rb');
+        if (!is_resource($first) || !is_resource($second)) {
+            if (is_resource($first)) {
+                fclose($first);
+            }
+            if (is_resource($second)) {
+                fclose($second);
+            }
+
+            return false;
+        }
+
+        try {
+            while (!feof($first) && !feof($second)) {
+                $firstChunk = fread($first, 65536);
+                $secondChunk = fread($second, 65536);
+                if (!is_string($firstChunk) || !is_string($secondChunk) || $firstChunk !== $secondChunk) {
+                    return false;
+                }
+            }
+
+            return feof($first) && feof($second);
+        } finally {
+            fclose($first);
+            fclose($second);
+        }
     }
 
     private static function hashPath(string $path, string $algorithm): ?string
@@ -127,49 +175,39 @@ final class ChecksumIndexer
         return !PathHelper::hasScheme($path) && is_file($path);
     }
 
-    /**
-     * @return list<string>
-     */
-    private static function iterFiles(string $directory): array
+    /** @return \Generator<int, string> */
+    private static function iterFiles(string $directory): \Generator
     {
         if (PathHelper::hasScheme($directory) || (FlysystemHelper::hasDefaultFilesystem() && !PathHelper::isAbsolute($directory))) {
-            return self::iterFilesViaFlysystem($directory);
+            yield from self::iterFilesViaFlysystem($directory);
+
+            return;
         }
 
-        return self::iterFilesLocal($directory);
+        yield from self::iterFilesLocal($directory);
     }
 
-    /**
-     * @return list<string>
-     */
-    private static function iterFilesLocal(string $directory): array
+    /** @return \Generator<int, string> */
+    private static function iterFilesLocal(string $directory): \Generator
     {
-        $paths = [];
         foreach (LocalFileIterator::files($directory) as $item) {
-            $paths[] = $item->getPathname();
+            yield $item->getPathname();
         }
-
-        return $paths;
     }
 
-    /**
-     * @return list<string>
-     */
-    private static function iterFilesViaFlysystem(string $directory): array
+    /** @return \Generator<int, string> */
+    private static function iterFilesViaFlysystem(string $directory): \Generator
     {
-        $paths = [];
         $base = FlysystemPathResolver::resolveDirectoryBase($directory);
 
-        foreach (FlysystemHelper::listContents($directory, true) as $item) {
+        foreach (FlysystemHelper::listContentsListing($directory, true) as $item) {
             $relative = FlysystemPathResolver::relativePathFromItem($item, $base, 'file');
             if ($relative === null) {
                 continue;
             }
 
-            $paths[] = PathHelper::join($directory, $relative);
+            yield PathHelper::join($directory, $relative);
         }
-
-        return $paths;
     }
 
     private static function runSilently(callable $operation): mixed
@@ -181,6 +219,18 @@ final class ChecksumIndexer
         } finally {
             restore_error_handler();
         }
+    }
+
+    private static function temporarySiblingPath(string $path): ?string
+    {
+        for ($attempt = 0; $attempt < 10; $attempt++) {
+            $temporaryPath = $path . '.pathwise_' . bin2hex(random_bytes(16));
+            if (!file_exists($temporaryPath)) {
+                return $temporaryPath;
+            }
+        }
+
+        return null;
     }
 
     private static function unlinkSilently(string $path): void

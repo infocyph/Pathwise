@@ -298,12 +298,12 @@ trait FileCompressionArchiveConcern
 
     private function createExtractionTempDirectory(): string
     {
-        $extractTempDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('pathwise_extract_', true);
-        if (!$this->runSilently(static fn(): bool => mkdir($extractTempDir, 0755, true)) && !is_dir($extractTempDir)) {
-            throw new CompressionException("Unable to create extraction directory: {$extractTempDir}");
+        $extractTempDir = PathHelper::createTempDirectory('pathwise_extract_');
+        if (!is_string($extractTempDir)) {
+            throw new CompressionException('Unable to create extraction directory.');
         }
 
-        return PathHelper::normalize($extractTempDir);
+        return $extractTempDir;
     }
 
     private function emitDecompressionProgress(): void

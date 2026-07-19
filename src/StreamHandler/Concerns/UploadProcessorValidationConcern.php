@@ -280,12 +280,10 @@ trait UploadProcessorValidationConcern
     }
 
     /**
-     * Validate the uploaded file.
-     */
-    /**
      * @param array<string, mixed> $file
+     * @return array{error: int, size: int, tmp_name: string, name: string}
      */
-    private function validateFile(array $file): void
+    private function validateFile(array $file): array
     {
         $error = $file['error'] ?? null;
         if (!is_int($error)) {
@@ -311,7 +309,15 @@ trait UploadProcessorValidationConcern
             throw new UploadException('Invalid file upload parameters.');
         }
 
-        $this->validateFileSize($this->normalizeUploadSize($size));
+        $normalizedSize = $this->normalizeUploadSize($size);
+        $this->validateFileSize($normalizedSize);
+
+        return [
+            'error' => $error,
+            'size' => $normalizedSize,
+            'tmp_name' => $tmpName,
+            'name' => $name,
+        ];
     }
 
     private function validateFileExtension(string $extension): void

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use Infocyph\Pathwise\Exceptions\PolicyViolationException;
 use Infocyph\Pathwise\Security\PolicyEngine;
 

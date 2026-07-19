@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use Infocyph\Pathwise\Indexing\ChecksumIndexer;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use League\Flysystem\Filesystem;
@@ -74,6 +76,19 @@ test('it attempts hard-link deduplication and keeps files accessible', function 
     expect($report)->toHaveKeys(['linked', 'skipped'])
         ->and(is_file($a))->toBeTrue()
         ->and(is_file($b))->toBeTrue();
+});
+
+test('it preserves unrelated files beside a deduplication target', function () {
+    $a = $this->checksumDir . DIRECTORY_SEPARATOR . 'a.txt';
+    $b = $this->checksumDir . DIRECTORY_SEPARATOR . 'b.txt';
+    $sentinel = $b . '.tmp_delete';
+    file_put_contents($a, 'same-content');
+    file_put_contents($b, 'same-content');
+    file_put_contents($sentinel, 'must-survive');
+
+    ChecksumIndexer::deduplicateWithHardLinks($this->checksumDir);
+
+    expect(file_get_contents($sentinel))->toBe('must-survive');
 });
 
 test('it builds duplicate index for mounted paths and skips hard links there', function () {

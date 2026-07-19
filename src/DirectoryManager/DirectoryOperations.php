@@ -124,8 +124,10 @@ class DirectoryOperations
      */
     public function createTempDir(): string
     {
-        $tempDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('temp_', true);
-        FlysystemHelper::createDirectory($tempDir);
+        $tempDir = PathHelper::createTempDirectory('pathwise_');
+        if (!is_string($tempDir)) {
+            throw new DirectoryOperationException('Unable to create temporary directory.');
+        }
 
         return $tempDir;
     }
@@ -148,7 +150,7 @@ class DirectoryOperations
             return true;
         }
 
-        if (FlysystemHelper::listContents($this->path, false) !== []) {
+        foreach (FlysystemHelper::listContentsListing($this->path, false) as $_item) {
             return false;
         }
 

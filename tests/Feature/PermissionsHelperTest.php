@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use Infocyph\Pathwise\Utils\PermissionsHelper;
 
 beforeEach(function () {
@@ -68,4 +70,18 @@ test('it retrieves human-readable file permissions', function () {
 test('it formats permissions as human-readable string', function () {
     $permissions = PermissionsHelper::formatPermissions(0755);
     expect($permissions)->toBe('rwxr-xr-x');
+})->skip(PHP_OS_FAMILY === 'Windows');
+
+test('it formats special permission bits without inventing execute access', function () {
+    expect(PermissionsHelper::formatPermissions(0644 | 04000))->toBe('rwSr--r--')
+        ->and(PermissionsHelper::formatPermissions(0644 | 02000))->toBe('rw-r-Sr--')
+        ->and(PermissionsHelper::formatPermissions(0644 | 01000))->toBe('rw-r--r-T');
+})->skip(PHP_OS_FAMILY === 'Windows');
+
+test('it observes permission changes made outside the helper', function () {
+    chmod($this->tempFilePath, 0644);
+    expect(PermissionsHelper::getPermissions($this->tempFilePath))->toBe('0644');
+
+    chmod($this->tempFilePath, 0600);
+    expect(PermissionsHelper::getPermissions($this->tempFilePath))->toBe('0600');
 })->skip(PHP_OS_FAMILY === 'Windows');
