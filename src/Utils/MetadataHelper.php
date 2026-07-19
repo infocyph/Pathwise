@@ -63,7 +63,7 @@ class MetadataHelper
      * @return string|null The checksum of the file, or null if the path is not
      *                     a file or if the algorithm is not supported.
      */
-    public static function getChecksum(string $path, string $algorithm = 'md5'): ?string
+    public static function getChecksum(string $path, string $algorithm = 'sha256'): ?string
     {
         if (!FlysystemHelper::fileExists($path) || !in_array($algorithm, hash_algos(), true)) {
             return null;
@@ -88,12 +88,13 @@ class MetadataHelper
         }
 
         $size = 0;
-        foreach (FlysystemHelper::listContents($directory, true) as $item) {
-            if (($item['type'] ?? null) !== 'file') {
+        foreach (FlysystemHelper::listContentsListing($directory, true) as $item) {
+            if (!$item->isFile()) {
                 continue;
             }
 
-            $size += self::intFromMixed($item['file_size'] ?? 0);
+            $fileSize = $item instanceof \League\Flysystem\FileAttributes ? $item->fileSize() : null;
+            $size += $fileSize ?? 0;
         }
 
         return $size;
@@ -122,8 +123,8 @@ class MetadataHelper
         }
 
         $count = 0;
-        foreach (FlysystemHelper::listContents($directory, $recursive) as $item) {
-            if (($item['type'] ?? null) === 'file') {
+        foreach (FlysystemHelper::listContentsListing($directory, $recursive) as $item) {
+            if ($item->isFile()) {
                 $count++;
             }
         }
@@ -179,7 +180,7 @@ class MetadataHelper
     public static function getHumanReadableTimestamps(string $path): ?array
     {
         $timestamps = self::getTimestamps($path);
-        if (!$timestamps) {
+        if ($timestamps === null) {
             return null;
         }
 
@@ -377,7 +378,9 @@ class MetadataHelper
      */
     public static function isHidden(string $path): bool
     {
-        return basename($path)[0] === '.';
+        $basename = basename($path);
+
+        return $basename !== '' && str_starts_with($basename, '.');
     }
 
     /**
@@ -403,14 +406,5 @@ class MetadataHelper
     private static function getOwnershipResolver(): OwnershipResolverInterface
     {
         return self::$ownershipResolver ??= OwnershipResolverFactory::create();
-    }
-
-    private static function intFromMixed(mixed $value): int
-    {
-        if (is_int($value)) {
-            return $value;
-        }
-
-        return is_numeric($value) ? (int) $value : 0;
     }
 }

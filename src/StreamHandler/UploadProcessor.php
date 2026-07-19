@@ -120,7 +120,7 @@ class UploadProcessor
      */
     public function finalizeChunkUpload(string $uploadId): string
     {
-        if (empty($this->uploadDir)) {
+        if (!isset($this->uploadDir) || $this->uploadDir === '') {
             throw new UploadException('Upload directory is not set.');
         }
 
@@ -178,7 +178,7 @@ class UploadProcessor
     /**
      * Process an upload chunk and persist resumable state.
      *
-     * @param UploadInput $chunkFile The chunk file data from $_FILES.
+     * @param array<string, mixed> $chunkFile The chunk file data from $_FILES.
      * @param string $uploadId The unique upload identifier.
      * @param int $chunkIndex The index of this chunk (0-based).
      * @param int $totalChunks Total number of chunks expected.
@@ -188,11 +188,11 @@ class UploadProcessor
      */
     public function processChunkUpload(array $chunkFile, string $uploadId, int $chunkIndex, int $totalChunks, string $originalFilename): array
     {
-        if (empty($this->uploadDir)) {
+        if (!isset($this->uploadDir) || $this->uploadDir === '') {
             throw new UploadException('Upload directory is not set.');
         }
+        $chunkFile = $this->validateFile($chunkFile);
         $this->validateChunkUploadRequest($chunkFile, $uploadId, $chunkIndex, $totalChunks, $originalFilename);
-        $this->validateFile($chunkFile);
 
         $chunkDirectory = $this->getChunkDirectory($uploadId);
         if (!FlysystemHelper::directoryExists($chunkDirectory)) {
@@ -228,18 +228,20 @@ class UploadProcessor
     /**
      * Process the upload and save the file.
      *
-     * @param UploadInput $file The file data from $_FILES.
+     * @param array<string, mixed> $file The file data from $_FILES.
      * @return string The path to the saved file.
      * @throws UploadException If validation fails or upload directory is not set.
      */
     public function processUpload(array $file): string
     {
+        $logFileName = is_string($file['name'] ?? null) ? $file['name'] : null;
+
         try {
-            if (empty($this->uploadDir)) {
+            if (!isset($this->uploadDir) || $this->uploadDir === '') {
                 throw new UploadException('Upload directory is not set.');
             }
 
-            $this->validateFile($file);
+            $file = $this->validateFile($file);
             $tmpName = $file['tmp_name'];
             $extension = pathinfo($file['name'], PATHINFO_EXTENSION);
             $fileType = $this->validateUploadedPayload($tmpName, $extension, false);
@@ -284,7 +286,7 @@ class UploadProcessor
             if (isset($this->logger)) {
                 $this->logger->error('File upload failed.', [
                     'error' => $e->getMessage(),
-                    'file' => $file['name'],
+                    'file' => $logFileName,
                 ]);
             }
 
@@ -443,28 +445,18 @@ class UploadProcessor
      */
     private function generateFileName(?string $dataSource, string $extension): string
     {
-        $backtrace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2);
-        $callingClass = $backtrace[1]['class'] ?? null;
-        $callingMethod = $backtrace[1]['function'] ?? null;
-
-        $shortClass = is_string($callingClass)
-            ? (strrchr($callingClass, '\\') !== false ? substr(strrchr($callingClass, '\\'), 1) : $callingClass)
-            : 'Upload';
-        $classPrefix = strtolower(preg_replace('/[^A-Za-z0-9]/', '', $shortClass) ?: 'upload');
-
-        $methodName = is_string($callingMethod) ? $callingMethod : 'process';
-        $methodPrefix = strtolower(preg_replace('/[^A-Za-z0-9]/', '', $methodName) ?: 'process');
-
-        $prefix = "{$classPrefix}_$methodPrefix";
-
-        $hash = match ($this->namingStrategy) {
-            'timestamp' => time(),
-            default => $dataSource ? sha1_file($dataSource) : sha1(uniqid('', true)),
+        $identifier = match ($this->namingStrategy) {
+            'timestamp' => sprintf('%d_%s', time(), bin2hex(random_bytes(8))),
+            default => $dataSource !== null ? hash_file('sha256', $dataSource) : bin2hex(random_bytes(32)),
         };
+        if (!is_string($identifier)) {
+            throw new UploadException('Unable to generate upload file name.');
+        }
+
         $extension = ltrim($extension, '.');
 
         return $extension !== ''
-            ? sprintf('%s_%s.%s', $prefix, $hash, $extension)
-            : sprintf('%s_%s', $prefix, $hash);
+            ? sprintf('upload_%s.%s', $identifier, $extension)
+            : sprintf('upload_%s', $identifier);
     }
 }

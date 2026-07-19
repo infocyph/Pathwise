@@ -11,6 +11,13 @@ Brief capabilities:
 * Process jobs with a handler callback.
 * Track ``pending``, ``processing``, and ``failed`` buckets.
 * Return queue statistics via ``stats()``.
+* Coordinate concurrent local readers and writers with file locks.
+
+Queue job IDs use cryptographically secure random values. Invalid queue JSON is
+reported as an error instead of being silently replaced, and ``maxJobs`` limits
+all attempted jobs, including failures. Flysystem-backed queues retain portable
+read/write behavior, but their storage adapter must provide any cross-process
+coordination required by the application.
 
 Good fit:
 

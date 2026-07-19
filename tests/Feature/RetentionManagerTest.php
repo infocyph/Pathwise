@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use Infocyph\Pathwise\Retention\RetentionManager;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use League\Flysystem\Filesystem;
@@ -89,4 +91,13 @@ test('it applies retention rules on mounted paths', function () {
 
     expect($report['kept'])->toHaveCount(2)
         ->and($report['deleted'])->toHaveCount(1);
+});
+
+test('it rejects invalid retention options', function () {
+    expect(fn() => RetentionManager::apply($this->retentionDir, keepLast: -1))
+        ->toThrow(InvalidArgumentException::class)
+        ->and(fn() => RetentionManager::apply($this->retentionDir, maxAgeDays: -1))
+        ->toThrow(InvalidArgumentException::class)
+        ->and(fn() => RetentionManager::apply($this->retentionDir, sortBy: 'size'))
+        ->toThrow(InvalidArgumentException::class);
 });

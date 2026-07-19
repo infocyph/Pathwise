@@ -8,8 +8,7 @@ use RuntimeException;
 
 class PermissionsHelper
 {
-    /** @var array<string, string> */
-    private static array $permissionCache = [];
+    private const array PERMISSION_TRIPLETS = ['---', '--x', '-w-', '-wx', 'r--', 'r-x', 'rw-', 'rwx'];
 
     /**
      * Checks if the specified path is executable.
@@ -69,22 +68,21 @@ class PermissionsHelper
      */
     public static function formatPermissions(int $permissions): string
     {
-        $flags = [
-            // Owner permissions
-            0x0100 => 'r',
-            0x0080 => 'w',
-            0x0040 => ($permissions & 0x0800) ? 's' : 'x',
-            // Group permissions
-            0x0020 => 'r',
-            0x0010 => 'w',
-            0x0008 => ($permissions & 0x0400) ? 's' : 'x',
-            // Others permissions
-            0x0004 => 'r',
-            0x0002 => 'w',
-            0x0001 => ($permissions & 0x0200) ? 't' : 'x',
-        ];
+        $owner = self::PERMISSION_TRIPLETS[($permissions >> 6) & 7];
+        $group = self::PERMISSION_TRIPLETS[($permissions >> 3) & 7];
+        $other = self::PERMISSION_TRIPLETS[$permissions & 7];
 
-        return array_reduce(array_keys($flags), fn($info, $flag) => $info . (($permissions & $flag) ? $flags[$flag] : '-'), '');
+        if (($permissions & 0x0800) !== 0) {
+            $owner[2] = $owner[2] === 'x' ? 's' : 'S';
+        }
+        if (($permissions & 0x0400) !== 0) {
+            $group[2] = $group[2] === 'x' ? 's' : 'S';
+        }
+        if (($permissions & 0x0200) !== 0) {
+            $other[2] = $other[2] === 'x' ? 't' : 'T';
+        }
+
+        return $owner . $group . $other;
     }
 
     /**
@@ -178,16 +176,12 @@ class PermissionsHelper
             return null;
         }
 
-        if (!isset(self::$permissionCache[$path])) {
-            $permissions = fileperms($path);
-            if (!is_int($permissions)) {
-                return null;
-            }
-
-            self::$permissionCache[$path] = substr(sprintf('%04o', $permissions), -4);
+        $permissions = fileperms($path);
+        if (!is_int($permissions)) {
+            return null;
         }
 
-        return self::$permissionCache[$path];
+        return substr(sprintf('%04o', $permissions), -4);
     }
 
     /**
@@ -216,7 +210,7 @@ class PermissionsHelper
         }
 
         $result = chown($path, $owner);
-        if ($group) {
+        if ($group !== null && $group !== '') {
             $result = $result && chgrp($path, $group);
         }
 

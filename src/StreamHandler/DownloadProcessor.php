@@ -290,7 +290,7 @@ class DownloadProcessor
 
     private function buildEtag(string $path, int $size, int $lastModified): string
     {
-        $fingerprint = substr(hash('sha1', $path), 0, 8);
+        $fingerprint = hash('sha256', $path);
 
         return sprintf('W/"%x-%x-%s"', $size, $lastModified, $fingerprint);
     }

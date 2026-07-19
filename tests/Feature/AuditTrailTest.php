@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use Infocyph\Pathwise\Observability\AuditTrail;
 
 test('it writes JSON lines audit records', function () {
@@ -23,3 +25,21 @@ test('it writes JSON lines audit records', function () {
     }
 });
 
+test('it fails without corrupting the log when context cannot be encoded', function () {
+    $logFile = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('audit_', true) . '.jsonl';
+    $audit = new AuditTrail($logFile);
+    $audit->log('valid');
+    $stream = fopen('php://temp', 'rb');
+
+    try {
+        expect(fn() => $audit->log('invalid', ['stream' => $stream]))->toThrow(JsonException::class)
+            ->and(file($logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES))->toHaveCount(1);
+    } finally {
+        if (is_resource($stream)) {
+            fclose($stream);
+        }
+        if (is_file($logFile)) {
+            unlink($logFile);
+        }
+    }
+});

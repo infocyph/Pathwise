@@ -162,15 +162,15 @@ final class FileWatcher
         $entries = [];
         $base = FlysystemPathResolver::resolveDirectoryBase($path);
 
-        foreach (FlysystemHelper::listContents($path, $recursive) as $item) {
+        foreach (FlysystemHelper::listContentsListing($path, $recursive) as $item) {
             $relative = FlysystemPathResolver::relativePathFromItem($item, $base, 'file');
             if ($relative === null) {
                 continue;
             }
 
             $resolved = PathHelper::join($path, $relative);
-            $lastModified = FlysystemPathResolver::intFromMixed($item['last_modified'] ?? 0);
-            $fileSize = FlysystemPathResolver::intFromMixed($item['file_size'] ?? 0);
+            $lastModified = $item->lastModified() ?? 0;
+            $fileSize = $item instanceof \League\Flysystem\FileAttributes ? ($item->fileSize() ?? 0) : 0;
 
             $entries[$resolved] = [
                 'mtime' => $lastModified,

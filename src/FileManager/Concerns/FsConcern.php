@@ -83,8 +83,8 @@ trait FsConcern
 
     private function doLocalizeRemoteDirectorySource(string $normalizedSource, string $originalSource): string
     {
-        $tempDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('pathwise_src_dir_', true);
-        if (!$this->doRunSilently(static fn(): bool => mkdir($tempDir, 0755, true)) && !is_dir($tempDir)) {
+        $tempDir = PathHelper::createTempDirectory('pathwise_src_dir_');
+        if (!is_string($tempDir)) {
             throw new CompressionException("Unable to localize source path: {$originalSource}");
         }
 
@@ -112,18 +112,24 @@ trait FsConcern
         return PathHelper::normalize($tempFile);
     }
 
+    /** @param list<string> $patterns */
+    private function doMatchesAnyPattern(array $patterns, string $relativePath): bool
+    {
+        return array_any($patterns, fn($pattern) => fnmatch($pattern, $relativePath));
+    }
+
     private function doMaterializeDirectoryToLocal(string $sourcePath, string $localDirectory): void
     {
         $base = $this->doResolveMaterializationBase($sourcePath);
 
-        foreach (FlysystemHelper::listContents($sourcePath, true) as $item) {
+        foreach (FlysystemHelper::listContentsListing($sourcePath, true) as $item) {
             $relative = $this->doResolveMaterializedRelativePath($item, $base);
             if ($relative === null) {
                 continue;
             }
 
             $localTarget = PathHelper::join($localDirectory, $relative);
-            if (($item['type'] ?? null) === 'dir') {
+            if ($item->isDir()) {
                 $this->doEnsureLocalDirectoryExists($localTarget);
 
                 continue;
@@ -208,10 +214,8 @@ trait FsConcern
             }
         }
 
-        return array_all(
-            array_merge($this->excludePatterns, $this->ignorePatterns),
-            fn($pattern) => !fnmatch($pattern, $relativePath),
-        );
+        return !$this->doMatchesAnyPattern($this->excludePatterns, $relativePath)
+            && !$this->doMatchesAnyPattern($this->ignorePatterns, $relativePath);
     }
 
     private function doShouldTraverseDirectory(string $relativePath): bool
@@ -221,13 +225,15 @@ trait FsConcern
             return true;
         }
 
-        foreach (array_merge($this->excludePatterns, $this->ignorePatterns) as $pattern) {
-            $pattern = trim((string) $pattern);
-            if ($pattern === '') {
-                continue;
-            }
-            if (fnmatch(rtrim($pattern, '/'), $normalized) || fnmatch(rtrim($pattern, '/') . '/*', $normalized . '/x')) {
-                return false;
+        foreach ([$this->excludePatterns, $this->ignorePatterns] as $patterns) {
+            foreach ($patterns as $pattern) {
+                $pattern = trim((string) $pattern);
+                if ($pattern === '') {
+                    continue;
+                }
+                if (fnmatch(rtrim($pattern, '/'), $normalized) || fnmatch(rtrim($pattern, '/') . '/*', $normalized . '/x')) {
+                    return false;
+                }
             }
         }
 

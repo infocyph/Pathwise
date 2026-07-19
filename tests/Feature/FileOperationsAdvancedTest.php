@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use Infocyph\Pathwise\Exceptions\PolicyViolationException;
 use Infocyph\Pathwise\FileManager\FileOperations;
 use Infocyph\Pathwise\Observability\AuditTrail;
@@ -51,4 +53,3 @@ test('it rolls back file changes when transaction fails', function () {
 
     expect(file_get_contents($this->filePath))->toBe('original');
 });
-

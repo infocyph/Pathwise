@@ -24,6 +24,7 @@ if (!function_exists('getHumanReadableFileSize')) {
     {
         $units = ['B', 'KB', 'MB', 'GB', 'TB'];
         $power = $sizeInBytes > 0 ? (int) floor(log($sizeInBytes, 1024)) : 0;
+        $power = min($power, count($units) - 1);
 
         return number_format($sizeInBytes / (1024 ** $power), 2) . ' ' . $units[$power];
     }
@@ -42,9 +43,11 @@ if (!function_exists('isDirectoryEmpty')) {
         if (!$isLocalDirectory && !FlysystemHelper::directoryExists($directoryPath)) {
             throw new InvalidArgumentException('The provided path is not a directory.');
         }
-        $contents = FlysystemHelper::listContents($directoryPath, false);
+        foreach (FlysystemHelper::listContentsListing($directoryPath, false) as $_item) {
+            return false;
+        }
 
-        return count($contents) === 0;
+        return true;
     }
 }
 
@@ -143,17 +146,15 @@ if (!function_exists('listFiles')) {
         if (!$isLocalDirectory && !FlysystemHelper::directoryExists($directoryPath)) {
             throw new InvalidArgumentException('The provided path is not a directory.');
         }
-        $items = FlysystemHelper::listContents($directoryPath, false);
         $files = [];
 
-        foreach ($items as $item) {
-            $type = $item['type'] ?? null;
-            if (!is_string($type) || $type !== 'file') {
+        foreach (FlysystemHelper::listContentsListing($directoryPath, false) as $item) {
+            if (!$item->isFile()) {
                 continue;
             }
 
-            $path = $item['path'] ?? null;
-            if (!is_string($path) || $path === '') {
+            $path = $item->path();
+            if ($path === '') {
                 continue;
             }
 

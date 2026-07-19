@@ -1,4 +1,7 @@
 <?php
+
+declare(strict_types=1);
+
 use Infocyph\Pathwise\Utils\PathHelper;
 
 beforeEach(function () {
@@ -121,4 +124,15 @@ test('it creates a temporary directory', function () {
     $tempDir = PathHelper::createTempDirectory('temp_test_');
     expect(is_dir($tempDir))->toBeTrue();
     rmdir($tempDir);
+});
+
+test('it confines temporary directories to the system temp directory', function () {
+    $tempDir = PathHelper::createTempDirectory('../unsafe/prefix_');
+
+    expect($tempDir)->toBeString()
+        ->and(dirname((string) $tempDir))->toBe(PathHelper::normalize(sys_get_temp_dir()))
+        ->and(basename((string) $tempDir))->not->toContain('/')
+        ->not->toContain('\\');
+
+    rmdir((string) $tempDir);
 });
