@@ -122,7 +122,7 @@ test('it supports chunked upload and finalize flow', function () {
             'name' => "chunk_{$index}.part",
         ], $uploadId, $index, count($parts), 'merged.txt');
 
-        expect($result['receivedChunks'])->toBe($index + 1);
+        expect($result->receivedChunks)->toBe($index + 1);
     }
 
     $finalPath = $this->uploadProcessor->finalizeChunkUpload($uploadId);

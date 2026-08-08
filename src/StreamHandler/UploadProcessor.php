@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Infocyph\Pathwise\StreamHandler;
 
 use Infocyph\Pathwise\Exceptions\UploadException;
+
+use Infocyph\Pathwise\Results\ChunkUploadState;
 use Infocyph\Pathwise\StreamHandler\Concerns\UploadProcessorChunkConcern;
 use Infocyph\Pathwise\StreamHandler\Concerns\UploadProcessorValidationConcern;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
@@ -183,11 +185,15 @@ class UploadProcessor
      * @param int $chunkIndex The index of this chunk (0-based).
      * @param int $totalChunks Total number of chunks expected.
      * @param string $originalFilename The original filename.
-     * @return array{uploadId: string, receivedChunks: int, totalChunks: int, isComplete: bool} Chunk upload status.
      * @throws UploadException If the upload directory is not set.
      */
-    public function processChunkUpload(array $chunkFile, string $uploadId, int $chunkIndex, int $totalChunks, string $originalFilename): array
-    {
+    public function processChunkUpload(
+        array $chunkFile,
+        string $uploadId,
+        int $chunkIndex,
+        int $totalChunks,
+        string $originalFilename,
+    ): ChunkUploadState {
         if (!isset($this->uploadDir) || $this->uploadDir === '') {
             throw new UploadException('Upload directory is not set.');
         }
@@ -217,12 +223,12 @@ class UploadProcessor
         ksort($manifest['received']);
         $this->saveChunkManifest($uploadId, $manifest);
 
-        return [
-            'uploadId' => $uploadId,
-            'receivedChunks' => count($manifest['received']),
-            'totalChunks' => $totalChunks,
-            'isComplete' => count($manifest['received']) === $totalChunks,
-        ];
+        return new ChunkUploadState(
+            uploadId: $uploadId,
+            receivedChunks: count($manifest['received']),
+            totalChunks: $totalChunks,
+            complete: count($manifest['received']) === $totalChunks,
+        );
     }
 
     /**

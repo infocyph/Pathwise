@@ -12,6 +12,7 @@ queue/audit tooling, and operational helpers.
    overview
    installation
    capabilities
+   storage-contracts
    storage-adapters
    file-facade
    quickstart
@@ -26,5 +27,5 @@ queue/audit tooling, and operational helpers.
    indexing
    retention
    utilities
-   helper-functions
    native-execution
+   release-3.0

@@ -17,7 +17,8 @@ Brief capabilities:
 * Checksum helpers: ``verifyChecksum()``, ``writeAndVerify()``, ``copyWithVerification()``.
 * Stream APIs: ``readStream()``, ``writeStream()``.
 * Visibility/URL passthrough where adapter supports it.
-* Optional transaction rollback and policy enforcement.
+* Local-only structured transaction rollback and policy enforcement.
+* Native local append plus explicit ``appendEmulated()`` object replacement for mounts.
 
 Example:
 
@@ -37,7 +38,7 @@ Brief capabilities:
 
 * Memory-safe reads: line, char, binary chunk, CSV, JSON, XML.
 * Lock-aware reads for safer concurrent usage.
-* Iterator-friendly API.
+* Explicit generator APIs; the reader itself implements ``Countable``, not ``Iterator``.
 
 Example:
 
@@ -46,7 +47,7 @@ Example:
    use Infocyph\Pathwise\FileManager\SafeFileReader;
 
    $reader = new SafeFileReader('/tmp/report.txt');
-   foreach ($reader->line() as $line) {
+   foreach ($reader->lines() as $line) {
        // process line
    }
 
@@ -67,9 +68,10 @@ Example:
    use Infocyph\Pathwise\FileManager\SafeFileWriter;
 
    $writer = new SafeFileWriter('/tmp/events.log');
-   $writer->enableAtomicWrite()
-       ->line('started')
-       ->line('finished');
+   $writer->enableAtomicWrite();
+   $writer->writeLine('started');
+   $writer->writeLine('finished');
+   $writer->close();
 
 ``FileCompression``
 -------------------
@@ -81,6 +83,8 @@ Brief capabilities:
 * Include/exclude glob patterns.
 * Ignore-file support (for example ``.pathwiseignore``).
 * Hook and progress callback support.
+* Shared pre-extraction validation for traversal, absolute/drive paths, null bytes,
+  symbolic links, and destination breakout.
 
 Example:
 

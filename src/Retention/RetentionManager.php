@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\Retention;
 
+use Infocyph\Pathwise\Results\RetentionResult;
+
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\FlysystemPathResolver;
 use Infocyph\Pathwise\Utils\LocalFileIterator;
@@ -19,19 +21,18 @@ final class RetentionManager
      * @param int|null $keepLast Number of most recent files to keep (null for unlimited).
      * @param int|null $maxAgeDays Maximum age of files in days (null for unlimited).
      * @param string $sortBy Field to sort by ('mtime' or 'ctime').
-     * @return array{deleted: list<string>, kept: list<string>} Array with deleted and kept file paths.
      */
     public static function apply(
         string $directory,
         ?int $keepLast = null,
         ?int $maxAgeDays = null,
         string $sortBy = 'mtime',
-    ): array {
+    ): RetentionResult {
         self::validateOptions($keepLast, $maxAgeDays, $sortBy);
 
         $directory = PathHelper::normalize($directory);
         if (!FlysystemHelper::directoryExists($directory)) {
-            return ['deleted' => [], 'kept' => []];
+            return new RetentionResult([], []);
         }
 
         $files = self::collectFiles($directory);
@@ -54,10 +55,7 @@ final class RetentionManager
             }
         }
 
-        return [
-            'deleted' => $deleted,
-            'kept' => $kept,
-        ];
+        return new RetentionResult($deleted, $kept);
     }
 
     /**

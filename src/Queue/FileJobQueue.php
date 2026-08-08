@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\Queue;
 
+use Infocyph\Pathwise\Results\QueueProcessResult;
+
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use InvalidArgumentException;
@@ -77,9 +79,8 @@ final readonly class FileJobQueue
      *
      * @param callable(QueueJob): void $handler Callback to process each job.
      * @param int $maxJobs Maximum number of jobs to process (0 for unlimited).
-     * @return array{processed: int, failed: int} Array with processed and failed counts.
      */
-    public function process(callable $handler, int $maxJobs = 0): array
+    public function process(callable $handler, int $maxJobs = 0): QueueProcessResult
     {
         if ($maxJobs < 0) {
             throw new InvalidArgumentException('maxJobs must be greater than or equal to zero.');
@@ -108,10 +109,7 @@ final readonly class FileJobQueue
             $this->completeJob($job);
         }
 
-        return [
-            'processed' => $processed,
-            'failed' => $failed,
-        ];
+        return new QueueProcessResult($processed, $failed);
     }
 
     /**

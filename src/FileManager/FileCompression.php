@@ -6,10 +6,14 @@ namespace Infocyph\Pathwise\FileManager;
 
 use Infocyph\Pathwise\Core\ExecutionStrategy;
 use Infocyph\Pathwise\Exceptions\CompressionException;
+use Infocyph\Pathwise\Exceptions\MissingExtensionException;
+use Infocyph\Pathwise\Exceptions\NativeExecutionException;
+use Infocyph\Pathwise\Exceptions\UnsupportedStorageOperationException;
 use Infocyph\Pathwise\FileManager\Concerns\FileCompressionArchiveConcern;
 use Infocyph\Pathwise\FileManager\Concerns\FileCompressionRuntimeConcern;
 use Infocyph\Pathwise\FileManager\Concerns\FsConcern;
 use Infocyph\Pathwise\Native\NativeOperationsAdapter;
+use Infocyph\Pathwise\Security\ZipEntryValidator;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use ZipArchive;
@@ -81,6 +85,10 @@ class FileCompression
      */
     public function __construct(private readonly string $zipFilePath, bool $create = false)
     {
+        if (!extension_loaded('zip')) {
+            throw new MissingExtensionException('ZIP operations require ext-zip.');
+        }
+
         $this->zip = new ZipArchive();
         $this->workingZipPath = $this->resolveWorkingZipPath($create);
 
@@ -185,9 +193,10 @@ class FileCompression
         $this->log('Batch extracting files.');
         $this->progressCurrent = 0;
         $this->progressTotal = count($files);
+        ZipEntryValidator::validateArchive($this->zip, $destination);
         foreach ($files as $zipPath => $localPath) {
-            $zipPath = $this->normalizeZipPath($zipPath);
-            $localPath = ltrim(PathHelper::normalize($localPath), DIRECTORY_SEPARATOR);
+            $zipPath = ZipEntryValidator::validate($zipPath, $destination);
+            $localPath = ZipEntryValidator::validate($localPath, $destination);
             $targetPath = PathHelper::join($destination, $localPath);
 
             if (str_ends_with($zipPath, '/')) {
@@ -198,8 +207,8 @@ class FileCompression
                 continue;
             }
 
-            $content = $this->zip->getFromName($zipPath);
-            if ($content === false) {
+            $stream = $this->zip->getStream($zipPath);
+            if (!is_resource($stream)) {
                 throw new CompressionException("File not found in ZIP archive: $zipPath.");
             }
 
@@ -208,27 +217,16 @@ class FileCompression
                 FlysystemHelper::createDirectory($targetDir);
             }
 
-            FlysystemHelper::write($targetPath, $content);
+            try {
+                FlysystemHelper::writeStream($targetPath, $stream);
+            } finally {
+                fclose($stream);
+            }
 
             $this->advanceProgress('decompress', $zipPath);
         }
 
         return $this;
-    }
-
-    /**
-     * Check the integrity of the current ZIP archive.
-     *
-     * This function checks the status of the current ZIP archive and returns
-     * true if the archive is valid and false otherwise.
-     *
-     * @return bool True if the archive is valid, false otherwise.
-     */
-    public function checkIntegrity(): bool
-    {
-        $this->reopenIfNeeded();
-
-        return $this->zip->status === ZipArchive::ER_OK;
     }
 
     /**
@@ -241,10 +239,14 @@ class FileCompression
         $this->reopenIfNeeded();
         $resolvedSource = $this->prepareCompressionSource($source);
 
+        if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
+            $this->assertNativeCompressionSupported($source);
+        }
+
         if ($this->shouldAttemptNativeCompression() && NativeOperationsAdapter::canUseNativeCompression()) {
             $this->closeZip();
             $native = NativeOperationsAdapter::compressToZip($resolvedSource, $this->workingZipPath);
-            if ($native['success']) {
+            if ($native->success) {
                 if (is_callable($this->progressCallback)) {
                     ($this->progressCallback)([
                         'operation' => 'compress',
@@ -259,7 +261,9 @@ class FileCompression
             }
 
             if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
-                throw new CompressionException("Native compression failed for source: {$resolvedSource}");
+                throw new NativeExecutionException(
+                    "Native compression failed with exit code {$native->exitCode}: " . implode("\n", $native->output),
+                );
             }
 
             $this->openZip();
@@ -362,6 +366,21 @@ class FileCompression
 
             yield $name;
         }
+    }
+
+    /**
+     * Check the integrity of the current ZIP archive.
+     *
+     * This function checks the status of the current ZIP archive and returns
+     * true if the archive is valid and false otherwise.
+     *
+     * @return bool True if the archive is valid, false otherwise.
+     */
+    public function hasNoReportedArchiveErrors(): bool
+    {
+        $this->reopenIfNeeded();
+
+        return $this->zip->status === ZipArchive::ER_OK;
     }
 
     /**
@@ -549,6 +568,21 @@ class FileCompression
         $this->progressCallback = $progressCallback;
 
         return $this;
+    }
+
+    private function assertNativeCompressionSupported(string $source): void
+    {
+        if (!FlysystemHelper::isLocalPath($source) || !FlysystemHelper::isLocalPath($this->zipFilePath)) {
+            throw new UnsupportedStorageOperationException(
+                'Native compression requires local source and archive paths.',
+            );
+        }
+        if (!$this->shouldAttemptNativeCompression()) {
+            throw new NativeExecutionException('Native compression does not support the selected archive options.');
+        }
+        if (!NativeOperationsAdapter::canUseNativeCompression()) {
+            throw new NativeExecutionException('Native ZIP compression executables are unavailable.');
+        }
     }
 
     private function prepareCompressionSource(string $source): string

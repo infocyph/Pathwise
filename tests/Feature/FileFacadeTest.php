@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Infocyph\Pathwise\PathwiseFacade;
+use Infocyph\Pathwise\DirectoryManager\DirectoryOperations;
 use Infocyph\Pathwise\Storage\StorageFactory;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 
@@ -21,7 +22,7 @@ afterEach(function () {
         return;
     }
 
-    deleteDirectory($this->workspace);
+    (new DirectoryOperations($this->workspace))->delete(true);
 });
 
 test('it provides path-bound file accessors', function () {
@@ -31,11 +32,11 @@ test('it provides path-bound file accessors', function () {
     $entry->file()->create("line-1\n");
 
     $writer = $entry->writer(true);
-    $writer->line('line-2');
+    $writer->writeLine('line-2');
     $writer->close();
 
     $content = $entry->file()->read();
-    $lines = iterator_to_array($entry->reader()->line());
+    $lines = iterator_to_array($entry->reader()->lines());
 
     expect($entry->exists())->toBeTrue()
         ->and($entry->path())->toBe($filePath)
@@ -109,10 +110,11 @@ test('it provides static gateways for processors policy storage and ops tooling'
         ->and(FlysystemHelper::read('facade://data/file.txt'))->toBe('hello')
         ->and($stats['pending'])->toBe(1)
         ->and(FlysystemHelper::fileExists($auditFile))->toBeTrue()
-        ->and($diff['modified'])->toContain($watchPath)
+        ->and($diff->modified)->toContain($watchPath)
         ->and($index)->not->toBeEmpty()
         ->and($duplicates)->not->toBeEmpty()
-        ->and($retention)->toBe(['deleted' => [], 'kept' => []]);
+        ->and($retention->deleted)->toBe([])
+        ->and($retention->kept)->toBe([]);
 
     FlysystemHelper::unmount('facade');
 });

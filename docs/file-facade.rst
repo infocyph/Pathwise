@@ -28,12 +28,12 @@ Path-Bound Access
    $entry->file()->create('hello')->append("\nworld");
 
    $reader = $entry->reader();
-   foreach ($reader->line() as $line) {
+   foreach ($reader->lines() as $line) {
        // ...
    }
 
    $writer = $entry->writer(true);
-   $writer->line('tail');
+   $writer->writeLine('tail');
    $writer->close();
 
    $metadata = $entry->metadata();

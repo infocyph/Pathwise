@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\FileManager\Concerns;
 
-use Exception;
 use Infocyph\Pathwise\Exceptions\FileAccessException;
 use SimpleXMLElement;
 use SplFileObject;
@@ -18,7 +17,7 @@ trait SafeFileWriterWriteConcern
     {
         $value = $this->optionalParamValue($params, $index, $default);
         if (!is_bool($value)) {
-            throw new Exception("Expected bool parameter at index {$index}.");
+            throw new FileAccessException("Expected bool parameter at index {$index}.");
         }
 
         return $value;
@@ -39,7 +38,7 @@ trait SafeFileWriterWriteConcern
     {
         $value = $this->optionalParamValue($params, $index, $default);
         if (!is_string($value)) {
-            throw new Exception("Expected string parameter at index {$index}.");
+            throw new FileAccessException("Expected string parameter at index {$index}.");
         }
 
         return $value;
@@ -53,7 +52,7 @@ trait SafeFileWriterWriteConcern
     {
         $value = $params[$index] ?? null;
         if (!is_array($value)) {
-            throw new Exception("Write type '{$type}' expects array parameter at index {$index}.");
+            throw new FileAccessException("Write type '{$type}' expects array parameter at index {$index}.");
         }
 
         return $value;
@@ -69,7 +68,7 @@ trait SafeFileWriterWriteConcern
         $row = [];
         foreach ($value as $column) {
             if (!is_string($column) && !is_int($column) && !is_float($column) && !is_bool($column) && $column !== null) {
-                throw new Exception("Write type '{$type}' expects scalar CSV values.");
+                throw new FileAccessException("Write type '{$type}' expects scalar CSV values.");
             }
 
             $row[] = $column;
@@ -103,7 +102,7 @@ trait SafeFileWriterWriteConcern
     {
         $value = $params[$index] ?? null;
         if (!is_string($value)) {
-            throw new Exception("Write type '{$type}' expects string parameter at index {$index}.");
+            throw new FileAccessException("Write type '{$type}' expects string parameter at index {$index}.");
         }
 
         return $value;
@@ -119,7 +118,7 @@ trait SafeFileWriterWriteConcern
         $widths = [];
         foreach ($value as $width) {
             if (!is_int($width)) {
-                throw new Exception("Write type '{$type}' expects integer widths.");
+                throw new FileAccessException("Write type '{$type}' expects integer widths.");
             }
 
             $widths[] = $width;
@@ -135,7 +134,7 @@ trait SafeFileWriterWriteConcern
     {
         $value = $params[$index] ?? null;
         if (!$value instanceof SimpleXMLElement) {
-            throw new Exception("Write type '{$type}' expects SimpleXMLElement at index {$index}.");
+            throw new FileAccessException("Write type '{$type}' expects SimpleXMLElement at index {$index}.");
         }
 
         return $value;
@@ -164,7 +163,7 @@ trait SafeFileWriterWriteConcern
      * @param string $data The binary data to write.
      * @return int|false The number of bytes written, or false on failure.
      */
-    private function writeBinary(string $data): int|false
+    private function writeBinaryData(string $data): int|false
     {
         $this->writeCount++;
 
@@ -180,7 +179,7 @@ trait SafeFileWriterWriteConcern
      * @param string $char The character to write to the file.
      * @return int|false The number of bytes written, or false on failure.
      */
-    private function writeCharacter(string $char): int|false
+    private function writeCharacterData(string $char): int|false
     {
         $this->writeCount++;
 
@@ -200,7 +199,7 @@ trait SafeFileWriterWriteConcern
      * @param string $escape The character used to escape special characters. Defaults to '\\'.
      * @return int|false The number of bytes written, or false on failure.
      */
-    private function writeCSV(
+    private function writeCsvRow(
         array $row,
         string $separator = ',',
         string $enclosure = '"',
@@ -220,18 +219,18 @@ trait SafeFileWriterWriteConcern
      * @param array<int, string|int|float|bool|null> $data The data to write. Each element is written as a string.
      * @param array<int, int> $widths The widths of each field. Each element is a positive integer.
      * @return int|false The number of bytes written, or false on failure.
-     * @throws Exception If the count of $data does not match the count of $widths.
+     * @throws FileAccessException If the count of $data does not match the count of $widths.
      */
-    private function writeFixedWidth(array $data, array $widths): int|false
+    private function writeFixedWidthData(array $data, array $widths): int|false
     {
         if (count($data) !== count($widths)) {
-            throw new Exception('Data and widths arrays must match.');
+            throw new FileAccessException('Data and widths arrays must match.');
         }
         $line = '';
         foreach ($data as $index => $field) {
             $width = $widths[$index] ?? null;
             if (!is_int($width)) {
-                throw new Exception('Widths must contain integers.');
+                throw new FileAccessException('Widths must contain integers.');
             }
 
             $line .= str_pad((string) $field, $width);
@@ -239,6 +238,32 @@ trait SafeFileWriterWriteConcern
         $this->writeCount++;
 
         return $this->requireFileHandle()->fwrite($line . PHP_EOL);
+    }
+
+    /**
+     * Writes a JSON array to the file.
+     *
+     * @param array<int|string, mixed> $data The array of data to write.
+     * @param bool $prettyPrint If true, the JSON will be formatted with
+     *                          indentation and whitespace for readability. Defaults to false.
+     * @return int|false The number of bytes written, or false on failure.
+     * @throws FileAccessException If the JSON encoding fails.
+     */
+    private function writeJsonArrayData(array $data, bool $prettyPrint = false): int|false
+    {
+        return $this->writeJsonEncodedLine($data, $prettyPrint);
+    }
+
+    private function writeJsonEncodedLine(mixed $data, bool $prettyPrint): int|false
+    {
+        $jsonOptions = $prettyPrint ? JSON_PRETTY_PRINT : 0;
+        $jsonData = json_encode($data, $jsonOptions);
+        if ($jsonData === false) {
+            throw new FileAccessException('JSON encoding failed: ' . json_last_error_msg());
+        }
+        $this->writeCount++;
+
+        return $this->requireFileHandle()->fwrite($jsonData . PHP_EOL);
     }
 
     /**
@@ -250,37 +275,11 @@ trait SafeFileWriterWriteConcern
      * @param mixed $data The data to encode as JSON and write.
      * @param bool $prettyPrint If true, the JSON will be formatted for readability. Defaults to false.
      * @return int|false The number of bytes written, or false on failure.
-     * @throws Exception If JSON encoding fails.
+     * @throws FileAccessException If JSON encoding fails.
      */
-    private function writeJSON(mixed $data, bool $prettyPrint = false): int|false
+    private function writeJsonLineData(mixed $data, bool $prettyPrint = false): int|false
     {
         return $this->writeJsonEncodedLine($data, $prettyPrint);
-    }
-
-    /**
-     * Writes a JSON array to the file.
-     *
-     * @param array<int|string, mixed> $data The array of data to write.
-     * @param bool $prettyPrint If true, the JSON will be formatted with
-     *                          indentation and whitespace for readability. Defaults to false.
-     * @return int|false The number of bytes written, or false on failure.
-     * @throws Exception If the JSON encoding fails.
-     */
-    private function writeJSONArray(array $data, bool $prettyPrint = false): int|false
-    {
-        return $this->writeJsonEncodedLine($data, $prettyPrint);
-    }
-
-    private function writeJsonEncodedLine(mixed $data, bool $prettyPrint): int|false
-    {
-        $jsonOptions = $prettyPrint ? JSON_PRETTY_PRINT : 0;
-        $jsonData = json_encode($data, $jsonOptions);
-        if ($jsonData === false) {
-            throw new Exception('JSON encoding failed: ' . json_last_error_msg());
-        }
-        $this->writeCount++;
-
-        return $this->requireFileHandle()->fwrite($jsonData . PHP_EOL);
     }
 
     /**
@@ -293,7 +292,7 @@ trait SafeFileWriterWriteConcern
      * @param string $content The content to write to the file.
      * @return int|false The number of bytes written, or false on failure.
      */
-    private function writeLine(string $content): int|false
+    private function writeLineData(string $content): int|false
     {
         $this->writeCount++;
 
@@ -311,7 +310,7 @@ trait SafeFileWriterWriteConcern
      * @param string $pattern The regex pattern to match against the content.
      * @return int|false The number of bytes written, or false on failure.
      */
-    private function writePatternMatch(string $content, string $pattern): int|false
+    private function writeMatchingLineData(string $content, string $pattern): int|false
     {
         if (preg_match($pattern, $content)) {
             $this->writeCount++;
@@ -332,7 +331,7 @@ trait SafeFileWriterWriteConcern
      * @param mixed $data The data to serialize and write.
      * @return int|false The number of bytes written, or false on failure.
      */
-    private function writeSerialized(mixed $data): int|false
+    private function writeSerializedData(mixed $data): int|false
     {
         $serializedData = serialize($data);
         $this->writeCount++;
@@ -349,7 +348,7 @@ trait SafeFileWriterWriteConcern
      * @param SimpleXMLElement $element The XML element to write.
      * @return int|false The number of bytes written, or false on failure.
      */
-    private function writeXML(SimpleXMLElement $element): int|false
+    private function writeXmlData(SimpleXMLElement $element): int|false
     {
         $this->writeCount++;
 

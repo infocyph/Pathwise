@@ -10,8 +10,13 @@ use Infocyph\Pathwise\FileManager\FileOperations;
 use Infocyph\Pathwise\FileManager\SafeFileReader;
 use Infocyph\Pathwise\FileManager\SafeFileWriter;
 use Infocyph\Pathwise\Indexing\ChecksumIndexer;
+use Infocyph\Pathwise\Observability\AuditSink;
 use Infocyph\Pathwise\Observability\AuditTrail;
 use Infocyph\Pathwise\Queue\FileJobQueue;
+use Infocyph\Pathwise\Results\DeduplicationResult;
+use Infocyph\Pathwise\Results\RetentionResult;
+use Infocyph\Pathwise\Results\SnapshotDiff;
+use Infocyph\Pathwise\Results\WatchResult;
 use Infocyph\Pathwise\Retention\RetentionManager;
 use Infocyph\Pathwise\Security\PolicyEngine;
 use Infocyph\Pathwise\Storage\StorageFactory;
@@ -54,12 +59,12 @@ final class PathwiseFacade
     /**
      * Create an audit trail logger.
      *
-     * @param string $logFilePath The path to the log file.
+     * @param string|AuditSink $sink A local JSONL path or a custom audit sink.
      * @return AuditTrail The audit trail instance.
      */
-    public static function audit(string $logFilePath): AuditTrail
+    public static function audit(string|AuditSink $sink): AuditTrail
     {
-        return new AuditTrail($logFilePath);
+        return new AuditTrail($sink);
     }
 
     /**
@@ -78,16 +83,10 @@ final class PathwiseFacade
      *
      * @param string $directory The directory to deduplicate.
      * @param string $algorithm The hash algorithm to use. Defaults to 'sha256'.
-     * @return array{linked: list<string>, skipped: list<string>} Array with linked and skipped file paths.
      */
-    public static function deduplicate(string $directory, string $algorithm = 'sha256'): array
+    public static function deduplicate(string $directory, string $algorithm = 'sha256'): DeduplicationResult
     {
-        $result = ChecksumIndexer::deduplicateWithHardLinks($directory, $algorithm);
-
-        return [
-            'linked' => self::normalizeStringList($result['linked']),
-            'skipped' => self::normalizeStringList($result['skipped']),
-        ];
+        return ChecksumIndexer::deduplicateWithHardLinks($directory, $algorithm);
     }
 
     /**
@@ -95,9 +94,8 @@ final class PathwiseFacade
      *
      * @param SnapshotMap $previousSnapshot The previous snapshot data.
      * @param SnapshotMap $currentSnapshot The current snapshot data.
-     * @return DiffReport The diff report.
      */
-    public static function diffSnapshots(array $previousSnapshot, array $currentSnapshot): array
+    public static function diffSnapshots(array $previousSnapshot, array $currentSnapshot): SnapshotDiff
     {
         return FileWatcher::diff($previousSnapshot, $currentSnapshot);
     }
@@ -197,20 +195,14 @@ final class PathwiseFacade
      * @param int|null $keepLast Number of most recent files to keep (null for unlimited).
      * @param int|null $maxAgeDays Maximum age of files in days (null for unlimited).
      * @param string $sortBy Field to sort by ('mtime' or 'ctime').
-     * @return array{deleted: list<string>, kept: list<string>} Array with deleted and kept file paths.
      */
     public static function retain(
         string $directory,
         ?int $keepLast = null,
         ?int $maxAgeDays = null,
         string $sortBy = 'mtime',
-    ): array {
-        $result = RetentionManager::apply($directory, $keepLast, $maxAgeDays, $sortBy);
-
-        return [
-            'deleted' => self::normalizeStringList($result['deleted']),
-            'kept' => self::normalizeStringList($result['kept']),
-        ];
+    ): RetentionResult {
+        return RetentionManager::apply($directory, $keepLast, $maxAgeDays, $sortBy);
     }
 
     /**
@@ -243,7 +235,6 @@ final class PathwiseFacade
      * @param int $durationSeconds How long to watch in seconds. Defaults to 5.
      * @param int $intervalMilliseconds Polling interval in milliseconds. Defaults to 500.
      * @param bool $recursive Whether to watch subdirectories. Defaults to true.
-     * @return array<string, array{mtime: int, size: int}> Final snapshot.
      */
     public static function watch(
         string $path,
@@ -251,7 +242,7 @@ final class PathwiseFacade
         int $durationSeconds = 5,
         int $intervalMilliseconds = 500,
         bool $recursive = true,
-    ): array {
+    ): WatchResult {
         return FileWatcher::watch($path, $onChange, $durationSeconds, $intervalMilliseconds, $recursive);
     }
 
@@ -348,27 +339,6 @@ final class PathwiseFacade
     public function writer(bool $append = false): SafeFileWriter
     {
         return new SafeFileWriter($this->path, $append);
-    }
-
-    /**
-     * @return list<string>
-     */
-    private static function normalizeStringList(mixed $values): array
-    {
-        if (!is_array($values)) {
-            return [];
-        }
-
-        $result = [];
-        foreach ($values as $value) {
-            if (!is_string($value)) {
-                continue;
-            }
-
-            $result[] = $value;
-        }
-
-        return $result;
     }
 
     /**

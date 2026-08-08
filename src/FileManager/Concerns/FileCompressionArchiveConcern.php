@@ -6,7 +6,10 @@ namespace Infocyph\Pathwise\FileManager\Concerns;
 
 use Infocyph\Pathwise\Core\ExecutionStrategy;
 use Infocyph\Pathwise\Exceptions\CompressionException;
+use Infocyph\Pathwise\Exceptions\NativeExecutionException;
+use Infocyph\Pathwise\Exceptions\UnsupportedStorageOperationException;
 use Infocyph\Pathwise\Native\NativeOperationsAdapter;
+use Infocyph\Pathwise\Security\ZipEntryValidator;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use ZipArchive;
@@ -179,6 +182,20 @@ trait FileCompressionArchiveConcern
 
     private function attemptNativeDecompression(string $destination, bool $isRemoteDestination): bool
     {
+        if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
+            if (!FlysystemHelper::isLocalPath($this->zipFilePath) || $isRemoteDestination) {
+                throw new UnsupportedStorageOperationException(
+                    'Native decompression requires local archive and destination paths.',
+                );
+            }
+            if ($this->password !== null) {
+                throw new NativeExecutionException('Native decompression is unavailable for password-protected archives.');
+            }
+            if (!NativeOperationsAdapter::canUseNativeCompression()) {
+                throw new NativeExecutionException('Native ZIP decompression executables are unavailable.');
+            }
+        }
+
         if (
             $this->executionStrategy === ExecutionStrategy::PHP
             || $this->password !== null
@@ -190,7 +207,7 @@ trait FileCompressionArchiveConcern
 
         $this->closeZip();
         $native = NativeOperationsAdapter::decompressZip($this->workingZipPath, $destination);
-        if ($native['success']) {
+        if ($native->success) {
             if (is_callable($this->progressCallback)) {
                 ($this->progressCallback)([
                     'operation' => 'decompress',
@@ -205,12 +222,24 @@ trait FileCompressionArchiveConcern
         }
 
         if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
-            throw new CompressionException("Native decompression failed for archive: {$this->zipFilePath}");
+            throw new NativeExecutionException(
+                "Native decompression failed with exit code {$native->exitCode}: " . implode("\n", $native->output),
+            );
         }
 
         $this->openZip();
 
         return false;
+    }
+
+    private function closeExtractionStreams(mixed $input, mixed $output): void
+    {
+        if (is_resource($input)) {
+            fclose($input);
+        }
+        if (is_resource($output)) {
+            fclose($output);
+        }
     }
 
     private function copyLocalDirectoryToFlysystem(string $localSource, string $destination): void
@@ -323,14 +352,50 @@ trait FileCompressionArchiveConcern
         }
     }
 
+    private function ensureLocalExtractionDirectory(string $directory, string $entry): void
+    {
+        if (!is_dir($directory) && !mkdir($directory, 0755, true) && !is_dir($directory)) {
+            throw new CompressionException("Unable to create extraction directory for: {$entry}");
+        }
+    }
+
     private function extractArchive(string $extractDestination, string $destination, bool $isRemoteDestination): void
     {
-        if (!$this->zip->extractTo($extractDestination)) {
-            throw new CompressionException('Failed to extract ZIP archive.');
+        $entries = ZipEntryValidator::validateArchive($this->zip, $extractDestination);
+        foreach ($entries as $index => $entry) {
+            $this->extractArchiveEntry($index, $entry, $extractDestination);
         }
 
         if ($isRemoteDestination) {
             $this->copyLocalDirectoryToFlysystem($extractDestination, $destination);
+        }
+    }
+
+    private function extractArchiveEntry(int $index, string $entry, string $extractDestination): void
+    {
+        $target = PathHelper::join($extractDestination, rtrim($entry, '/'));
+        if (str_ends_with($entry, '/')) {
+            $this->ensureLocalExtractionDirectory($target, $entry);
+
+            return;
+        }
+
+        $this->ensureLocalExtractionDirectory(dirname($target), $entry);
+        $input = $this->zip->getStream((string) $this->zip->getNameIndex($index));
+        $output = fopen($target, 'wb');
+        if (!is_resource($input) || !is_resource($output)) {
+            $this->closeExtractionStreams($input, $output);
+
+            throw new CompressionException("Unable to extract ZIP entry: {$entry}");
+        }
+
+        try {
+            if (stream_copy_to_stream($input, $output) === false) {
+                throw new CompressionException("Unable to extract ZIP entry: {$entry}");
+            }
+        } finally {
+            fclose($input);
+            fclose($output);
         }
     }
 

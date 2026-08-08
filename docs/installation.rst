@@ -16,7 +16,6 @@ Requirements:
 Optional extensions:
 
 * ``ext-zip`` for ZIP features.
-* ``ext-pcntl`` for long-running watch loops.
 * ``ext-posix`` for richer Unix ownership details.
 * ``ext-xmlreader`` and ``ext-simplexml`` for XML helpers.
 

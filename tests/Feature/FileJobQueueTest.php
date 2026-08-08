@@ -25,8 +25,8 @@ test('it processes queued jobs by priority', function () {
         $order[] = $job['type'];
     });
 
-    expect($result['processed'])->toBe(2)
-        ->and($result['failed'])->toBe(0)
+    expect($result->processed)->toBe(2)
+        ->and($result->failed)->toBe(0)
         ->and($order)->toBe(['high', 'low']);
 });
 
@@ -39,8 +39,8 @@ test('it tracks failed jobs', function () {
     });
     $stats = $queue->stats();
 
-    expect($result['processed'])->toBe(0)
-        ->and($result['failed'])->toBe(1)
+    expect($result->processed)->toBe(0)
+        ->and($result->failed)->toBe(1)
         ->and($stats['failed'])->toBe(1);
 });
 
@@ -54,7 +54,8 @@ test('it limits processing attempts even when jobs fail', function () {
     }, 1);
     $stats = $queue->stats();
 
-    expect($result)->toBe(['processed' => 0, 'failed' => 1])
+    expect($result->processed)->toBe(0)
+        ->and($result->failed)->toBe(1)
         ->and($stats)->toMatchArray(['pending' => 1, 'processing' => 0, 'failed' => 1]);
 });
 

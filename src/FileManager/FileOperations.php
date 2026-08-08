@@ -8,6 +8,9 @@ use DateTimeInterface;
 use Infocyph\Pathwise\Core\ExecutionStrategy;
 use Infocyph\Pathwise\Exceptions\FileAccessException;
 use Infocyph\Pathwise\Exceptions\FileNotFoundException;
+use Infocyph\Pathwise\Exceptions\NativeExecutionException;
+use Infocyph\Pathwise\Exceptions\TransactionStateException;
+use Infocyph\Pathwise\Exceptions\UnsupportedStorageOperationException;
 use Infocyph\Pathwise\Native\NativeOperationsAdapter;
 use Infocyph\Pathwise\Observability\AuditTrail;
 use Infocyph\Pathwise\Security\PolicyEngine;
@@ -26,10 +29,9 @@ class FileOperations
 
     private ?PolicyEngine $policyEngine = null;
 
-    /** @var array<int, callable> */
-    private array $rollbackActions = [];
-
     private bool $transactionActive = false;
+
+    private ?FileTransactionJournal $transactionJournal = null;
 
     /**
      * Constructor to initialize the file path.
@@ -42,13 +44,34 @@ class FileOperations
     /**
      * Append content to the file.
      */
-    public function append(string $content): self
+    public function append(string $content, bool $lock = true): self
     {
         $this->assertPolicy('append', $this->filePath);
-        $previousContent = $this->snapshotRollbackContent();
-        $newContent = ($previousContent ?? '') . $content;
-        FlysystemHelper::write($this->filePath, $newContent);
+        $this->assertLocalOperation('append');
+        $this->recordFileState($this->filePath);
+
+        $flags = FILE_APPEND | ($lock ? LOCK_EX : 0);
+        if (file_put_contents($this->filePath, $content, $flags) === false) {
+            throw new FileAccessException("Unable to append to file: {$this->filePath}");
+        }
         $this->audit('append', ['path' => $this->filePath, 'bytes' => strlen($content)]);
+
+        return $this;
+    }
+
+    /**
+     * Append to adapter-backed storage by explicitly replacing the complete object.
+     */
+    public function appendEmulated(string $content): self
+    {
+        $this->assertPolicy('append', $this->filePath);
+        if (FlysystemHelper::isLocalPath($this->filePath)) {
+            return $this->append($content);
+        }
+
+        $existing = $this->exists() ? FlysystemHelper::read($this->filePath) : '';
+        FlysystemHelper::write($this->filePath, $existing . $content);
+        $this->audit('append-emulated', ['path' => $this->filePath, 'bytes' => strlen($content)]);
 
         return $this;
     }
@@ -60,8 +83,12 @@ class FileOperations
      */
     public function beginTransaction(): self
     {
+        if ($this->transactionActive) {
+            throw new TransactionStateException('Nested transactions are not supported.');
+        }
+        $this->assertLocalOperation('transactions');
         $this->transactionActive = true;
-        $this->rollbackActions = [];
+        $this->transactionJournal = new FileTransactionJournal($this->filePath);
 
         return $this;
     }
@@ -73,8 +100,10 @@ class FileOperations
      */
     public function commitTransaction(): self
     {
+        $this->assertTransactionActive('commit');
+        $this->transactionJournal?->commit();
         $this->transactionActive = false;
-        $this->rollbackActions = [];
+        $this->transactionJournal = null;
 
         return $this;
     }
@@ -86,45 +115,10 @@ class FileOperations
     {
         $this->assertPolicy('copy', $this->filePath, ['destination' => $destination]);
 
-        if (is_callable($progress)) {
-            $progress([
-                'operation' => 'copy',
-                'path' => $this->filePath,
-                'destination' => $destination,
-                'current' => 0,
-                'total' => 1,
-            ]);
-        }
-
-        $copied = false;
-        if ($this->executionStrategy !== ExecutionStrategy::PHP && NativeOperationsAdapter::canUseNativeFileCopy()) {
-            $native = NativeOperationsAdapter::copyFile($this->filePath, $destination);
-            $copied = $native['success'];
-        }
-
-        if (!$copied) {
-            try {
-                FlysystemHelper::copy($this->filePath, $destination);
-            } catch (\Throwable $e) {
-                throw new FileAccessException("Unable to copy file to $destination.", 0, $e);
-            }
-        }
-        $this->recordRollback(function () use ($destination): void {
-            if (FlysystemHelper::fileExists($destination)) {
-                FlysystemHelper::delete($destination);
-            }
-        });
-
-        if (is_callable($progress)) {
-            $progress([
-                'operation' => 'copy',
-                'path' => $this->filePath,
-                'destination' => $destination,
-                'current' => 1,
-                'total' => 1,
-            ]);
-        }
-
+        $this->emitCopyProgress($progress, $destination, 0);
+        $this->recordFileState($destination);
+        $this->performCopy($destination);
+        $this->emitCopyProgress($progress, $destination, 1);
         $this->audit('copy', ['source' => $this->filePath, 'destination' => $destination]);
 
         return $this;
@@ -156,15 +150,7 @@ class FileOperations
     public function create(?string $content = ''): self
     {
         $this->assertPolicy('create', $this->filePath);
-        $hadFile = $this->exists();
-        $previousContent = $hadFile ? $this->read() : null;
-        $this->recordRollback(function () use ($hadFile, $previousContent): void {
-            if ($hadFile) {
-                FlysystemHelper::write($this->filePath, (string) $previousContent);
-            } elseif (FlysystemHelper::fileExists($this->filePath)) {
-                FlysystemHelper::delete($this->filePath);
-            }
-        });
+        $this->recordFileState($this->filePath);
         FlysystemHelper::write($this->filePath, (string) $content);
         $this->audit('create', ['path' => $this->filePath]);
 
@@ -180,10 +166,7 @@ class FileOperations
         if (!$this->exists()) {
             throw new FileNotFoundException("File does not exist at $this->filePath.");
         }
-        $content = $this->read();
-        $this->recordRollback(function () use ($content): void {
-            FlysystemHelper::write($this->filePath, $content);
-        });
+        $this->recordFileState($this->filePath);
 
         try {
             FlysystemHelper::delete($this->filePath);
@@ -230,6 +213,7 @@ class FileOperations
      */
     public function getMetadata(): array
     {
+        $this->assertLocalOperation('local metadata');
         $info = new SplFileInfo($this->filePath);
 
         return [
@@ -255,6 +239,10 @@ class FileOperations
             throw new FileNotFoundException("File not found at $this->filePath.");
         }
 
+        if (!FlysystemHelper::isLocalPath($this->filePath)) {
+            return true;
+        }
+
         return is_readable($this->filePath);
     }
 
@@ -265,6 +253,7 @@ class FileOperations
      */
     public function openWithLock(bool $exclusive = true, int $timeout = 0): self
     {
+        $this->assertLocalOperation('direct file locking');
         $file = $this->requireFile('r+');
         $lockType = $exclusive ? LOCK_EX : LOCK_SH;
         $lockType |= LOCK_NB;
@@ -329,18 +318,15 @@ class FileOperations
     {
         $this->assertPolicy('rename', $this->filePath, ['destination' => $newPath]);
         $newPath = PathHelper::normalize($newPath);
+        $oldPath = $this->filePath;
+        $this->recordFileState($oldPath);
+        $this->recordFileState($newPath);
 
         try {
             FlysystemHelper::move($this->filePath, $newPath);
         } catch (\Throwable $e) {
             throw new FileAccessException("Unable to rename or move file to $newPath.", 0, $e);
         }
-        $oldPath = $this->filePath;
-        $this->recordRollback(function () use ($oldPath, $newPath): void {
-            if (FlysystemHelper::fileExists($newPath)) {
-                FlysystemHelper::move($newPath, $oldPath);
-            }
-        });
         $this->filePath = $newPath;
         $this->initFile(); // Reinitialize file object with new path
         $this->audit('rename', ['from' => $oldPath, 'to' => $newPath]);
@@ -355,11 +341,16 @@ class FileOperations
      */
     public function rollbackTransaction(): self
     {
-        for ($i = count($this->rollbackActions) - 1; $i >= 0; $i--) {
-            ($this->rollbackActions[$i])();
+        $this->assertTransactionActive('rollback');
+        $journal = $this->transactionJournal;
+        if (!$journal instanceof FileTransactionJournal) {
+            throw new TransactionStateException('Transaction journal is unavailable.');
         }
+        $journal->rollback();
+        $this->filePath = $journal->originalPath;
+        $this->file = null;
         $this->transactionActive = false;
-        $this->rollbackActions = [];
+        $this->transactionJournal = null;
 
         return $this;
     }
@@ -371,6 +362,7 @@ class FileOperations
      */
     public function searchContent(string $searchTerm): array
     {
+        $this->assertLocalOperation('native content searching');
         $command = escapeshellarg($this->filePath);
         $escapedTerm = escapeshellarg($searchTerm);
 
@@ -447,16 +439,12 @@ class FileOperations
      */
     public function setPermissions(int $permissions): self
     {
+        $this->assertLocalOperation('POSIX permissions');
         $this->assertPolicy('set-permissions', $this->filePath);
         if (!$this->exists()) {
             throw new FileNotFoundException("File does not exist at $this->filePath.");
         }
-        $previous = fileperms($this->filePath);
-        if (is_int($previous)) {
-            $this->recordRollback(function () use ($previous): void {
-                chmod($this->filePath, $previous & 0777);
-            });
-        }
+        $this->recordFileState($this->filePath);
         if (!chmod($this->filePath, $permissions)) {
             throw new FileAccessException("Unable to set permissions for file: {$this->filePath}.");
         }
@@ -527,7 +515,15 @@ class FileOperations
 
             return $result;
         } catch (\Throwable $e) {
-            $this->rollbackTransaction();
+            try {
+                $this->rollbackTransaction();
+            } catch (\Throwable $rollbackFailure) {
+                throw new FileAccessException(
+                    'Transaction failed and rollback was incomplete: ' . $rollbackFailure->getMessage(),
+                    0,
+                    $e,
+                );
+            }
 
             throw $e;
         }
@@ -538,6 +534,7 @@ class FileOperations
      */
     public function unlock(): self
     {
+        $this->assertLocalOperation('direct file locking');
         $this->requireFile()->flock(LOCK_UN);
 
         return $this;
@@ -549,7 +546,7 @@ class FileOperations
     public function update(string $content): self
     {
         $this->assertPolicy('update', $this->filePath);
-        $this->snapshotRollbackContent();
+        $this->recordFileState($this->filePath);
         FlysystemHelper::write($this->filePath, $content);
         $this->audit('update', ['path' => $this->filePath, 'bytes' => strlen($content)]);
 
@@ -622,6 +619,7 @@ class FileOperations
     public function writeStream(mixed $stream, array $config = []): self
     {
         $this->assertPolicy('write-stream', $this->filePath);
+        $this->recordFileState($this->filePath);
         FlysystemHelper::writeStream($this->filePath, $stream, $config);
         $this->audit('write-stream', ['path' => $this->filePath]);
 
@@ -633,6 +631,7 @@ class FileOperations
      */
     protected function initFile(string $mode = 'r'): self
     {
+        $this->assertLocalOperation('direct file handles');
         $this->file = new SplFileObject($this->filePath, $mode);
 
         return $this;
@@ -640,7 +639,9 @@ class FileOperations
 
     private function applyOwnershipChange(string $action, int $value, callable $updater, string $label): self
     {
+        $this->assertLocalOperation($label . ' changes');
         $this->assertPolicy($action, $this->filePath);
+        $this->recordFileState($this->filePath);
         if (!$updater($this->filePath, $value)) {
             throw new FileAccessException("Unable to change {$label} for file: {$this->filePath}.");
         }
@@ -650,12 +651,28 @@ class FileOperations
         return $this;
     }
 
+    private function assertLocalOperation(string $operation): void
+    {
+        if (!FlysystemHelper::isLocalPath($this->filePath)) {
+            throw new UnsupportedStorageOperationException(
+                "{$operation} is only supported for local filesystem paths: {$this->filePath}",
+            );
+        }
+    }
+
     /**
      * @param array<string, mixed> $context
      */
     private function assertPolicy(string $operation, string $path, array $context = []): void
     {
         $this->policyEngine?->assertAllowed($operation, PathHelper::normalize($path), $context);
+    }
+
+    private function assertTransactionActive(string $operation): void
+    {
+        if (!$this->transactionActive) {
+            throw new TransactionStateException("Cannot {$operation} without an active transaction.");
+        }
     }
 
     /**
@@ -693,13 +710,68 @@ class FileOperations
         return null;
     }
 
-    private function recordRollback(callable $rollbackAction): void
+    private function emitCopyProgress(?callable $progress, string $destination, int $current): void
+    {
+        if (!is_callable($progress)) {
+            return;
+        }
+
+        $progress([
+            'operation' => 'copy',
+            'path' => $this->filePath,
+            'destination' => $destination,
+            'current' => $current,
+            'total' => 1,
+        ]);
+    }
+
+    private function performCopy(string $destination): void
+    {
+        if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
+            $this->assertLocalOperation('native copy');
+            if (!NativeOperationsAdapter::canUseNativeFileCopy()) {
+                throw new NativeExecutionException('Native file copy executable is unavailable.');
+            }
+            $native = NativeOperationsAdapter::copyFile($this->filePath, $destination);
+            if (!$native->success) {
+                throw new NativeExecutionException(
+                    "Native file copy failed with exit code {$native->exitCode}: {$native->command}",
+                );
+            }
+
+            return;
+        }
+
+        if (
+            $this->executionStrategy === ExecutionStrategy::AUTO
+            && FlysystemHelper::isLocalPath($this->filePath)
+            && FlysystemHelper::isLocalPath($destination)
+            && NativeOperationsAdapter::canUseNativeFileCopy()
+        ) {
+            $native = NativeOperationsAdapter::copyFile($this->filePath, $destination);
+            if ($native->success) {
+                return;
+            }
+        }
+
+        try {
+            FlysystemHelper::copy($this->filePath, $destination);
+        } catch (\Throwable $e) {
+            throw new FileAccessException("Unable to copy file to $destination.", 0, $e);
+        }
+    }
+
+    private function recordFileState(string $path): void
     {
         if (!$this->transactionActive) {
             return;
         }
 
-        $this->rollbackActions[] = $rollbackAction;
+        if (!FlysystemHelper::isLocalPath($path)) {
+            throw new UnsupportedStorageOperationException('Transactions only support local filesystem paths.');
+        }
+
+        $this->transactionJournal?->record($path);
     }
 
     private function requireFile(string $mode = 'r'): SplFileObject
@@ -713,19 +785,5 @@ class FileOperations
         }
 
         return $this->file;
-    }
-
-    private function snapshotRollbackContent(): ?string
-    {
-        $previousContent = $this->exists() ? $this->read() : null;
-        $this->recordRollback(function () use ($previousContent): void {
-            if ($previousContent === null) {
-                return;
-            }
-
-            FlysystemHelper::write($this->filePath, $previousContent);
-        });
-
-        return $previousContent;
     }
 }

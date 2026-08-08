@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\Utils;
 
+use Infocyph\Pathwise\Exceptions\MissingExtensionException;
 use RuntimeException;
 
 class PermissionsHelper
@@ -115,11 +116,8 @@ class PermissionsHelper
     /**
      * Retrieves the owner and group of the given path.
      *
-     * Returns an array with keys 'owner' and 'group', each containing the
-     * username or groupname of the owner or group of the file or directory,
-     * respectively. If the file or directory does not exist, or if ownership
-     * functions are not supported on the current system, this method returns
-     * null.
+     * Returns resolved owner and group names for an existing local path.
+     * Missing paths produce null; unavailable POSIX support throws explicitly.
      *
      * @param string $path The path to the file or directory to retrieve
      *                     ownership for.
@@ -130,7 +128,7 @@ class PermissionsHelper
     public static function getOwnership(string $path): ?array
     {
         if (!self::isPosixSupported()) {
-            throw new RuntimeException('Ownership functions are only supported on Unix-based systems.');
+            throw new MissingExtensionException('Ownership operations require ext-posix.');
         }
 
         if (!file_exists($path)) {
@@ -206,7 +204,7 @@ class PermissionsHelper
     public static function setOwnership(string $path, string $owner, ?string $group = null): self
     {
         if (!self::isPosixSupported()) {
-            throw new RuntimeException('Ownership functions are only supported on Unix-based systems.');
+            throw new MissingExtensionException('Ownership operations require ext-posix.');
         }
 
         $result = chown($path, $owner);
@@ -241,18 +239,6 @@ class PermissionsHelper
         return new self();
     }
 
-    /**
-     * Determines if the current system supports POSIX-style ownership
-     * functions.
-     *
-     * This method checks if the 'posix_getpwuid' and 'posix_getgrgid' functions
-     * are available. If they are, it returns true, indicating that
-     * POSIX-style ownership functions are supported on the current system. If
-     * they are not available, it returns false.
-     *
-     * @return bool True if POSIX-style ownership functions are supported,
-     *              false otherwise.
-     */
     private static function isPosixSupported(): bool
     {
         return function_exists('posix_getpwuid') && function_exists('posix_getgrgid');

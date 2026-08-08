@@ -56,7 +56,7 @@ What you get:
 
 * Idempotent create, recursive copy/move/delete.
 * Listing, flattening, find/filter, size/depth metrics.
-* Directory sync with diff report.
+* Lazy directory sync with readonly ``SyncReport`` and explicit comparison strategy.
 * Zip/unzip helpers for local and mounted paths.
 
 Uploads (``Infocyph\Pathwise\StreamHandler``)
@@ -130,7 +130,6 @@ Required:
 Optional:
 
 * ``ext-zip`` (archive features)
-* ``ext-pcntl`` (watch loop process patterns)
 * ``ext-posix`` (richer Unix ownership data)
 * ``ext-xmlreader``, ``ext-simplexml`` (XML helpers)
 

@@ -7,28 +7,17 @@ namespace Infocyph\Pathwise\FileManager;
 use Countable;
 use DateTime;
 use DateTimeInterface;
-use Exception;
 use Infocyph\Pathwise\Exceptions\FileAccessException;
+use Infocyph\Pathwise\Exceptions\MissingExtensionException;
 use Infocyph\Pathwise\FileManager\Concerns\SafeFileWriterWriteConcern;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use Infocyph\Pathwise\Utils\StreamTransferHelper;
 use JsonSerializable;
+use SimpleXMLElement;
 use SplFileObject;
 use Stringable;
 
-/**
- * @method SafeFileReader character() Character iterator
- * @method SafeFileReader line() Line iterator
- * @method SafeFileReader csv(string $separator = ",", string $enclosure = "\"", string $escape = "\\") CSV iterator
- * @method SafeFileReader binary(int $bytes = 1024) Binary iterator
- * @method SafeFileReader json() JSON line-by-line iterator
- * @method SafeFileReader regex(string $pattern) Regex iterator
- * @method SafeFileReader fixedWidth(array<int, int> $widths) Fixed-width field iterator
- * @method SafeFileReader xml(string $element) XML iterator
- * @method SafeFileReader serialized() Serialized object iterator
- * @method SafeFileReader jsonArray() JSON array iterator
- */
 class SafeFileWriter implements Countable, Stringable, JsonSerializable
 {
     use SafeFileWriterWriteConcern;
@@ -77,54 +66,6 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
                 $this->unlinkPathSilently($this->localWorkingPath);
             }
         }
-    }
-
-    /**
-     * Dynamically handles different write operations based on the specified type.
-     *
-     * This method uses a dynamic approach to invoke various write operations such as
-     * 'character', 'line', 'csv', 'binary', 'json', 'regex', 'fixedWidth', 'xml',
-     * 'serialized', and 'jsonArray'. It initializes the file for writing, acquires
-     * a lock, performs the specified write operation, tracks the write type, and
-     * finally releases the lock.
-     *
-     * @param string $type The type of write operation to perform.
-     * @param list<mixed> $params The parameters to be passed to the specific write operation.
-     * @throws Exception If the specified write type is unknown.
-     */
-    public function __call(string $type, array $params): mixed
-    {
-        $this->initiate($this->append ? 'a' : 'w');
-        $returnable = match ($type) {
-            'character' => $this->writeCharacter($this->requireStringParam($params, 0, $type)),
-            'line' => $this->writeLine($this->requireStringParam($params, 0, $type)),
-            'csv' => $this->writeCSV(
-                $this->requireCsvRowParam($params, 0, $type),
-                $this->optionalStringParam($params, 1, ','),
-                $this->optionalStringParam($params, 2, '"'),
-                $this->optionalStringParam($params, 3, '\\'),
-            ),
-            'binary' => $this->writeBinary($this->requireStringParam($params, 0, $type)),
-            'json' => $this->writeJSON($params[0] ?? null, $this->optionalBoolParam($params, 1, false)),
-            'regex' => $this->writePatternMatch(
-                $this->requireStringParam($params, 0, $type),
-                $this->requireStringParam($params, 1, $type),
-            ),
-            'fixedWidth' => $this->writeFixedWidth(
-                $this->requireFixedWidthDataParam($params, 0, $type),
-                $this->requireWidthsParam($params, 1, $type),
-            ),
-            'xml' => $this->writeXML($this->requireXmlParam($params, 0, $type)),
-            'serialized' => $this->writeSerialized($params[0] ?? null),
-            'jsonArray' => $this->writeJSONArray(
-                $this->requireArrayParam($params, 0, $type),
-                $this->optionalBoolParam($params, 1, false),
-            ),
-            default => throw new Exception("Unknown write type '$type'"),
-        };
-        $this->trackWriteType($type);
-
-        return $returnable;
     }
 
     /**
@@ -341,12 +282,12 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      * @param string $expectedChecksum The expected checksum.
      * @param string $algorithm The hash algorithm to use. Defaults to 'sha256'.
      * @return bool True if the checksum matches, false otherwise.
-     * @throws Exception If the algorithm is not supported.
+     * @throws FileAccessException If the algorithm is not supported.
      */
     public function verifyChecksum(string $expectedChecksum, string $algorithm = 'sha256'): bool
     {
         if (!in_array($algorithm, hash_algos(), true)) {
-            throw new Exception("Unsupported checksum algorithm: {$algorithm}");
+            throw new FileAccessException("Unsupported checksum algorithm: {$algorithm}");
         }
 
         $path = $this->getActiveOrFinalPath();
@@ -364,12 +305,12 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
     /**
      * Write content and verify checksum against the persisted file.
      *
-     * @throws Exception
+     * @throws FileAccessException
      */
-    public function writeAndVerify(string $content, string $algorithm = 'sha256'): bool
+    public function writeAndVerify(string $content, string $algorithm = 'sha256'): self
     {
         if (!in_array($algorithm, hash_algos(), true)) {
-            throw new Exception("Unsupported checksum algorithm: {$algorithm}");
+            throw new FileAccessException("Unsupported checksum algorithm: {$algorithm}");
         }
 
         $this->initiate('w');
@@ -386,11 +327,76 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
         $fileHash = $this->isRemoteTarget()
             ? FlysystemHelper::checksum($this->filename, $algorithm)
             : hash_file($algorithm, $this->filename);
-        if (!is_string($fileHash)) {
-            return false;
+        if (!is_string($fileHash) || !hash_equals(hash($algorithm, $content), $fileHash)) {
+            throw new FileAccessException("Checksum verification failed for {$this->filename}.");
         }
 
-        return hash_equals(hash($algorithm, $content), $fileHash);
+        return $this;
+    }
+
+    public function writeBinary(string $data): int
+    {
+        return $this->performWrite('binary', fn(): int|false => $this->writeBinaryData($data));
+    }
+
+    public function writeCharacters(string $characters): int
+    {
+        $written = 0;
+        foreach (str_split($characters) as $character) {
+            $written += $this->performWrite('characters', fn(): int|false => $this->writeCharacterData($character));
+        }
+
+        return $written;
+    }
+
+    /** @param list<string|int|float|bool|null> $row */
+    public function writeCsv(array $row, string $separator = ',', string $enclosure = '"', string $escape = '\\'): int
+    {
+        return $this->performWrite('csv', fn(): int|false => $this->writeCsvRow($row, $separator, $enclosure, $escape));
+    }
+
+    /**
+     * @param list<string|int|float|bool|null> $data
+     * @param list<int> $widths
+     */
+    public function writeFixedWidth(array $data, array $widths): int
+    {
+        return $this->performWrite('fixed-width', fn(): int|false => $this->writeFixedWidthData($data, $widths));
+    }
+
+    public function writeJson(mixed $data, bool $prettyPrint = false): int
+    {
+        return $this->performWrite('json', fn(): int|false => $this->writeJsonLineData($data, $prettyPrint));
+    }
+
+    /** @param array<int|string, mixed> $data */
+    public function writeJsonArray(array $data, bool $prettyPrint = false): int
+    {
+        return $this->performWrite('json-array', fn(): int|false => $this->writeJsonArrayData($data, $prettyPrint));
+    }
+
+    public function writeLine(string $content): int
+    {
+        return $this->performWrite('line', fn(): int|false => $this->writeLineData($content));
+    }
+
+    public function writeMatchingLine(string $content, string $pattern): int
+    {
+        return $this->performWrite('matching-line', fn(): int|false => $this->writeMatchingLineData($content, $pattern));
+    }
+
+    public function writeSerialized(mixed $data): int
+    {
+        return $this->performWrite('serialized', fn(): int|false => $this->writeSerializedData($data));
+    }
+
+    public function writeXml(SimpleXMLElement $element): int
+    {
+        if (!extension_loaded('simplexml')) {
+            throw new MissingExtensionException('XML writing requires ext-simplexml.');
+        }
+
+        return $this->performWrite('xml', fn(): int|false => $this->writeXmlData($element));
     }
 
     private function createAtomicTempFilePath(): string
@@ -499,6 +505,19 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
     private function isRemoteTarget(): bool
     {
         return PathHelper::hasScheme($this->filename) || (FlysystemHelper::hasDefaultFilesystem() && !PathHelper::isAbsolute($this->filename));
+    }
+
+    /** @param callable(): (int|false) $write */
+    private function performWrite(string $type, callable $write): int
+    {
+        $this->initiate($this->append ? 'a' : 'w');
+        $written = $write();
+        if ($written === false) {
+            throw new FileAccessException("Unable to perform {$type} write for {$this->filename}.");
+        }
+        $this->trackWriteType($type);
+
+        return $written;
     }
 
     private function preloadRemoteAppendSourceIfNeeded(): void

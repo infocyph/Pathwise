@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\Indexing;
 
+use Infocyph\Pathwise\Results\DeduplicationResult;
+
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\FlysystemPathResolver;
 use Infocyph\Pathwise\Utils\LocalFileIterator;
@@ -45,10 +47,11 @@ final class ChecksumIndexer
      *
      * @param string $directory The directory to deduplicate.
      * @param string $algorithm The hash algorithm to use. Defaults to 'sha256'.
-     * @return array{linked: list<string>, skipped: list<string>} Array with linked and skipped file paths.
      */
-    public static function deduplicateWithHardLinks(string $directory, string $algorithm = 'sha256'): array
-    {
+    public static function deduplicateWithHardLinks(
+        string $directory,
+        string $algorithm = 'sha256',
+    ): DeduplicationResult {
         $duplicates = self::findDuplicates($directory, $algorithm);
         $linked = [];
         $skipped = [];
@@ -90,10 +93,7 @@ final class ChecksumIndexer
             }
         }
 
-        return [
-            'linked' => $linked,
-            'skipped' => $skipped,
-        ];
+        return new DeduplicationResult($linked, $skipped);
     }
 
     /**

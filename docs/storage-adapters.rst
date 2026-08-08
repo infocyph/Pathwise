@@ -101,8 +101,8 @@ Then pass the adapter directly:
        'adapter' => $adapter,
    ]);
 
-   // Works with all Pathwise modules that accept paths:
-   // s3://uploads/a.pdf
+   // Storage-neutral workflows can now address s3://uploads/a.pdf.
+   // Native processes, direct locks, POSIX metadata, and transactions remain local-only.
 
 Constructor mode example (official drivers):
 
@@ -154,23 +154,12 @@ If you want environment-driven config, register a custom driver once:
 
    // tenant://docs/report.txt
 
-Helper Functions (autoloaded)
------------------------------
+Facade Gateways
+---------------
 
-Global helpers mirror the factory:
-
-* ``createFilesystem(array $config): FilesystemOperator``
-* ``mountStorage(string $name, array $config): FilesystemOperator``
-* ``mountStorages(array $mounts): void``
-
-Example:
-
-.. code-block:: php
-
-   mountStorage('media', [
-       'driver' => 'local',
-       'root' => '/srv/media',
-   ]);
+Use ``PathwiseFacade::createFilesystem()``, ``mountStorage()``, and
+``mountStorages()`` when a static gateway is preferable. Pathwise 3.0 does not
+autoload global helper functions.
 
 Processor Integration Notes
 ---------------------------

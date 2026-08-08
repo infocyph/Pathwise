@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 use Infocyph\Pathwise\DirectoryManager\DirectoryOperations;
 use Infocyph\Pathwise\Exceptions\DirectoryOperationException;
+use Infocyph\Pathwise\Exceptions\UnsafeArchiveEntryException;
+use Infocyph\Pathwise\Results\SyncReport;
 
 // Helper function to create a temporary directory for testing
 function createTempDirectory(): string
@@ -29,27 +31,25 @@ test('can create a directory', function () {
     $newDir = $this->tempDir . DIRECTORY_SEPARATOR . uniqid('new_dir_', true);
     $dirOps = new DirectoryOperations($newDir);
     expect($dirOps->create())
-        ->toBeTrue()
+        ->toBe($dirOps)
         ->and(is_dir($newDir))->toBeTrue();
 });
 
 test('create is idempotent when directory already exists', function () {
     expect($this->directoryOperations->create())
-        ->toBeTrue()
-        ->and($this->directoryOperations->create())->toBeTrue()
+        ->toBe($this->directoryOperations)
+        ->and($this->directoryOperations->create())->toBe($this->directoryOperations)
         ->and(is_dir($this->tempDir))->toBeTrue();
 });
 
 test('can delete a directory', function () {
-//    $this->directoryOperations->create();
     expect($this->directoryOperations->delete())
-        ->toBeTrue()
+        ->toBe($this->directoryOperations)
         ->and(is_dir($this->tempDir))->toBeFalse();
 });
 
 test('can copy a directory', function () {
     $destDir = createTempDirectory();
-//    $this->directoryOperations->create();
     $fileName = uniqid('test_', true) . '.txt';
     file_put_contents($this->tempDir . '/' . $fileName, 'sample content');
     $this->directoryOperations->copy($destDir);
@@ -84,7 +84,7 @@ test('can move a directory', function () {
     $result = $this->directoryOperations->move($newLocation);
 
     expect($result)
-        ->toBeTrue()
+        ->toBe($this->directoryOperations)
         ->and(is_dir($this->tempDir))->toBeFalse()
         ->and(is_dir($newLocation))->toBeTrue();
 });
@@ -212,9 +212,9 @@ test('it syncs directory and returns diff report', function () {
         $events[] = $event;
     });
 
-    expect($report)->toHaveKeys(['created', 'updated', 'deleted', 'unchanged'])
-        ->and($report['created'])->toContain('sync.txt')
-        ->and($report['deleted'])->toContain('old.txt')
+    expect($report)->toBeInstanceOf(SyncReport::class)
+        ->and($report->created)->toContain('sync.txt')
+        ->and($report->deleted)->toContain('old.txt')
         ->and($events)->not->toBeEmpty();
 
     unlink($destDir . '/' . 'sync.txt');
@@ -252,7 +252,7 @@ test('unzip rejects zip-slip traversal entries', function () {
         $dirOps = new DirectoryOperations($unzipDir);
 
         expect(fn () => $dirOps->unzip($zipPath))
-            ->toThrow(DirectoryOperationException::class, 'Unsafe ZIP entry path');
+            ->toThrow(UnsafeArchiveEntryException::class, 'ZIP traversal entry');
 
         expect(file_exists($outsidePath))->toBeFalse();
     } finally {

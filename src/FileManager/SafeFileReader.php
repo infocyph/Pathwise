@@ -5,41 +5,23 @@ declare(strict_types=1);
 namespace Infocyph\Pathwise\FileManager;
 
 use Countable;
-use Exception;
 use Generator;
 use Infocyph\Pathwise\Exceptions\FileAccessException;
+use Infocyph\Pathwise\Exceptions\MissingExtensionException;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
-use Iterator;
-use NoRewindIterator;
-use SeekableIterator;
 use SimpleXMLElement;
 use SplFileObject;
 use XMLReader;
 
 /**
- * Memory-safe file reader with multiple read modes, locking, and interface support.
- *
- * @method SafeFileReader character() Character iterator
- * @method SafeFileReader line() Line iterator
- * @method SafeFileReader csv(string $separator = ",", string $enclosure = "\"", string $escape = "\\") CSV iterator
- * @method SafeFileReader binary(int $bytes = 1024) Binary iterator
- * @method SafeFileReader json() JSON line-by-line iterator
- * @method SafeFileReader regex(string $pattern) Regex iterator
- * @method SafeFileReader fixedWidth(array<int, int> $widths) Fixed-width field iterator
- * @method SafeFileReader xml(string $element) XML iterator
- * @method SafeFileReader serialized() Serialized object iterator
- * @method SafeFileReader jsonArray() JSON array iterator
- * @implements Iterator<int, mixed>
- * @implements SeekableIterator<int, mixed>
+ * Memory-safe file reader with explicit, statically discoverable read modes.
  */
-final class SafeFileReader implements Countable, Iterator, SeekableIterator
+final class SafeFileReader implements Countable
 {
     private bool $cleanupLocalWorkingPath = false;
 
     private int $count = 0;
-
-    private ?Generator $currentIterator = null;
 
     private SplFileObject $file;
 
@@ -80,42 +62,23 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
         }
     }
 
-    /**
-     * Dynamically invokes an iterator based on the specified type.
-     *
-     * This method initializes the file reader and returns an iterator
-     * for the requested type. Supported types include 'character', 'line',
-     * 'csv', 'binary', 'json', 'regex', 'fixedWidth', 'xml', 'serialized',
-     * and 'jsonArray'. Each type corresponds to a specific method that
-     * generates the appropriate iterator for processing the file content.
-     *
-     * @param string $type The type of iterator to create.
-     * @param list<mixed> $params Parameters to pass to the iterator method.
-     * @return NoRewindIterator<mixed, mixed, Generator> The requested iterator wrapped in a NoRewindIterator.
-     * @throws Exception If the specified iterator type is unknown.
-     */
-    public function __call(string $type, array $params): NoRewindIterator
+    /** @return Generator<int, string> */
+    public function characters(): Generator
     {
-        $this->initiate();
-        $this->currentIterator = match ($type) {
-            'character' => $this->characterIterator(),
-            'line' => $this->lineIterator(),
-            'csv' => $this->csvIterator(
-                $this->optionalStringParam($params, 0, ','),
-                $this->optionalStringParam($params, 1, '"'),
-                $this->optionalStringParam($params, 2, '\\'),
-            ),
-            'binary' => $this->binaryIterator($this->optionalIntParam($params, 0, 1024)),
-            'json' => $this->jsonIteratorWithHandling(),
-            'regex' => $this->regexIterator($this->requireStringParam($params, 0, 'regex pattern')),
-            'fixedWidth' => $this->fixedWidthIterator($this->requireWidthsParam($params)),
-            'xml' => $this->xmlIterator($this->requireStringParam($params, 0, 'xml element')),
-            'serialized' => $this->serializedIterator(),
-            'jsonArray' => $this->jsonArrayIteratorWithHandling(),
-            default => throw new Exception("Unknown iterator type '$type'"),
-        };
+        $this->prepareRead();
 
-        return new NoRewindIterator($this->currentIterator);
+        return $this->characterIterator();
+    }
+
+    /** @return Generator<int, string> */
+    public function chunks(int $bytes = 1024): Generator
+    {
+        if ($bytes < 1) {
+            throw new \InvalidArgumentException('Chunk size must be positive.');
+        }
+        $this->prepareRead();
+
+        return $this->binaryIterator($bytes);
     }
 
     /**
@@ -128,45 +91,55 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
         return $this->count;
     }
 
-    /**
-     * Returns the current element in the file.
-     *
-     * This method returns the current element from the internal iterator.
-     * The type of the element depends on the iterator type, which is determined
-     * by the method call that created the iterator.
-     *
-     * @return mixed The current element in the file.
-     */
-    public function current(): mixed
+    /** @return Generator<int, list<string|null>> */
+    public function csv(string $separator = ',', string $enclosure = '"', string $escape = '\\'): Generator
     {
-        return $this->currentIterator?->current();
+        $this->prepareRead();
+
+        return $this->csvIterator($separator, $enclosure, $escape);
     }
 
-    /**
-     * Returns the current position in the file.
-     *
-     * This method returns the current value of the internal position counter,
-     * which is incremented by the `next` method and reset by the `rewind`
-     * method.
-     *
-     * @return int The current position in the file.
-     */
-    public function key(): int
+    /** @param list<int> $widths @return Generator<int, list<string>> */
+    public function fixedWidth(array $widths): Generator
     {
-        return $this->position;
+        $this->prepareRead();
+
+        return $this->fixedWidthIterator($this->validateWidths($widths));
     }
 
-    /**
-     * Moves the internal iterator to the next position.
-     *
-     * This method calls `next` on the current iterator, and then increments the
-     * internal position counter. It should be called after `valid` has been
-     * called to verify that the iterator is valid.
-     */
-    public function next(): void
+    /** @return Generator<int, mixed> */
+    public function jsonArray(): Generator
     {
-        $this->currentIterator?->next();
-        $this->position++;
+        $this->prepareRead();
+
+        return $this->jsonArrayIteratorWithHandling();
+    }
+
+    /** @return Generator<int, mixed> */
+    public function jsonLines(): Generator
+    {
+        $this->prepareRead();
+
+        return $this->jsonIteratorWithHandling();
+    }
+
+    /** @return Generator<int, string> */
+    public function lines(): Generator
+    {
+        $this->prepareRead();
+
+        return $this->lineIterator();
+    }
+
+    /** @return Generator<int, list<string>> */
+    public function matchingLines(string $pattern): Generator
+    {
+        if ($pattern === '') {
+            throw new \InvalidArgumentException('A regular-expression pattern is required.');
+        }
+        $this->prepareRead();
+
+        return $this->regexIterator($pattern);
     }
 
     /**
@@ -183,50 +156,29 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
         }
     }
 
-    /**
-     * Resets the file pointer to the beginning of the file.
-     *
-     * This method rewinds the internal file pointer to the beginning of the file,
-     * resets the internal position counter, and rewinds the current iterator
-     * instance if one exists.
-     */
-    public function rewind(): void
+    /** @return Generator<int, mixed> */
+    public function serializedValues(): Generator
     {
-        $this->file->rewind();
-        $this->resetPosition();
-        $this->currentIterator?->rewind();
+        $this->prepareRead();
+
+        return $this->serializedIterator();
     }
 
-    /**
-     * Seeks to the specified position in the file.
-     *
-     * This method initializes the file if necessary and then moves the internal pointer
-     * to the specified offset. If the offset is negative, an exception is thrown.
-     *
-     * @param int $offset The position to seek to in the file.
-     * @throws Exception If the specified offset is negative.
-     */
-    public function seek(int $offset): void
+    /** @return Generator<int, SimpleXMLElement> */
+    public function xmlElements(string $element): Generator
     {
-        $this->initiate();
-        if ($offset < 0) {
-            throw new Exception("Invalid position ($offset)");
+        if (!extension_loaded('xmlreader')) {
+            throw new MissingExtensionException('XML reading requires ext-xmlreader.');
         }
-        $this->file->seek($offset);
-        $this->position = $offset;
-    }
+        if (!extension_loaded('simplexml')) {
+            throw new MissingExtensionException('XML reading requires ext-simplexml.');
+        }
+        if ($element === '') {
+            throw new \InvalidArgumentException('An XML element name is required.');
+        }
+        $this->prepareRead();
 
-    /**
-     * Checks if the current element is valid.
-     *
-     * This method returns the validity of the current element from the internal
-     * iterator. If the iterator is not initialized, it returns false.
-     *
-     * @return bool True if the current element is valid, false otherwise.
-     */
-    public function valid(): bool
-    {
-        return $this->currentIterator?->valid() ?? false;
+        return $this->xmlIterator($element);
     }
 
     /**
@@ -332,11 +284,11 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
     {
         $result = unserialize($serializedLine, ['allowed_classes' => false]);
         if ($result === false && $serializedLine !== 'b:0;') {
-            throw new Exception('Failed to unserialize data.');
+            throw new FileAccessException('Failed to unserialize data.');
         }
 
         if ($this->containsObjectValue($result)) {
-            throw new Exception('Serialized objects are not allowed.');
+            throw new FileAccessException('Serialized objects are not allowed.');
         }
 
         return $result;
@@ -405,18 +357,18 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
      * an array, an exception is thrown.
      *
      * @return Generator Yields each element of the JSON array.
-     * @throws Exception If decoding the JSON array fails.
+     * @throws FileAccessException If decoding the JSON array fails.
      */
     private function jsonArrayIteratorWithHandling(): Generator
     {
         $jsonContent = $this->file->fread($this->fileSize);
         if (!is_string($jsonContent)) {
-            throw new Exception('JSON array decoding error: failed to read file content.');
+            throw new FileAccessException('JSON array decoding error: failed to read file content.');
         }
 
         $jsonArray = json_decode($jsonContent, true);
         if (json_last_error() !== JSON_ERROR_NONE || !is_array($jsonArray)) {
-            throw new Exception('JSON array decoding error: ' . json_last_error_msg());
+            throw new FileAccessException('JSON array decoding error: ' . json_last_error_msg());
         }
         foreach ($jsonArray as $element) {
             yield $element;
@@ -434,7 +386,7 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
      * are incremented for each valid JSON line.
      *
      * @return Generator Yields decoded JSON objects from each line of the file.
-     * @throws Exception If JSON decoding fails for any line.
+     * @throws FileAccessException If JSON decoding fails for any line.
      */
     private function jsonIteratorWithHandling(): Generator
     {
@@ -443,7 +395,7 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
             if ($line) {
                 $decoded = json_decode($line, true);
                 if (json_last_error() !== JSON_ERROR_NONE) {
-                    throw new Exception('JSON decoding error: ' . json_last_error_msg());
+                    throw new FileAccessException('JSON decoding error: ' . json_last_error_msg());
                 }
                 yield $decoded;
                 $this->position++;
@@ -475,30 +427,11 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
         }
     }
 
-    /**
-     * @param list<mixed> $params
-     */
-    private function optionalIntParam(array $params, int $index, int $default): int
+    private function prepareRead(): void
     {
-        $value = $params[$index] ?? $default;
-        if (!is_int($value)) {
-            throw new Exception("Parameter #{$index} must be an integer.");
-        }
-
-        return $value;
-    }
-
-    /**
-     * @param list<mixed> $params
-     */
-    private function optionalStringParam(array $params, int $index, string $default): string
-    {
-        $value = $params[$index] ?? $default;
-        if (!is_string($value)) {
-            throw new Exception("Parameter #{$index} must be a string.");
-        }
-
-        return $value;
+        $this->initiate();
+        $this->file->rewind();
+        $this->resetPosition();
     }
 
     /**
@@ -511,7 +444,7 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
      *
      * @param string $pattern The regex pattern to apply to each line.
      * @return Generator An iterator over the matches from the file.
-     * @throws Exception If the regex pattern is invalid.
+     * @throws FileAccessException If the regex pattern is invalid.
      */
     private function regexIterator(string $pattern): Generator
     {
@@ -523,46 +456,6 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
                 $this->count++;
             }
         }
-    }
-
-    /**
-     * @param list<mixed> $params
-     */
-    private function requireStringParam(array $params, int $index, string $name): string
-    {
-        $value = $params[$index] ?? null;
-        if (!is_string($value) || $value === '') {
-            throw new Exception("Missing or invalid {$name}.");
-        }
-
-        return $value;
-    }
-
-    /**
-     * @param list<mixed> $params
-     * @return list<int>
-     */
-    private function requireWidthsParam(array $params): array
-    {
-        $value = $params[0] ?? null;
-        if (!is_array($value)) {
-            throw new Exception('Missing fixed-width field definitions.');
-        }
-
-        $widths = [];
-        foreach ($value as $width) {
-            if (!is_int($width) || $width < 1) {
-                throw new Exception('Fixed-width definitions must be positive integers.');
-            }
-
-            $widths[] = $width;
-        }
-
-        if ($widths === []) {
-            throw new Exception('At least one fixed-width field definition is required.');
-        }
-
-        return $widths;
     }
 
     /**
@@ -630,7 +523,7 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
      * file. The iteration is terminated when the end of the file is reached.
      *
      * @return Generator An iterator over the deserialized values from the file.
-     * @throws Exception If the data cannot be deserialized.
+     * @throws FileAccessException If the data cannot be deserialized.
      */
     private function serializedIterator(): Generator
     {
@@ -661,6 +554,24 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
     }
 
     /**
+     * @param list<int> $widths
+     * @return list<int>
+     */
+    private function validateWidths(array $widths): array
+    {
+        if ($widths === []) {
+            throw new \InvalidArgumentException('At least one fixed-width field definition is required.');
+        }
+        foreach ($widths as $width) {
+            if ($width < 1) {
+                throw new \InvalidArgumentException('Fixed-width definitions must be positive integers.');
+            }
+        }
+
+        return $widths;
+    }
+
+    /**
      * Reads an XML file and yields each element with the given name.
      *
      * The iterator yields a SimpleXMLElement for each element with the given name.
@@ -670,13 +581,13 @@ final class SafeFileReader implements Countable, Iterator, SeekableIterator
      *
      * @param string $element The name of the element to yield.
      * @return Generator Yields each element with the given name.
-     * @throws Exception If the file cannot be opened or read.
+     * @throws FileAccessException If the file cannot be opened or read.
      */
     private function xmlIterator(string $element): Generator
     {
         $reader = new XMLReader();
         if (!$reader->open($this->localWorkingPath ?? $this->filename)) {
-            throw new Exception("Failed to open XML file: {$this->filename}");
+            throw new FileAccessException("Failed to open XML file: {$this->filename}");
         }
 
         while ($reader->read()) {

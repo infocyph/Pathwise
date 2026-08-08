@@ -7,7 +7,10 @@ namespace Infocyph\Pathwise\DirectoryManager\Concerns;
 use FilesystemIterator;
 use Infocyph\Pathwise\Core\ExecutionStrategy;
 use Infocyph\Pathwise\Exceptions\DirectoryOperationException;
+use Infocyph\Pathwise\Exceptions\NativeExecutionException;
+use Infocyph\Pathwise\Exceptions\UnsupportedStorageOperationException;
 use Infocyph\Pathwise\Native\NativeOperationsAdapter;
+use Infocyph\Pathwise\Security\ZipEntryValidator;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use RecursiveDirectoryIterator;
@@ -249,35 +252,17 @@ trait DirectoryOperationsZipConcern
         return $destination;
     }
 
-    private function sanitizeZipEntryPath(string $entry): string
-    {
-        $normalized = str_replace('\\', '/', $entry);
-        $trimmed = ltrim($normalized, '/');
-        if ($trimmed === '') {
-            return '';
-        }
-
-        $safePath = preg_replace('#/+#', '/', $trimmed) ?? '';
-        $safePath = preg_replace('#(^|/)\./#', '$1', $safePath) ?? $safePath;
-        $trimmedSafePath = rtrim($safePath, '/');
-
-        if (
-            str_contains($trimmedSafePath, "\0")
-            || preg_match('#(^|/)\.\.(/|$)#', $trimmedSafePath) === 1
-            || preg_match('/^[A-Za-z]:($|\/)/', $trimmedSafePath) === 1
-        ) {
-            throw new DirectoryOperationException("Unsafe ZIP entry path detected: {$entry}");
-        }
-
-        if ($trimmedSafePath === '') {
-            return '';
-        }
-
-        return str_ends_with($normalized, '/') ? $trimmedSafePath . '/' : $trimmedSafePath;
-    }
-
     private function tryNativeUnzip(string $localSource, string $source): bool
     {
+        if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
+            if (!$this->isLocalPath($source) || !$this->isLocalPath($this->path)) {
+                throw new UnsupportedStorageOperationException('Native unzip requires local source and destination paths.');
+            }
+            if (!NativeOperationsAdapter::canUseNativeCompression()) {
+                throw new NativeExecutionException('Native ZIP decompression executables are unavailable.');
+            }
+        }
+
         if (
             $this->executionStrategy === ExecutionStrategy::PHP
             || !NativeOperationsAdapter::canUseNativeCompression()
@@ -287,12 +272,14 @@ trait DirectoryOperationsZipConcern
         }
 
         $native = NativeOperationsAdapter::decompressZip($localSource, $this->path);
-        if ($native['success']) {
+        if ($native->success) {
             return true;
         }
 
         if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
-            throw new DirectoryOperationException("Native unzip failed for '{$source}' to '{$this->path}'.");
+            throw new NativeExecutionException(
+                "Native unzip failed with exit code {$native->exitCode}: " . implode("\n", $native->output),
+            );
         }
 
         return false;
@@ -300,6 +287,15 @@ trait DirectoryOperationsZipConcern
 
     private function tryNativeZip(string $destination, bool $useLocalDestination): bool
     {
+        if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
+            if (!$this->isLocalPath($this->path) || !$useLocalDestination) {
+                throw new UnsupportedStorageOperationException('Native zip requires local source and destination paths.');
+            }
+            if (!NativeOperationsAdapter::canUseNativeCompression()) {
+                throw new NativeExecutionException('Native ZIP compression executables are unavailable.');
+            }
+        }
+
         if (
             $this->executionStrategy === ExecutionStrategy::PHP
             || !NativeOperationsAdapter::canUseNativeCompression()
@@ -310,12 +306,14 @@ trait DirectoryOperationsZipConcern
         }
 
         $native = NativeOperationsAdapter::compressToZip($this->path, $destination);
-        if ($native['success']) {
+        if ($native->success) {
             return true;
         }
 
         if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
-            throw new DirectoryOperationException("Native zip failed for '{$this->path}' to '{$destination}'.");
+            throw new NativeExecutionException(
+                "Native zip failed with exit code {$native->exitCode}: " . implode("\n", $native->output),
+            );
         }
 
         return false;
@@ -331,23 +329,10 @@ trait DirectoryOperationsZipConcern
             throw new DirectoryOperationException("Unable to open ZIP source: {$source}");
         }
 
-        $validatedEntries = [];
-
         try {
-            for ($i = 0; $i < $zip->numFiles; $i++) {
-                $entryName = $zip->getNameIndex($i);
-                if (!is_string($entryName)) {
-                    $validatedEntries[$i] = '';
-
-                    continue;
-                }
-
-                $validatedEntries[$i] = $this->sanitizeZipEntryPath($entryName);
-            }
+            return ZipEntryValidator::validateArchive($zip, $this->path);
         } finally {
             $zip->close();
         }
-
-        return $validatedEntries;
     }
 }
