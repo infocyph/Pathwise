@@ -107,19 +107,19 @@ risk but do not replace responsible disclosure or manual review.
   <a href="SECURITY.md">Security</a> •
   <a href="CODE_OF_CONDUCT.md">Code of Conduct</a> •
   <a href="CONTRIBUTING.md">Contributing</a><br />
-  <sub>Issues:</sub>
+  <span title="Issue templates" aria-label="Issue templates">🗂️</span>
   <a href="https://github.com/infocyph/Pathwise/issues/new?template=bug_report.yml">Bug</a> •
   <a href="https://github.com/infocyph/Pathwise/issues/new?template=feature_request.yml">Feature</a> •
   <a href="https://github.com/infocyph/Pathwise/issues/new?template=docs_improvement.yml">Documentation</a> •
   <a href="https://github.com/infocyph/Pathwise/issues/new?template=question.yml">Question</a> •
   <a href="https://github.com/infocyph/Pathwise/issues/new?template=ci_failure.yml">CI failure</a><br />
-  <sub>Pull requests:</sub>
-  <a href=".github/PULL_REQUEST_TEMPLATE.md">General</a> •
-  <a href=".github/PULL_REQUEST_TEMPLATE/bug_fix.md">Bug fix</a> •
-  <a href=".github/PULL_REQUEST_TEMPLATE/feature.md">Feature</a> •
-  <a href=".github/PULL_REQUEST_TEMPLATE/refactor.md">Refactor</a> •
-  <a href=".github/PULL_REQUEST_TEMPLATE/performance.md">Performance</a> •
-  <a href=".github/PULL_REQUEST_TEMPLATE/security_reliability.md">Security &amp; reliability</a> •
-  <a href=".github/PULL_REQUEST_TEMPLATE/documentation.md">Documentation</a> •
-  <a href=".github/PULL_REQUEST_TEMPLATE/maintenance.md">Maintenance</a>
+  <span title="Pull request templates" aria-label="Pull request templates">🔀</span>
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=PULL_REQUEST_TEMPLATE.md">General</a> •
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=bug_fix.md">Bug fix</a> •
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=feature.md">Feature</a> •
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=refactor.md">Refactor</a> •
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=performance.md">Performance</a> •
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=security_reliability.md">Security &amp; reliability</a> •
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=documentation.md">Documentation</a> •
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=maintenance.md">Maintenance</a>
 </div>
