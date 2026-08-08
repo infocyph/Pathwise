@@ -4,4 +4,4 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\Exceptions;
 
-class UploadException extends \Exception {}
+class UploadException extends \Exception implements PathwiseException {}

@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Infocyph\Pathwise\Utils\FileWatcher;
+use Infocyph\Pathwise\Results\SnapshotDiff;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use League\Flysystem\Filesystem;
 use League\Flysystem\Local\LocalFilesystemAdapter;
@@ -50,13 +51,22 @@ test('it creates snapshot and diff reports', function () {
     $snapshotB = FileWatcher::snapshot($this->watchDir);
     $diff = FileWatcher::diff($snapshotA, $snapshotB);
 
-    expect($diff['created'])->toContain($fileB)
-        ->and($diff['modified'])->toContain($fileA);
+    expect($diff->created)->toContain($fileB)
+        ->and($diff->modified)->toContain($fileA);
 });
 
 test('it watches directory changes with callback', function () {
     if (!function_exists('pcntl_fork') || !function_exists('pcntl_waitpid')) {
-        $this->markTestSkipped('pcntl not available in this environment.');
+        $events = [];
+        $result = FileWatcher::watch($this->watchDir, function (SnapshotDiff $diff) use (&$events) {
+            $events[] = $diff;
+        }, durationSeconds: 1, intervalMilliseconds: 10);
+
+        expect($events)->toBeEmpty()
+            ->and($result->changeSets)->toBe(0)
+            ->and($result->finalSnapshot)->toBeArray();
+
+        return;
     }
 
     $events = [];
@@ -71,7 +81,7 @@ test('it watches directory changes with callback', function () {
         throw new RuntimeException('Failed to terminate child process.');
     }
 
-    FileWatcher::watch($this->watchDir, function (array $diff) use (&$events) {
+    FileWatcher::watch($this->watchDir, function (SnapshotDiff $diff) use (&$events) {
         $events[] = $diff;
     }, durationSeconds: 2, intervalMilliseconds: 100);
 
@@ -90,6 +100,6 @@ test('it supports snapshots for mounted paths', function () {
     $snapshotB = FileWatcher::snapshot('watch://');
     $diff = FileWatcher::diff($snapshotA, $snapshotB);
 
-    expect($diff['created'])->toContain('watch://b.txt')
-        ->and($diff['modified'])->toContain('watch://a.txt');
+    expect($diff->created)->toContain('watch://b.txt')
+        ->and($diff->modified)->toContain('watch://a.txt');
 });

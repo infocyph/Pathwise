@@ -102,8 +102,11 @@ test('it fails to decompress with an incorrect password', function () {
     $failedDecompressor->setPassword('wrongpassword');
 
     expect(fn () => $failedDecompressor->decompress($decompressDir))
-        ->toThrow(CompressionException::class, 'Failed to extract ZIP archive');
+        ->toThrow(CompressionException::class, 'Unable to extract ZIP entry');
 
+    foreach (glob($decompressDir . DIRECTORY_SEPARATOR . '*') ?: [] as $partialFile) {
+        unlink($partialFile);
+    }
     rmdir($decompressDir);
 });
 

@@ -24,7 +24,13 @@ jobs:
       psalm_threads: "1"
       run_analysis: true
       run_svg_report: true
-      fail_on_skipped_tests: false
+      fail_on_skipped_tests: true
+      run_clean_install: true
+      benchmark_composer_script: ""
+      benchmark_result_file: ""
+      benchmark_baseline_file: ""
+      benchmark_max_regression_percent: 2
+      benchmark_stable_environment: false
       enable_redis_service: false
       enable_valkey_service: false
       enable_memcached_service: false
@@ -37,3 +43,45 @@ jobs:
       service_db_user: "phpforge"
       service_db_password: "phpforge"
       artifact_retention_days: 61
+
+  windows:
+    name: "Windows / PHP ${{ matrix.php }}"
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ["8.4", "8.5"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Set up PHP"
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "${{ matrix.php }}"
+          extensions: "fileinfo, simplexml, xmlreader, zip"
+          coverage: none
+          tools: composer:v2
+      - name: "Install dependencies"
+        run: composer install --no-interaction --prefer-dist
+      - name: "Run platform tests"
+        run: composer ic:test:code
+
+  adapter-contracts:
+    name: "Optional adapter contracts"
+    runs-on: ubuntu-latest
+    env:
+      PATHWISE_REQUIRE_ADAPTER_CONTRACTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Set up PHP"
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: "fileinfo, simplexml, xmlreader, zip"
+          coverage: none
+          tools: composer:v2
+      - name: "Install project and contract adapters"
+        run: |
+          composer install --no-interaction --prefer-dist
+          composer require --dev --no-interaction --prefer-dist league/flysystem-memory:^3 league/flysystem-read-only:^3 league/flysystem-path-prefixing:^3
+      - name: "Run adapter contracts"
+        run: composer ic:test:code

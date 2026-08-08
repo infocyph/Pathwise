@@ -12,7 +12,7 @@ use League\Flysystem\Local\LocalFilesystemAdapter;
 beforeEach(function () {
     FlysystemHelper::reset();
     $this->uploadProcessor = new UploadProcessor();
-    $this->uploadDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('upload_dir_', true);
+    $this->uploadDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('upload dir_~', true);
 });
 
 afterEach(function () {
@@ -48,6 +48,11 @@ test('it creates upload directory when configured', function () {
         ->toBeTrue()
         ->and($info['uploadDir'])->toContain($this->uploadDir);
 });
+
+test('it rejects empty and null-byte directory paths', function (string $path) {
+    expect(fn() => $this->uploadProcessor->setDirectorySettings($path))
+        ->toThrow(UploadException::class, 'Invalid upload directory path');
+})->with(['empty path' => '', 'null-byte path' => "invalid\0path"]);
 
 test('it throws for invalid upload parameters', function () {
     $this->uploadProcessor->setDirectorySettings($this->uploadDir);
@@ -122,7 +127,7 @@ test('it supports chunked upload and finalize flow', function () {
             'name' => "chunk_{$index}.part",
         ], $uploadId, $index, count($parts), 'merged.txt');
 
-        expect($result['receivedChunks'])->toBe($index + 1);
+        expect($result->receivedChunks)->toBe($index + 1);
     }
 
     $finalPath = $this->uploadProcessor->finalizeChunkUpload($uploadId);

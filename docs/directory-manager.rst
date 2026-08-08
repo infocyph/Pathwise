@@ -14,12 +14,13 @@ Where it fits:
 * Recursive ``copy()``, ``move()``, ``delete()``.
 * Listing and discovery: ``listContents()``, ``flatten()``, ``find()``.
 * Metrics and structure helpers: ``size()``, ``getDepth()``.
-* Sync API with diff report: ``syncTo()``.
+* Lazy sync API returning ``SyncReport`` with configurable ``SyncComparison``.
 * Archive helpers: ``zip()`` and ``unzip()``.
 
 Flysystem-aware behavior:
 
-* Works with local paths and mounted scheme paths.
+* Storage-neutral workflows work with local and mounted paths when the adapter
+  provides their capabilities; POSIX permissions and direct iterators are local-only.
 * Uses storage-safe resolution for relative paths.
 * Can bridge non-local ZIP source/destination through temporary streaming.
 

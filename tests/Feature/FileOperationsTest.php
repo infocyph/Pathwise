@@ -45,6 +45,19 @@ test('it appends content to a file', function () {
     expect(file_get_contents($this->filePath))->toBe("Line 1\nLine 2");
 });
 
+test('it appends to a large local file without replacing it', function () {
+    $initial = str_repeat('0123456789abcdef', 128 * 1024);
+    $this->fileOperations->create($initial);
+    $inodeBefore = fileinode($this->filePath);
+
+    expect($this->fileOperations->append('tail'))->toBe($this->fileOperations)
+        ->and(filesize($this->filePath))->toBe(strlen($initial) + 4);
+
+    if (PHP_OS_FAMILY !== 'Windows') {
+        expect(fileinode($this->filePath))->toBe($inodeBefore);
+    }
+});
+
 test('it deletes a file', function () {
     $this->fileOperations->create();
     $this->fileOperations->delete();

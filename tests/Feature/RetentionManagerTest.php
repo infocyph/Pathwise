@@ -61,8 +61,8 @@ test('it keeps only latest files when keepLast is set', function () {
 
     $report = RetentionManager::apply($this->retentionDir, keepLast: 2);
 
-    expect($report['kept'])->toHaveCount(2)
-        ->and($report['deleted'])->toHaveCount(1);
+    expect($report->kept)->toHaveCount(2)
+        ->and($report->deleted)->toHaveCount(1);
 });
 
 test('it deletes files older than maxAgeDays', function () {
@@ -75,8 +75,8 @@ test('it deletes files older than maxAgeDays', function () {
 
     $report = RetentionManager::apply($this->retentionDir, keepLast: null, maxAgeDays: 1);
 
-    expect($report['deleted'])->toContain($old)
-        ->and($report['kept'])->toContain($new)
+    expect($report->deleted)->toContain($old)
+        ->and($report->kept)->toContain($new)
         ->and(is_file($old))->toBeFalse();
 });
 
@@ -89,8 +89,8 @@ test('it applies retention rules on mounted paths', function () {
 
     $report = RetentionManager::apply('ret://', keepLast: 2);
 
-    expect($report['kept'])->toHaveCount(2)
-        ->and($report['deleted'])->toHaveCount(1);
+    expect($report->kept)->toHaveCount(2)
+        ->and($report->deleted)->toHaveCount(1);
 });
 
 test('it rejects invalid retention options', function () {

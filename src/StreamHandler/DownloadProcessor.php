@@ -7,6 +7,9 @@ namespace Infocyph\Pathwise\StreamHandler;
 use Infocyph\Pathwise\Exceptions\DownloadException;
 use Infocyph\Pathwise\Exceptions\FileNotFoundException;
 use Infocyph\Pathwise\Exceptions\FileSizeExceededException;
+use Infocyph\Pathwise\Results\DownloadPreparation;
+use Infocyph\Pathwise\Results\DownloadStreamResult;
+use Infocyph\Pathwise\Results\RangeDownloadMetadata;
 use Infocyph\Pathwise\Utils\ExtensionPolicy;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\MetadataHelper;
@@ -41,25 +44,15 @@ class DownloadProcessor
      * @param string $path The file path to download.
      * @param string|null $downloadName The desired download filename (null to use original).
      * @param string|null $rangeHeader The HTTP Range header value (null for no range).
-     * @return array{
-     *   path: string,
-     *   fileName: string,
-     *   mimeType: string,
-     *   size: int,
-     *   lastModified: int,
-     *   etag: string,
-     *   status: int,
-     *   rangeStart: int,
-     *   rangeEnd: int,
-     *   contentLength: int,
-     *   headers: array<string, string>
-     * } The download metadata array.
      * @throws DownloadException If the file is hidden and blocked.
      * @throws FileNotFoundException If the file doesn't exist.
      * @throws FileSizeExceededException If the file exceeds max download size.
      */
-    public function prepareDownload(string $path, ?string $downloadName = null, ?string $rangeHeader = null): array
-    {
+    public function prepareDownload(
+        string $path,
+        ?string $downloadName = null,
+        ?string $rangeHeader = null,
+    ): DownloadPreparation {
         $normalizedPath = PathHelper::normalize($path);
         $this->validateDownloadPath($normalizedPath);
 
@@ -95,19 +88,17 @@ class DownloadProcessor
             $headers['Content-Range'] = sprintf('bytes %d-%d/%d', $rangeStart, $rangeEnd, $size);
         }
 
-        return [
-            'path' => $normalizedPath,
-            'fileName' => $resolvedFileName,
-            'mimeType' => $mimeType,
-            'size' => $size,
-            'lastModified' => $lastModified,
-            'etag' => $etag,
-            'status' => $isPartial ? 206 : 200,
-            'rangeStart' => $rangeStart,
-            'rangeEnd' => $rangeEnd,
-            'contentLength' => $contentLength,
-            'headers' => $headers,
-        ];
+        return new DownloadPreparation(
+            path: $normalizedPath,
+            fileName: $resolvedFileName,
+            mimeType: $mimeType,
+            size: $size,
+            lastModified: $lastModified,
+            etag: $etag,
+            status: $isPartial ? 206 : 200,
+            range: new RangeDownloadMetadata($rangeStart, $rangeEnd, $contentLength, $isPartial),
+            headers: $headers,
+        );
     }
 
     /**
@@ -210,20 +201,6 @@ class DownloadProcessor
      * @param mixed $outputStream The output stream resource to write to.
      * @param string|null $downloadName The desired download filename (null to use original).
      * @param string|null $rangeHeader The HTTP Range header value (null for no range).
-     * @return array{
-     *   path: string,
-     *   fileName: string,
-     *   mimeType: string,
-     *   size: int,
-     *   lastModified: int,
-     *   etag: string,
-     *   status: int,
-     *   rangeStart: int,
-     *   rangeEnd: int,
-     *   contentLength: int,
-     *   bytesSent: int,
-     *   headers: array<string, string>
-     * } The download manifest with bytes sent.
      * @throws DownloadException If the output stream is invalid or download fails.
      */
     public function streamDownload(
@@ -231,22 +208,22 @@ class DownloadProcessor
         mixed $outputStream,
         ?string $downloadName = null,
         ?string $rangeHeader = null,
-    ): array {
+    ): DownloadStreamResult {
         if (!is_resource($outputStream)) {
             throw new DownloadException('Invalid output stream.');
         }
 
         $manifest = $this->prepareDownload($path, $downloadName, $rangeHeader);
 
-        $inputStream = FlysystemHelper::readStream($manifest['path']);
+        $inputStream = FlysystemHelper::readStream($manifest->path);
         if (!is_resource($inputStream)) {
             throw new DownloadException('Unable to open input stream for download.');
         }
 
         try {
-            $this->seekStreamToOffset($inputStream, $manifest['rangeStart']);
+            $this->seekStreamToOffset($inputStream, $manifest->range->start);
 
-            $remaining = $manifest['contentLength'];
+            $remaining = $manifest->range->contentLength;
             $bytesSent = 0;
             while ($remaining > 0) {
                 $chunk = fread($inputStream, $this->readLength($remaining));
@@ -262,13 +239,11 @@ class DownloadProcessor
             fclose($inputStream);
         }
 
-        if ($bytesSent !== $manifest['contentLength']) {
+        if ($bytesSent !== $manifest->range->contentLength) {
             throw new DownloadException('Incomplete download stream copy.');
         }
 
-        $manifest['bytesSent'] = $bytesSent;
-
-        return $manifest;
+        return new DownloadStreamResult($manifest, $bytesSent);
     }
 
     private function buildContentDisposition(string $disposition, string $fileName): string

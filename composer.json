@@ -1,6 +1,6 @@
 {
     "name": "infocyph/pathwise",
-    "description": "File management made simple.",
+    "description": "High-level PHP filesystem workflows powered by Flysystem, including safe I/O, uploads, downloads, archives, directory synchronization, retention, policy enforcement, auditing and storage adapters.",
     "license": "MIT",
     "type": "library",
     "authors": [
@@ -15,10 +15,9 @@
         "league/flysystem": "^3.35.2"
     },
     "require-dev": {
-        "infocyph/phpforge": "dev-main"
+        "infocyph/phpforge": "dev-main@dev"
     },
     "suggest": {
-        "ext-pcntl": "required if you want to use long-running watch loops.",
         "ext-posix": "required if you want to use permissions.",
         "ext-simplexml": "required if you want to use XML parsing.",
         "ext-xmlreader": "required if you want to use XML parsing.",
@@ -42,10 +41,7 @@
     "autoload": {
         "psr-4": {
             "Infocyph\\Pathwise\\": "src/"
-        },
-        "files": [
-            "src/functions.php"
-        ]
+        }
     },
     "config": {
         "allow-plugins": {
@@ -53,7 +49,6 @@
             "infocyph/phpforge": true,
             "pestphp/pest-plugin": true
         },
-        "classmap-authoritative": true,
         "optimize-autoloader": true,
         "sort-packages": true
     }

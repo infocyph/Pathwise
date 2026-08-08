@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace Infocyph\Pathwise\Utils;
 
 use FilesystemIterator;
+use Infocyph\Pathwise\Results\SnapshotDiff;
+
+use Infocyph\Pathwise\Results\WatchResult;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 
@@ -20,9 +23,8 @@ final class FileWatcher
      *
      * @param SnapshotMap $previousSnapshot The previous snapshot data.
      * @param SnapshotMap $currentSnapshot The current snapshot data.
-     * @return DiffReport The diff report with created, modified, and deleted files.
      */
-    public static function diff(array $previousSnapshot, array $currentSnapshot): array
+    public static function diff(array $previousSnapshot, array $currentSnapshot): SnapshotDiff
     {
         $created = [];
         $modified = [];
@@ -47,11 +49,7 @@ final class FileWatcher
             }
         }
 
-        return [
-            'created' => $created,
-            'modified' => $modified,
-            'deleted' => $deleted,
-        ];
+        return new SnapshotDiff($created, $modified, $deleted);
     }
 
     /**
@@ -127,7 +125,6 @@ final class FileWatcher
      * @param int $durationSeconds How long to watch in seconds. Defaults to 5.
      * @param int $intervalMilliseconds Polling interval in milliseconds. Defaults to 500.
      * @param bool $recursive Whether to watch subdirectories. Defaults to true.
-     * @return SnapshotMap Final snapshot.
      */
     public static function watch(
         string $path,
@@ -135,23 +132,25 @@ final class FileWatcher
         int $durationSeconds = 5,
         int $intervalMilliseconds = 500,
         bool $recursive = true,
-    ): array {
+    ): WatchResult {
         $snapshot = self::snapshot($path, $recursive);
         $endAt = microtime(true) + max(1, $durationSeconds);
+        $changeSets = 0;
 
         while (microtime(true) < $endAt) {
             usleep(max(10, $intervalMilliseconds) * 1000);
             $current = self::snapshot($path, $recursive);
             $diff = self::diff($snapshot, $current);
 
-            if ($diff['created'] !== [] || $diff['modified'] !== [] || $diff['deleted'] !== []) {
+            if (!$diff->isEmpty()) {
                 $onChange($diff);
+                $changeSets++;
             }
 
             $snapshot = $current;
         }
 
-        return $snapshot;
+        return new WatchResult($snapshot, $changeSets);
     }
 
     /**

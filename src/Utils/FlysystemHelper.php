@@ -232,6 +232,17 @@ final class FlysystemHelper
     }
 
     /**
+     * Determine whether a path is handled directly by the local filesystem.
+     *
+     * Relative paths are adapter-backed when a default filesystem is configured.
+     */
+    public static function isLocalPath(string $path): bool
+    {
+        return !PathHelper::hasScheme($path)
+            && (PathHelper::isAbsolute($path) || self::$defaultFilesystem === null);
+    }
+
+    /**
      * Get the last modified timestamp of a file.
      *
      * @param string $path The file path.

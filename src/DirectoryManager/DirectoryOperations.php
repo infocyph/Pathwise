@@ -6,10 +6,13 @@ namespace Infocyph\Pathwise\DirectoryManager;
 
 use FilesystemIterator;
 use Infocyph\Pathwise\Core\ExecutionStrategy;
+use Infocyph\Pathwise\Core\SyncComparison;
 use Infocyph\Pathwise\DirectoryManager\Concerns\DirectoryOperationsEntryConcern;
 use Infocyph\Pathwise\DirectoryManager\Concerns\DirectoryOperationsSyncConcern;
 use Infocyph\Pathwise\DirectoryManager\Concerns\DirectoryOperationsZipConcern;
 use Infocyph\Pathwise\Exceptions\DirectoryOperationException;
+use Infocyph\Pathwise\Exceptions\UnsupportedStorageOperationException;
+use Infocyph\Pathwise\Results\SyncReport;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use Infocyph\Pathwise\Utils\PermissionsHelper;
@@ -34,12 +37,6 @@ use RecursiveIteratorIterator;
  *     permissions?: int,
  *     minSize?: int,
  *     maxSize?: int
- * }
- * @phpstan-type SyncReport array{
- *     created: list<string>,
- *     updated: list<string>,
- *     deleted: list<string>,
- *     unchanged: list<string>
  * }
  */
 class DirectoryOperations
@@ -66,9 +63,8 @@ class DirectoryOperations
      * Copies the contents of the directory to the specified destination.
      *
      * @param string $destination The path to the destination directory.
-     * @return bool True if the copy operation was successful, false otherwise.
      */
-    public function copy(string $destination, ?callable $progress = null): bool
+    public function copy(string $destination, ?callable $progress = null): self
     {
         if (!FlysystemHelper::directoryExists($this->path)) {
             throw new DirectoryOperationException("Source directory does not exist: {$this->path}");
@@ -80,7 +76,7 @@ class DirectoryOperations
         }
 
         if ($this->attemptNativeCopy($destination, $progress)) {
-            return true;
+            return $this;
         }
 
         $this->emitCopyProgress($progress, 0);
@@ -89,7 +85,7 @@ class DirectoryOperations
 
         $this->emitCopyProgress($progress, 1);
 
-        return true;
+        return $this;
     }
 
     /**
@@ -97,16 +93,15 @@ class DirectoryOperations
      *
      * @param int $permissions The permissions to set for the newly created directory.
      * @param bool $recursive Whether to create the directory recursively.
-     * @return bool True if the directory was successfully created, false otherwise.
      */
-    public function create(int $permissions = 0755, bool $recursive = true): bool
+    public function create(int $permissions = 0755, bool $recursive = true): self
     {
         if (FlysystemHelper::directoryExists($this->path)) {
-            return true;
+            return $this;
         }
 
         if (!$recursive && !$this->parentDirectoryExists($this->path)) {
-            return false;
+            throw new DirectoryOperationException("Parent directory does not exist: {$this->path}");
         }
 
         FlysystemHelper::createDirectory($this->path);
@@ -114,7 +109,7 @@ class DirectoryOperations
             $this->applyPermissionsSilently($this->path, $permissions);
         }
 
-        return true;
+        return $this;
     }
 
     /**
@@ -136,27 +131,26 @@ class DirectoryOperations
      * Deletes the directory.
      *
      * @param bool $recursive Whether to delete the contents of the directory first.
-     * @return bool True if the directory was successfully deleted, false otherwise.
      */
-    public function delete(bool $recursive = false): bool
+    public function delete(bool $recursive = false): self
     {
         if (!FlysystemHelper::directoryExists($this->path)) {
-            return true;
+            return $this;
         }
 
         if ($recursive) {
             FlysystemHelper::deleteDirectory($this->path);
 
-            return true;
+            return $this;
         }
 
         foreach (FlysystemHelper::listContentsListing($this->path, false) as $_item) {
-            return false;
+            throw new DirectoryOperationException("Directory is not empty: {$this->path}");
         }
 
         FlysystemHelper::deleteDirectory($this->path);
 
-        return true;
+        return $this;
     }
 
     /**
@@ -240,7 +234,9 @@ class DirectoryOperations
     public function getIterator(): RecursiveIteratorIterator
     {
         if (!$this->isLocalPath($this->path) || !is_dir($this->path)) {
-            throw new DirectoryOperationException("Iterator is only available for local directories: {$this->path}");
+            throw new UnsupportedStorageOperationException(
+                "Native iteration is only available for local directories: {$this->path}",
+            );
         }
 
         return new RecursiveIteratorIterator(
@@ -256,7 +252,9 @@ class DirectoryOperations
     public function getPermissions(): int
     {
         if (!$this->isLocalPath($this->path) || !file_exists($this->path)) {
-            throw new DirectoryOperationException("Unable to retrieve permissions for non-local directory: {$this->path}");
+            throw new UnsupportedStorageOperationException(
+                "POSIX permissions are only available for local directories: {$this->path}",
+            );
         }
 
         $permissions = fileperms($this->path);
@@ -345,17 +343,18 @@ class DirectoryOperations
      * Moves the directory to the given destination.
      *
      * @param string $destination The path to move the directory to.
-     * @return bool True if the directory was successfully moved, false otherwise.
      */
-    public function move(string $destination): bool
+    public function move(string $destination): self
     {
         if (!FlysystemHelper::directoryExists($this->path)) {
-            return false;
+            throw new DirectoryOperationException("Directory does not exist: {$this->path}");
         }
 
         FlysystemHelper::moveDirectory($this->path, PathHelper::normalize($destination));
 
-        return true;
+        $this->path = PathHelper::normalize($destination);
+
+        return $this;
     }
 
     /**
@@ -375,15 +374,20 @@ class DirectoryOperations
      * Set the permissions of the directory to the given value.
      *
      * @param int $permissions The new permissions for the directory.
-     * @return bool True if the permissions were successfully set, false otherwise.
      */
-    public function setPermissions(int $permissions): bool
+    public function setPermissions(int $permissions): self
     {
         if (!$this->isLocalPath($this->path) || !file_exists($this->path)) {
-            throw new DirectoryOperationException("Unable to set permissions for non-local directory: {$this->path}");
+            throw new UnsupportedStorageOperationException(
+                "POSIX permissions are only available for local directories: {$this->path}",
+            );
         }
 
-        return chmod($this->path, $permissions);
+        if (!chmod($this->path, $permissions)) {
+            throw new DirectoryOperationException("Unable to set permissions for directory: {$this->path}");
+        }
+
+        return $this;
     }
 
     /**
@@ -424,11 +428,13 @@ class DirectoryOperations
 
     /**
      * Mirror the source directory to destination and return a diff report.
-     *
-     * @return SyncReport
      */
-    public function syncTo(string $destination, bool $deleteOrphans = true, ?callable $progress = null): array
-    {
+    public function syncTo(
+        string $destination,
+        bool $deleteOrphans = true,
+        ?callable $progress = null,
+        ?SyncComparison $comparison = null,
+    ): SyncReport {
         $this->assertSourceDirectoryExists();
         $destination = $this->ensureDirectoryExists($destination);
         $report = $this->newSyncReport();
@@ -436,7 +442,9 @@ class DirectoryOperations
 
         $sourceLocation = $this->storageLocation($this->path);
         $sourceItems = $this->listStorageEntries($this->path, true);
-        $total = count($sourceItems);
+        $comparison ??= $this->isLocalPath($this->path) && $this->isLocalPath($destination)
+            ? SyncComparison::SIZE_AND_MODIFIED_TIME
+            : SyncComparison::SIZE;
         $current = 0;
 
         foreach ($sourceItems as $item) {
@@ -446,8 +454,8 @@ class DirectoryOperations
             }
 
             $current++;
-            $this->syncOneItem($destination, $relative, $item, $sourceEntries, $report);
-            $this->emitSyncProgress($progress, $relative, $current, $total);
+            $this->syncOneItem($destination, $relative, $item, $sourceEntries, $report, $comparison);
+            $this->emitSyncProgress($progress, $relative, $current, null);
         }
 
         if ($deleteOrphans) {
@@ -461,9 +469,8 @@ class DirectoryOperations
      * Extracts the contents of a zip file to the directory represented by this object.
      *
      * @param string $source The path to the zip file.
-     * @return bool True if the extraction was successful, false otherwise.
      */
-    public function unzip(string $source): bool
+    public function unzip(string $source): self
     {
         $source = PathHelper::normalize($source);
         $this->assertZipSourceExists($source);
@@ -474,12 +481,12 @@ class DirectoryOperations
             $validatedEntries = $this->validateZipEntries($localSource, $source);
 
             if ($this->tryNativeUnzip($localSource, $source)) {
-                return true;
+                return $this;
             }
 
             $this->extractZipContents($localSource, $source, $validatedEntries);
 
-            return true;
+            return $this;
         } finally {
             $this->cleanupTemporaryFile($cleanupSource, $localSource);
         }
@@ -504,16 +511,15 @@ class DirectoryOperations
      * Zip the contents of the directory to a file.
      *
      * @param string $destination The path to the zip file.
-     * @return bool True if the zip was created successfully, false otherwise.
      */
-    public function zip(string $destination): bool
+    public function zip(string $destination): self
     {
         $this->assertSourceDirectoryExists();
         $destination = PathHelper::normalize($destination);
         $useLocalDestination = $this->isLocalPath($destination);
 
         if ($this->tryNativeZip($destination, $useLocalDestination)) {
-            return true;
+            return $this;
         }
 
         $zipPath = $this->prepareZipPath($destination, $useLocalDestination);
@@ -529,7 +535,7 @@ class DirectoryOperations
             $this->persistZipToDestination($zipPath, $destination);
         }
 
-        return true;
+        return $this;
     }
 
     /**

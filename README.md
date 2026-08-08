@@ -1,90 +1,47 @@
-# Pathwise: File Management Made Simple
+# Pathwise
 
 [![Security & Standards](https://github.com/infocyph/Pathwise/actions/workflows/security-standards.yml/badge.svg)](https://github.com/infocyph/Pathwise/actions/workflows/security-standards.yml)
-[![Documentation](https://img.shields.io/badge/Documentation-Pathwise-blue?logo=readthedocs&logoColor=white)](https://docs.infocyph.com/projects/pathwise/)
-![Packagist Downloads](https://img.shields.io/packagist/dt/infocyph/pathwise?color=green&link=https%3A%2F%2Fpackagist.org%2Fpackages%2Finfocyph%2Fpathwise)
+![Packagist Downloads](https://img.shields.io/packagist/dt/infocyph/Pathwise?color=green\&link=https%3A%2F%2Fpackagist.org%2Fpackages%2Finfocyph%2FPathwise)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-![Packagist Version](https://img.shields.io/packagist/v/infocyph/pathwise)
-![Packagist PHP Version](https://img.shields.io/packagist/dependency-v/infocyph/pathwise/php)
-![GitHub Code Size](https://img.shields.io/github/languages/code-size/infocyph/pathwise)
+![Packagist Version](https://img.shields.io/packagist/v/infocyph/Pathwise)
+![Packagist PHP Version](https://img.shields.io/packagist/dependency-v/infocyph/Pathwise/php)
+![GitHub Code Size](https://img.shields.io/github/languages/code-size/infocyph/Pathwise)
+[![Documentation](https://img.shields.io/badge/Documentation-Pathwise-blue?logo=readthedocs&logoColor=white)](https://docs.infocyph.com/projects/Pathwise/en/latest/)
 
-Pathwise is a robust PHP library designed as streamlined file and directory management. It combines storage operations with higher-level workflows like safe reading/writing, metadata extraction, compression, upload pipelines, policy enforcement and observability.
+High-level PHP filesystem workflows powered by Flysystem, including safe I/O, uploads, downloads, archives, directory synchronization, retention, policy enforcement, auditing and storage adapters.
 
-## **Table of Contents**
-1. [Introduction](#pathwise-file-management-made-simple)
-2. [Prerequisites](#prerequisites)
-3. [Installation](#installation)
-4. [Features Overview](#features-overview)
-5. [Quality Gates](#quality-gates)
-6. [FileManager](#filemanager)
-    - [SafeFileReader](#safefilereader)
-    - [SafeFileWriter](#safefilewriter)
-    - [FileOperations](#fileoperations)
-    - [FileCompression](#filecompression)
-7. [DirectoryManager](#directorymanager)
-    - [DirectoryOperations](#directoryoperations)
-8. [Utils](#utils)
-    - [PathHelper](#pathhelper)
-    - [PermissionsHelper](#permissionshelper)
-    - [MetadataHelper](#metadatahelper)
-9. [Storage Adapter Setup](#storage-adapter-setup)
-10. [Handy Functions](#handy-functions)
-   - [File and Directory Utilities](#file-and-directory-utilities)
-11. [Support](#support)
-12. [License](#license)
+Pathwise 3.0 requires PHP 8.4 or newer. It is a direct breaking release: reader and writer methods are explicit, complex operations return readonly result objects, and unsupported mounted-storage operations fail with focused exceptions.
 
-## **Prerequisites**
-- Language: PHP 8.4/+
-
-## **Installation**
-Pathwise is available via Composer:
+## Installation
 
 ```bash
 composer require infocyph/pathwise
 ```
 
-Requirements:
-- PHP 8.4 or higher
-- `ext-fileinfo`
-- Optional Extensions:
-    - `ext-zip`: Required for compression features.
-    - `ext-pcntl`: Required for long-running watch loops.
-    - `ext-posix`: Required for permission handling.
-    - `ext-xmlreader` and `ext-simplexml`: Required for XML parsing.
+`ext-fileinfo` is required. ZIP and XML features check for `ext-zip`, `ext-xmlreader`, and `ext-simplexml` at runtime and report a clear `MissingExtensionException` when unavailable.
 
----
+## Quick start
 
-## **Features Overview**
+```php
+use Infocyph\Pathwise\FileManager\FileOperations;
+use Infocyph\Pathwise\FileManager\SafeFileReader;
+use Infocyph\Pathwise\FileManager\SafeFileWriter;
 
-- Filesystem operations across core modules.
-- Mount support with scheme paths (`name://path`) and default filesystem support for relative paths.
-- Config-driven storage bootstrap via `StorageFactory` for local/custom/adapter-based filesystems.
-- Unified entry facade via `Infocyph\Pathwise\PathwiseFacade` for file/dir/processors/storage/tooling.
-- Advanced file APIs: checksum verification, visibility controls, URL passthrough (`publicUrl`, `temporaryUrl`).
-- Directory automation: sync with diff report, recursive copy/move/delete, mounted-path ZIP/unzip bridging.
-- Upload/download pipelines: chunked/resumable uploads, validation profiles (image/video/document), extension allow/deny controls, strict MIME/signature checks, upload-id safety validation, malware-scan hook, secure download metadata + range handling.
-- Compression workflows: include/exclude glob patterns, ignore files, progress callbacks, hooks, optional native acceleration.
-- Operational tooling: `AuditTrail`, `FileJobQueue`, `FileWatcher`, `RetentionManager` and policy engine support.
+$file = new FileOperations('/tmp/example.txt');
+$file->create('hello')->append("\nworld");
 
-## **Storage Adapter Setup**
+foreach ((new SafeFileReader('/tmp/example.txt'))->lines() as $line) {
+    echo $line;
+}
 
-Pathwise supports any Flysystem adapter. You can mount storages through `StorageFactory` and use them with all modules (`UploadProcessor`, `DownloadProcessor`, `FileOperations`, etc.).
+$writer = new SafeFileWriter('/tmp/events.json');
+$writer->writeJson(['status' => 'ready']);
+$writer->close();
+```
 
-`StorageFactory` supports:
-- `['driver' => 'local', 'root' => '/path']`
-- `['driver' => 'aws-s3', 'adapter' => $adapter]`
-- `['driver' => 'aws-s3', 'constructor' => [...]]`
-- `['filesystem' => $filesystemOperator]`
-- custom drivers via `StorageFactory::registerDriver()`
+The reader exposes `lines()`, `characters()`, `chunks()`, `csv()`, `jsonLines()`, `jsonArray()`, `fixedWidth()`, `xmlElements()`, `serializedValues()`, and `matchingLines()`. The writer exposes the corresponding `write*` methods. There is no runtime `__call()` dispatch and no global helper-function autoloading.
 
-Official adapter driver keys covered:
-- `local`, `ftp`, `inmemory` (`in-memory`)
-- `read-only`, `path-prefixing`
-- `aws-s3` (`s3`), `async-aws-s3`
-- `azure-blob-storage`, `google-cloud-storage`, `mongodb-gridfs`
-- `sftp-v2`, `sftp-v3`, `webdav`, `ziparchive`
-
-### **Local Driver**
+## Storage model
 
 ```php
 use Infocyph\Pathwise\Storage\StorageFactory;
@@ -98,346 +55,71 @@ StorageFactory::mount('assets', [
 FlysystemHelper::write('assets://reports/a.txt', 'hello');
 ```
 
-### **Any Adapter (Example: S3)**
+Storage-neutral reads, writes, copies, streams, uploads, downloads, ZIP staging, retention, and synchronization accept local, default-Flysystem, and mounted scheme paths where the adapter supplies the required capability. POSIX modes/ownership, native processes, shell searching, direct locks/handles, and transactions are local-filesystem-only and throw `UnsupportedStorageOperationException` for mounted paths.
+
+Local `append()` uses native append mode. Mounted stores must opt into `appendEmulated()`, which visibly represents a complete object replacement. Local transactions use a structured, disk-backed rollback journal and reject nesting.
+
+See the `storage capability contract` in the documentation for the compatibility matrix, atomicity, locking, sync, native execution, archive security, and performance characteristics.
+
+## Synchronization and result types
 
 ```php
-use Aws\S3\S3Client;
-use Infocyph\Pathwise\Storage\StorageFactory;
-use League\Flysystem\AwsS3V3\AwsS3V3Adapter;
-
-$client = new S3Client([
-    'version' => 'latest',
-    'region' => 'us-east-1',
-    'credentials' => [
-        'key' => getenv('AWS_ACCESS_KEY_ID'),
-        'secret' => getenv('AWS_SECRET_ACCESS_KEY'),
-    ],
-]);
-
-$adapter = new AwsS3V3Adapter($client, 'my-bucket', 'app-prefix');
-
-StorageFactory::mount('s3', ['adapter' => $adapter]);
-// Use s3://... paths in processors and managers.
-```
-
-### **Custom Driver Registration**
-
-```php
-use Infocyph\Pathwise\Storage\StorageFactory;
-use League\Flysystem\Filesystem;
-use League\Flysystem\Local\LocalFilesystemAdapter;
-
-StorageFactory::registerDriver('tenant-local', function (array $config): Filesystem {
-    $tenant = (string) ($config['tenant'] ?? 'default');
-    return new Filesystem(new LocalFilesystemAdapter('/srv/tenants/' . $tenant));
-});
-
-StorageFactory::mount('tenant', [
-    'driver' => 'tenant-local',
-    'tenant' => 'acme',
-]);
-```
-
-## **Unified Pathwise Facade**
-
-Use a single entry point when you want fewer direct class imports.
-
-```php
-use Infocyph\Pathwise\PathwiseFacade;
-
-$entry = PathwiseFacade::at('/tmp/example.txt');
-$entry->file()->create('hello')->append("\nworld");
-
-$upload = PathwiseFacade::upload();
-$download = PathwiseFacade::download();
-
-PathwiseFacade::mountStorage('assets', ['driver' => 'local', 'root' => '/srv/assets']);
-```
-
-## **FileManager**
-
-The `FileManager` module provides classes for handling files, including reading, writing, compressing and general file operations.
-
-### **SafeFileReader**
-
-A memory-safe file reader supporting various reading modes (line-by-line, binary chunks, JSON, CSV, XML, etc.) and iterator interfaces.
-
-#### **Key Features**
-- Supports multiple reading modes.
-- Provides locking to prevent concurrent access issues.
-- Implements `Countable`, `Iterator` and `SeekableIterator`.
-
-#### **Usage Example**
-
-```php
-use Infocyph\Pathwise\FileManager\SafeFileReader;
-
-$reader = new SafeFileReader('/path/to/file.txt');
-
-// Line-by-line iteration
-foreach ($reader->line() as $line) {
-    echo $line;
-}
-
-// JSON decoding with error handling
-foreach ($reader->json() as $data) {
-    print_r($data);
-}
-```
-
-### **SafeFileWriter**
-
-A memory-safe file writer with support for various writing modes, including CSV, JSON, binary and more.
-
-#### **Key Features**
-- Supports multiple writing modes.
-- Ensures file locking and robust error handling.
-- Tracks write operations and supports flush and truncate methods.
-
-#### **Usage Example**
-
-```php
-use Infocyph\Pathwise\FileManager\SafeFileWriter;
-
-$writer = new SafeFileWriter('/path/to/file.txt');
-
-// Writing lines
-$writer->line('Hello, World!');
-
-// Writing JSON data
-$writer->json(['key' => 'value']);
-```
-
-### **FileOperations**
-
-General-purpose file handling class for creating, deleting, copying, renaming and manipulating files.
-
-#### **Key Features**
-- File creation and deletion.
-- Append and update content.
-- Rename, copy and metadata retrieval.
-
-#### **Usage Example**
-
-```php
-use Infocyph\Pathwise\FileManager\FileOperations;
-
-$fileOps = new FileOperations('/path/to/file.txt');
-
-// Check existence
-if ($fileOps->exists()) {
-    echo 'File exists';
-}
-
-// Read content
-echo $fileOps->read();
-```
-
-### **FileCompression**
-
-Provides utilities for compressing and decompressing files using the ZIP format with optional password protection and encryption.
-
-#### **Key Features**
-- Compress files/directories.
-- Decompress ZIP archives.
-- Support for AES encryption and password-protected ZIPs.
-
-#### **Usage Example**
-
-```php
-use Infocyph\Pathwise\FileManager\FileCompression;
-
-$compression = new FileCompression('/path/to/archive.zip');
-
-// Compress a directory
-$compression->compress('/path/to/directory');
-
-// Decompress
-$compression->decompress('/path/to/extract/');
-```
-
-## **DirectoryManager**
-
-The `DirectoryManager` module offers tools for handling directory creation, deletion and traversal.
-
-
-### **DirectoryOperations**
-
-Provides comprehensive tools for managing directories, including creation, deletion, copying and listing contents.
-
-#### **Key Features**
-- Create, delete and copy directories.
-- Retrieve directory size, depth and contents.
-- Supports recursive operations and filtering.
-
-#### **Usage Example**
-
-```php
+use Infocyph\Pathwise\Core\SyncComparison;
 use Infocyph\Pathwise\DirectoryManager\DirectoryOperations;
 
-$dirOps = new DirectoryOperations('/path/to/directory');
-
-// Create a directory
-$dirOps->create();
-
-// List contents
-$contents = $dirOps->listContents(detailed: true);
-print_r($contents);
+$report = (new DirectoryOperations('/srv/source'))->syncTo(
+    '/srv/target',
+    deleteOrphans: true,
+    comparison: SyncComparison::SIZE_AND_MODIFIED_TIME,
+);
 ```
 
-## **Utils**
+`syncTo()` returns a readonly `SyncReport`. Download preparation/ranges, chunk uploads, queue processing, native execution, retention, deduplication, and file watching likewise return dedicated readonly result objects rather than significant associative arrays.
 
-Utility classes for managing paths, permissions and metadata.
+## Secure archives
 
+Every extraction path validates every ZIP member before writing. Absolute paths, Windows drive paths, null bytes, traversal segments, symbolic-link entries, extraction-root escapes, and existing destination-symlink breakouts are rejected with `UnsafeArchiveEntryException`.
 
-### **PathHelper**
+## Auditing
 
-Provides utilities for working with file paths, including joining, normalizing and converting between relative and absolute paths.
+`AuditTrail` accepts a local JSONL path or an `AuditSink`. `LocalJsonlAuditSink` uses locked append. `PartitionedAuditSink` writes one object per event and is suitable for mounted object stores. `CallbackAuditSink` integrates application loggers. Remote audit append is never silently emulated by reading and rewriting a log object.
 
-#### **Key Features**
-- Path joining and normalization.
-- Convert between relative and absolute paths.
-- Retrieve and manipulate file extensions.
+## Native execution
 
-#### **Usage Example**
-
-```php
-use Infocyph\Pathwise\Utils\PathHelper;
-
-$absolutePath = PathHelper::toAbsolutePath('relative/path');
-echo $absolutePath;
-
-$joinedPath = PathHelper::join('/var', 'www', 'html');
-echo $joinedPath;
-```
-
-### **PermissionsHelper**
-
-Handles file and directory permissions, ownership and access control.
-
-#### **Key Features**
-- Retrieve and set permissions.
-- Check read, write and execute access.
-- Retrieve and set ownership details.
-
-#### **Usage Example**
-
-```php
-use Infocyph\Pathwise\Utils\PermissionsHelper;
-
-// Get human-readable permissions
-echo PermissionsHelper::getHumanReadablePermissions('/path/to/file');
-
-// Check if writable
-if (PermissionsHelper::canWrite('/path/to/file')) {
-    echo 'File is writable';
-}
-```
-
-### **MetadataHelper**
-
-Extracts metadata for files and directories, such as size, timestamps, MIME type and more.
-
-#### **Key Features**
-- Retrieve file size and type.
-- Compute checksums and timestamps.
-- Get ownership and visibility details.
-
-#### **Usage Example**
-
-```php
-use Infocyph\Pathwise\Utils\MetadataHelper;
-
-// Get file size
-$size = MetadataHelper::getFileSize('/path/to/file');
-echo "File size: $size bytes";
-
-// Retrieve metadata
-$metadata = MetadataHelper::getAllMetadata('/path/to/file');
-print_r($metadata);
-```
-
-## **Handy Functions**
-
-### **File and Directory Utilities**
-
-Pathwise provides standalone utility functions to simplify common file and directory operations.
-
-#### **1. Get Human-Readable File Size**
-Formats a file size in bytes into a human-readable format (e.g., `1.23 KB`, `4.56 GB`).
-
-**Usage Example:**
-```php
-$size = getHumanReadableFileSize(123456789);
-echo $size; // Output: "117.74 MB"
-```
-
-#### **2. Check if a Directory is Empty**
-Checks whether the given directory contains any files or subdirectories.
-
-**Usage Example:**
-```php
-$isEmpty = isDirectoryEmpty('/path/to/directory');
-echo $isEmpty ? 'Empty' : 'Not Empty';
-```
-
-#### **3. Delete a Directory Recursively**
-Deletes a directory and all its contents (files and subdirectories).
-
-**Usage Example:**
-```php
-$success = deleteDirectory('/path/to/directory');
-echo $success ? 'Deleted successfully' : 'Failed to delete';
-```
-
-#### **4. Get Directory Size**
-Calculates the total size of a directory, including all its files and subdirectories.
-
-**Usage Example:**
-```php
-$size = getDirectorySize('/path/to/directory');
-echo "Directory size: " . getHumanReadableFileSize($size);
-```
-
-#### **5. Create a Directory**
-Creates a directory (including parent directories) with specified permissions.
-
-**Usage Example:**
-```php
-$success = createDirectory('/path/to/new/directory');
-echo $success ? 'Directory created' : 'Failed to create directory';
-```
-
-#### **6. List Files in a Directory**
-Lists all files in a directory, excluding subdirectories.
-
-**Usage Example:**
-```php
-$files = listFiles('/path/to/directory');
-print_r($files);
-```
-
-#### **7. Copy a Directory Recursively**
-Copies a directory and all its contents to a new location.
-
-**Usage Example:**
-```php
-$success = copyDirectory('/source/directory', '/destination/directory');
-echo $success ? 'Copied successfully' : 'Failed to copy';
-```
+`ExecutionStrategy::PHP` always uses PHP, `AUTO` may use an available native executable and fall back, and `NATIVE` either completes natively or throws `NativeExecutionException`. Native execution accepts local paths only; command arguments are escaped and execution results retain command, output, and exit code.
 
 ## Security
 
-Protected by [PHPForge](https://github.com/infocyph/PHPForge) — an automated quality and security gate for PHP projects.
+Do not disclose suspected vulnerabilities in a public issue, discussion or pull request. Review the
+[security policy](SECURITY.md), then use [GitHub private vulnerability reporting](https://github.com/infocyph/Pathwise/security/advisories/new)
+to contact the maintainers confidentially.
+
+Pathwise is protected by [PHPForge](https://github.com/infocyph/PHPForge), an automated quality and security gate covering
+tests, static and taint analysis, dependency auditing, architecture checks, and release readiness. Automated controls reduce
+risk but do not replace responsible disclosure or manual review.
 
 ---
 
 <div align="center">
   <sub><strong>Made with ❤️ for the PHP community</strong></sub><br />
   <sub><a href="LICENSE">MIT Licensed</a></sub><br />
-  <a href="https://docs.infocyph.com/projects/Pathwise">Documentation</a> •
+  <a href="https://docs.infocyph.com/projects/Pathwise/en/latest/">Documentation</a> •
   <a href="SECURITY.md">Security</a> •
   <a href="CODE_OF_CONDUCT.md">Code of Conduct</a> •
-  <a href="CONTRIBUTING.md">Contributing</a> •
-  <a href="https://github.com/infocyph/Pathwise/issues">Report | Request | Suggest</a>
+  <a href="CONTRIBUTING.md">Contributing</a><br />
+  <span title="Issue templates" aria-label="Issue templates">🗂️</span>
+  <a href="https://github.com/infocyph/Pathwise/issues/new?template=bug_report.yml">Bug</a> •
+  <a href="https://github.com/infocyph/Pathwise/issues/new?template=feature_request.yml">Feature</a> •
+  <a href="https://github.com/infocyph/Pathwise/issues/new?template=docs_improvement.yml">Documentation</a> •
+  <a href="https://github.com/infocyph/Pathwise/issues/new?template=question.yml">Question</a> •
+  <a href="https://github.com/infocyph/Pathwise/issues/new?template=ci_failure.yml">CI failure</a><br />
+  <span title="Pull request templates" aria-label="Pull request templates">🔀</span>
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=PULL_REQUEST_TEMPLATE.md">General</a> •
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=bug_fix.md">Bug fix</a> •
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=feature.md">Feature</a> •
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=refactor.md">Refactor</a> •
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=performance.md">Performance</a> •
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=security_reliability.md">Security &amp; reliability</a> •
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=documentation.md">Documentation</a> •
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=maintenance.md">Maintenance</a>
 </div>

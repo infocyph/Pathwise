@@ -42,10 +42,10 @@ test('it prepares secure download metadata for a local file', function () {
     $this->downloadProcessor->setAllowedRoots([$this->workingDir]);
     $manifest = $this->downloadProcessor->prepareDownload($path, 'report final.txt');
 
-    expect($manifest['status'])->toBe(200)
-        ->and($manifest['contentLength'])->toBe(strlen('secure-content'))
-        ->and($manifest['fileName'])->toBe('report final.txt')
-        ->and($manifest['headers'])->toHaveKeys([
+    expect($manifest->status)->toBe(200)
+        ->and($manifest->range->contentLength)->toBe(strlen('secure-content'))
+        ->and($manifest->fileName)->toBe('report final.txt')
+        ->and($manifest->headers)->toHaveKeys([
             'Accept-Ranges',
             'Cache-Control',
             'Content-Disposition',
@@ -87,7 +87,7 @@ test('it supports disabling hidden file blocking', function () {
     $this->downloadProcessor->setBlockHiddenFiles(false);
     $manifest = $this->downloadProcessor->prepareDownload($path);
 
-    expect($manifest['status'])->toBe(200);
+    expect($manifest->status)->toBe(200);
 });
 
 test('it blocks disallowed download extensions', function () {
@@ -114,11 +114,11 @@ test('it sanitizes unsafe download file names', function () {
 
     $manifest = $this->downloadProcessor->prepareDownload($path, '..\\../evil".txt');
 
-    expect($manifest['fileName'])->not->toContain('/')
-        ->and($manifest['fileName'])->not->toContain('\\')
-        ->and($manifest['fileName'])->not->toContain('"')
-        ->and($manifest['fileName'])->toEndWith('.txt')
-        ->and($manifest['headers']['Content-Disposition'])->toContain('filename=');
+    expect($manifest->fileName)->not->toContain('/')
+        ->and($manifest->fileName)->not->toContain('\\')
+        ->and($manifest->fileName)->not->toContain('"')
+        ->and($manifest->fileName)->toEndWith('.txt')
+        ->and($manifest->headers['Content-Disposition'])->toContain('filename=');
 });
 
 test('it returns partial metadata for valid byte ranges', function () {
@@ -127,11 +127,11 @@ test('it returns partial metadata for valid byte ranges', function () {
 
     $manifest = $this->downloadProcessor->prepareDownload($path, null, 'bytes=6-10');
 
-    expect($manifest['status'])->toBe(206)
-        ->and($manifest['rangeStart'])->toBe(6)
-        ->and($manifest['rangeEnd'])->toBe(10)
-        ->and($manifest['contentLength'])->toBe(5)
-        ->and($manifest['headers']['Content-Range'])->toBe('bytes 6-10/11');
+    expect($manifest->status)->toBe(206)
+        ->and($manifest->range->start)->toBe(6)
+        ->and($manifest->range->end)->toBe(10)
+        ->and($manifest->range->contentLength)->toBe(5)
+        ->and($manifest->headers['Content-Range'])->toBe('bytes 6-10/11');
 });
 
 test('it rejects invalid byte ranges', function () {
@@ -149,10 +149,10 @@ test('it ignores range headers when range support is disabled', function () {
     $this->downloadProcessor->setRangeRequestsEnabled(false);
     $manifest = $this->downloadProcessor->prepareDownload($path, null, 'bytes=1-3');
 
-    expect($manifest['status'])->toBe(200)
-        ->and($manifest['contentLength'])->toBe(11)
-        ->and($manifest['headers']['Accept-Ranges'])->toBe('none')
-        ->and($manifest['headers'])->not->toHaveKey('Content-Range');
+    expect($manifest->status)->toBe(200)
+        ->and($manifest->range->contentLength)->toBe(11)
+        ->and($manifest->headers['Accept-Ranges'])->toBe('none')
+        ->and($manifest->headers)->not->toHaveKey('Content-Range');
 });
 
 test('it streams complete download content', function () {
@@ -165,8 +165,8 @@ test('it streams complete download content', function () {
     $downloaded = stream_get_contents($output);
     fclose($output);
 
-    expect($manifest['status'])->toBe(200)
-        ->and($manifest['bytesSent'])->toBe(strlen('streamed-content'))
+    expect($manifest->preparation->status)->toBe(200)
+        ->and($manifest->bytesSent)->toBe(strlen('streamed-content'))
         ->and($downloaded)->toBe('streamed-content');
 });
 
@@ -180,8 +180,8 @@ test('it streams ranged download content', function () {
     $downloaded = stream_get_contents($output);
     fclose($output);
 
-    expect($manifest['status'])->toBe(206)
-        ->and($manifest['bytesSent'])->toBe(7)
+    expect($manifest->preparation->status)->toBe(206)
+        ->and($manifest->bytesSent)->toBe(7)
         ->and($downloaded)->toBe('content');
 });
 
@@ -220,9 +220,9 @@ test('it prepares and streams downloads from a mounted filesystem path', functio
         $downloaded = stream_get_contents($output);
         fclose($output);
 
-        expect($manifest['status'])->toBe(200)
-            ->and($manifest['contentLength'])->toBe(strlen('mounted-download-content'))
-            ->and($streamedManifest['bytesSent'])->toBe(strlen('mounted-download-content'))
+        expect($manifest->status)->toBe(200)
+            ->and($manifest->range->contentLength)->toBe(strlen('mounted-download-content'))
+            ->and($streamedManifest->bytesSent)->toBe(strlen('mounted-download-content'))
             ->and($downloaded)->toBe('mounted-download-content');
     } finally {
         FlysystemHelper::unmount('mnt');
@@ -246,8 +246,8 @@ test('it supports relative download paths with a default filesystem', function (
         $downloaded = stream_get_contents($output);
         fclose($output);
 
-        expect($manifest['status'])->toBe(200)
-            ->and($manifest['bytesSent'])->toBe(strlen('default-download-content'))
+        expect($manifest->preparation->status)->toBe(200)
+            ->and($manifest->bytesSent)->toBe(strlen('default-download-content'))
             ->and($downloaded)->toBe('default-download-content');
     } finally {
         FlysystemHelper::clearDefaultFilesystem();

@@ -246,11 +246,8 @@ class MetadataHelper
     /**
      * Retrieves the owner and group of the given path.
      *
-     * This method returns an array with keys 'owner' and 'group', each containing the
-     * username or groupname of the owner or group of the file or directory,
-     * respectively. If the file or directory does not exist, or if ownership
-     * functions are not supported on the current system, this method returns
-     * null.
+     * Returns resolved owner and group names when the platform exposes them.
+     * Missing paths or unavailable ownership metadata produce null.
      *
      * @param string $path The path to the file or directory to retrieve
      *                     ownership for.

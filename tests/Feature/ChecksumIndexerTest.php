@@ -100,6 +100,6 @@ test('it builds duplicate index for mounted paths and skips hard links there', f
     $report = ChecksumIndexer::deduplicateWithHardLinks('chk://');
 
     expect(count($duplicates))->toBe(1)
-        ->and($report['linked'])->toBe([])
-        ->and(count($report['skipped']))->toBeGreaterThan(0);
+        ->and($report->linked)->toBe([])
+        ->and(count($report->skipped))->toBeGreaterThan(0);
 });

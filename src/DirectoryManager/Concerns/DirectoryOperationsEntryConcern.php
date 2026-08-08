@@ -148,20 +148,38 @@ trait DirectoryOperationsEntryConcern
 
     private function isLocalPath(string $path): bool
     {
-        return !PathHelper::hasScheme($path) && PathHelper::isAbsolute($path);
+        return FlysystemHelper::isLocalPath($path);
     }
 
-    /**
-     * @return list<StorageEntry>
-     */
-    private function listStorageEntries(string $path, bool $deep): array
+    /** @return \Generator<int, StorageEntry> */
+    private function listStorageEntries(string $path, bool $deep): \Generator
     {
-        $entries = [];
-        foreach (FlysystemHelper::listContents($path, $deep) as $item) {
-            $entries[] = $item;
-        }
+        foreach (FlysystemHelper::listContentsListing($path, $deep) as $item) {
+            $entry = [
+                'path' => str_replace('\\', '/', $item->path()),
+                'type' => $item->type(),
+            ];
+            if ($item instanceof \League\Flysystem\FileAttributes) {
+                $entry['file_size'] = $item->fileSize();
+                $entry['mime_type'] = $item->mimeType();
+            } else {
+                $entry['file_size'] = 0;
+            }
 
-        return $entries;
+            try {
+                $entry['last_modified'] = $item->lastModified();
+            } catch (\Throwable) {
+                $entry['last_modified'] = null;
+            }
+
+            try {
+                $entry['visibility'] = $item->visibility();
+            } catch (\Throwable) {
+                $entry['visibility'] = null;
+            }
+
+            yield $entry;
+        }
     }
 
     /**

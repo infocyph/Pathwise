@@ -5,18 +5,16 @@ declare(strict_types=1);
 namespace Infocyph\Pathwise\DirectoryManager\Concerns;
 
 use Infocyph\Pathwise\Core\ExecutionStrategy;
+use Infocyph\Pathwise\Core\SyncComparison;
 use Infocyph\Pathwise\Exceptions\DirectoryOperationException;
+use Infocyph\Pathwise\Exceptions\NativeExecutionException;
+use Infocyph\Pathwise\Exceptions\UnsupportedStorageOperationException;
 use Infocyph\Pathwise\Native\NativeOperationsAdapter;
+use Infocyph\Pathwise\Results\SyncReport;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 
 /**
  * @phpstan-type StorageEntry array<string, mixed>
- * @phpstan-type SyncReport array{
- *     created: list<string>,
- *     updated: list<string>,
- *     deleted: list<string>,
- *     unchanged: list<string>
- * }
  */
 trait DirectoryOperationsSyncConcern
 {
@@ -41,20 +39,31 @@ trait DirectoryOperationsSyncConcern
 
     private function attemptNativeCopy(string $destination, ?callable $progress): bool
     {
+        if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
+            if (!$this->isLocalPath($this->path) || !$this->isLocalPath($destination)) {
+                throw new UnsupportedStorageOperationException('Native directory copy requires local source and destination paths.');
+            }
+            if (!NativeOperationsAdapter::canUseNativeDirectoryCopy()) {
+                throw new NativeExecutionException('Native directory copy executable is unavailable.');
+            }
+        }
+
         if (!$this->canAttemptNativeCopy($destination)) {
             return false;
         }
 
         $this->emitCopyProgress($progress, 0);
         $native = NativeOperationsAdapter::copyDirectory($this->path, $destination, false);
-        if ($native['success']) {
+        if ($native->success) {
             $this->emitCopyProgress($progress, 1);
 
             return true;
         }
 
         if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
-            throw new DirectoryOperationException("Native directory copy failed for '{$this->path}' to '{$destination}'.");
+            throw new NativeExecutionException(
+                "Native directory copy failed with exit code {$native->exitCode}: " . implode("\n", $native->output),
+            );
         }
 
         return false;
@@ -68,6 +77,14 @@ trait DirectoryOperationsSyncConcern
             && $this->isLocalPath($destination);
     }
 
+    private function checksumsMatch(string $sourcePath, string $targetPath): bool
+    {
+        $sourceHash = FlysystemHelper::checksum($sourcePath, 'sha256');
+        $targetHash = FlysystemHelper::checksum($targetPath, 'sha256');
+
+        return is_string($sourceHash) && is_string($targetHash) && hash_equals($sourceHash, $targetHash);
+    }
+
     private function cleanupTemporaryFile(bool $shouldCleanup, string $path): void
     {
         if ($shouldCleanup && is_file($path)) {
@@ -75,17 +92,18 @@ trait DirectoryOperationsSyncConcern
         }
     }
 
-    private function copyIfSyncRequired(string $sourcePath, string $targetPath): string
-    {
+    private function copyIfSyncRequired(
+        string $sourcePath,
+        string $targetPath,
+        SyncComparison $comparison,
+    ): string {
         if (!FlysystemHelper::fileExists($targetPath)) {
             FlysystemHelper::copy($sourcePath, $targetPath);
 
             return 'created';
         }
 
-        $sourceHash = FlysystemHelper::checksum($sourcePath, 'sha256');
-        $targetHash = FlysystemHelper::checksum($targetPath, 'sha256');
-        if (!is_string($sourceHash) || !is_string($targetHash) || !hash_equals($sourceHash, $targetHash)) {
+        if (!$this->filesMatchForSync($sourcePath, $targetPath, $comparison)) {
             FlysystemHelper::copy($sourcePath, $targetPath);
 
             return 'updated';
@@ -110,7 +128,7 @@ trait DirectoryOperationsSyncConcern
     private function deleteSyncOrphans(string $destination, array $sourceEntries, array &$report): void
     {
         $destinationLocation = $this->storageLocation($destination);
-        $destinationItems = $this->listStorageEntries($destination, true);
+        $destinationItems = iterator_to_array($this->listStorageEntries($destination, true), false);
 
         usort(
             $destinationItems,
@@ -150,7 +168,7 @@ trait DirectoryOperationsSyncConcern
         ]);
     }
 
-    private function emitSyncProgress(?callable $progress, string $relative, int $current, int $total): void
+    private function emitSyncProgress(?callable $progress, string $relative, int $current, ?int $total): void
     {
         if (!is_callable($progress)) {
             return;
@@ -160,27 +178,38 @@ trait DirectoryOperationsSyncConcern
             'operation' => 'sync',
             'path' => $relative,
             'current' => $current,
-            'total' => max(1, $total),
+            'total' => $total,
         ]);
+    }
+
+    private function filesMatchForSync(
+        string $sourcePath,
+        string $targetPath,
+        SyncComparison $comparison,
+    ): bool {
+        return match ($comparison) {
+            SyncComparison::ALWAYS_COPY => false,
+            SyncComparison::SIZE => FlysystemHelper::size($sourcePath) === FlysystemHelper::size($targetPath),
+            SyncComparison::SIZE_AND_MODIFIED_TIME => FlysystemHelper::size($sourcePath) === FlysystemHelper::size($targetPath)
+                && FlysystemHelper::lastModified($sourcePath) === FlysystemHelper::lastModified($targetPath),
+            SyncComparison::CHECKSUM => $this->checksumsMatch($sourcePath, $targetPath),
+        };
     }
 
     /**
      * @param array<string, list<string>> $report
-     * @return SyncReport
      */
-    private function finalizeSyncReport(array $report): array
+    private function finalizeSyncReport(array $report): SyncReport
     {
-        return [
-            'created' => $report['created'] ?? [],
-            'updated' => $report['updated'] ?? [],
-            'deleted' => $report['deleted'] ?? [],
-            'unchanged' => $report['unchanged'] ?? [],
-        ];
+        return new SyncReport(
+            created: $report['created'] ?? [],
+            updated: $report['updated'] ?? [],
+            deleted: $report['deleted'] ?? [],
+            unchanged: $report['unchanged'] ?? [],
+        );
     }
 
-    /**
-     * @return SyncReport
-     */
+    /** @return array{created: list<string>, updated: list<string>, deleted: list<string>, unchanged: list<string>} */
     private function newSyncReport(): array
     {
         return [
@@ -217,8 +246,14 @@ trait DirectoryOperationsSyncConcern
      * @param array<string, string> $sourceEntries
      * @param array<string, list<string>> $report
      */
-    private function syncOneItem(string $destination, string $relative, array $item, array &$sourceEntries, array &$report): void
-    {
+    private function syncOneItem(
+        string $destination,
+        string $relative,
+        array $item,
+        array &$sourceEntries,
+        array &$report,
+        SyncComparison $comparison,
+    ): void {
         $type = $this->entryType($item);
         $sourceEntries[$relative] = $type;
 
@@ -234,7 +269,7 @@ trait DirectoryOperationsSyncConcern
 
         $sourcePath = $this->buildPath($this->path, $relative);
         $targetPath = $this->buildPath($destination, $relative);
-        $result = $this->copyIfSyncRequired($sourcePath, $targetPath);
+        $result = $this->copyIfSyncRequired($sourcePath, $targetPath, $comparison);
         $report[$result][] = $relative;
     }
 

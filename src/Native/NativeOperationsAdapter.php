@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\Native;
 
+use Infocyph\Pathwise\Results\NativeExecutionResult;
 use Infocyph\Pathwise\Utils\PathHelper;
 
 final class NativeOperationsAdapter
@@ -50,10 +51,7 @@ final class NativeOperationsAdapter
         return NativeCommandRunner::commandExists('cp');
     }
 
-    /**
-     * @return array{success: bool, command: string, code: int}
-     */
-    public static function compressToZip(string $source, string $zipPath): array
+    public static function compressToZip(string $source, string $zipPath): NativeExecutionResult
     {
         $source = PathHelper::normalize($source);
         $zipPath = PathHelper::normalize($zipPath);
@@ -66,11 +64,7 @@ final class NativeOperationsAdapter
             );
             $result = NativeCommandRunner::run($command);
 
-            return [
-                'success' => $result['success'],
-                'command' => $command,
-                'code' => $result['code'],
-            ];
+            return new NativeExecutionResult($result['success'], $command, $result['code'], array_values($result['output']));
         }
 
         if (NativeCommandRunner::commandExists('zip')) {
@@ -96,25 +90,17 @@ final class NativeOperationsAdapter
             $wrapped = sprintf('cd %s && %s', escapeshellarg($cwd), $command);
             $result = NativeCommandRunner::run($wrapped);
 
-            return [
-                'success' => $result['success'],
-                'command' => $wrapped,
-                'code' => $result['code'],
-            ];
+            return new NativeExecutionResult($result['success'], $wrapped, $result['code'], array_values($result['output']));
         }
 
-        return [
-            'success' => false,
-            'command' => '',
-            'code' => 127,
-        ];
+        return self::unsupportedResult();
     }
 
-    /**
-     * @return array{success: bool, command: string, code: int}
-     */
-    public static function copyDirectory(string $source, string $destination, bool $mirror = false): array
-    {
+    public static function copyDirectory(
+        string $source,
+        string $destination,
+        bool $mirror = false,
+    ): NativeExecutionResult {
         $source = PathHelper::normalize($source);
         $destination = PathHelper::normalize($destination);
 
@@ -152,10 +138,7 @@ final class NativeOperationsAdapter
         return self::unsupportedResult();
     }
 
-    /**
-     * @return array{success: bool, command: string, code: int}
-     */
-    public static function copyFile(string $source, string $destination): array
+    public static function copyFile(string $source, string $destination): NativeExecutionResult
     {
         return self::runDualPathOperation(
             $source,
@@ -175,10 +158,7 @@ final class NativeOperationsAdapter
         );
     }
 
-    /**
-     * @return array{success: bool, command: string, code: int}
-     */
-    public static function decompressZip(string $zipPath, string $destination): array
+    public static function decompressZip(string $zipPath, string $destination): NativeExecutionResult
     {
         return self::runDualPathOperation(
             $zipPath,
@@ -201,13 +181,12 @@ final class NativeOperationsAdapter
     /**
      * @param callable(): string $commandBuilder
      * @param callable(array{success: bool, output: array<int, string>, code: int}): bool|null $successResolver
-     * @return array{success: bool, command: string, code: int}|null
      */
     private static function runCommandIfAvailable(
         string $command,
         callable $commandBuilder,
         ?callable $successResolver = null,
-    ): ?array {
+    ): ?NativeExecutionResult {
         if (!NativeCommandRunner::commandExists($command)) {
             return null;
         }
@@ -215,17 +194,17 @@ final class NativeOperationsAdapter
         $builtCommand = $commandBuilder();
         $result = NativeCommandRunner::run($builtCommand);
 
-        return [
-            'success' => $successResolver !== null ? (bool) $successResolver($result) : $result['success'],
-            'command' => $builtCommand,
-            'code' => $result['code'],
-        ];
+        return new NativeExecutionResult(
+            success: $successResolver !== null ? (bool) $successResolver($result) : $result['success'],
+            command: $builtCommand,
+            exitCode: $result['code'],
+            output: array_values($result['output']),
+        );
     }
 
     /**
      * @param callable(string, string): string $windowsCommandBuilder
      * @param callable(string, string): string $unixCommandBuilder
-     * @return array{success: bool, command: string, code: int}
      */
     private static function runDualPathOperation(
         string $sourcePath,
@@ -234,7 +213,7 @@ final class NativeOperationsAdapter
         callable $windowsCommandBuilder,
         string $unixCommand,
         callable $unixCommandBuilder,
-    ): array {
+    ): NativeExecutionResult {
         $normalizedSourcePath = PathHelper::normalize($sourcePath);
         $normalizedDestinationPath = PathHelper::normalize($destinationPath);
 
@@ -249,14 +228,13 @@ final class NativeOperationsAdapter
     /**
      * @param callable(): string $windowsCommandBuilder
      * @param callable(): string $unixCommandBuilder
-     * @return array{success: bool, command: string, code: int}
      */
     private static function runWindowsThenUnix(
         string $windowsCommand,
         callable $windowsCommandBuilder,
         string $unixCommand,
         callable $unixCommandBuilder,
-    ): array {
+    ): NativeExecutionResult {
         if (PHP_OS_FAMILY === 'Windows') {
             $windowsResult = self::runCommandIfAvailable($windowsCommand, $windowsCommandBuilder);
             if ($windowsResult !== null) {
@@ -267,15 +245,8 @@ final class NativeOperationsAdapter
         return self::runCommandIfAvailable($unixCommand, $unixCommandBuilder) ?? self::unsupportedResult();
     }
 
-    /**
-     * @return array{success: bool, command: string, code: int}
-     */
-    private static function unsupportedResult(): array
+    private static function unsupportedResult(): NativeExecutionResult
     {
-        return [
-            'success' => false,
-            'command' => '',
-            'code' => 127,
-        ];
+        return new NativeExecutionResult(false, '', 127);
     }
 }
