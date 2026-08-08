@@ -95,21 +95,33 @@ test('it returns null for unsupported checksum algorithm', function () {
 });
 
 test('it identifies broken symbolic link', function () {
+    if (PHP_OS_FAMILY === 'Windows') {
+        expect(MetadataHelper::isBrokenSymlink($this->missingFilePath))->toBeNull();
+
+        return;
+    }
+
     $linkPath = sys_get_temp_dir().DIRECTORY_SEPARATOR.'broken_link';
     $nonExistentPath = sys_get_temp_dir().DIRECTORY_SEPARATOR.'nonexistent_file.txt';
     symlink($nonExistentPath, $linkPath);
 
     expect(MetadataHelper::isBrokenSymlink($linkPath))->toBeTrue();
     unlink($linkPath);
-})->skip(PHP_OS_FAMILY === 'Windows');;
+});
 
 test('it identifies non-broken symbolic link', function () {
+    if (PHP_OS_FAMILY === 'Windows') {
+        expect(MetadataHelper::isBrokenSymlink($this->tempFilePath))->toBeNull();
+
+        return;
+    }
+
     $linkPath = sys_get_temp_dir().DIRECTORY_SEPARATOR.'valid_link';
     symlink($this->tempFilePath, $linkPath);
 
     expect(MetadataHelper::isBrokenSymlink($linkPath))->toBeFalse();
     unlink($linkPath);
-})->skip(PHP_OS_FAMILY === 'Windows');;
+});
 
 test('it returns null if path is not a symlink', function () {
     expect(MetadataHelper::isBrokenSymlink($this->tempFilePath))->toBeNull();
@@ -143,7 +155,7 @@ test('it returns null for invalid path type', function () {
 test('it retrieves file ownership details', function () {
     $ownership = MetadataHelper::getOwnershipDetails($this->tempFilePath);
     expect($ownership)->toHaveKeys(['owner', 'group']);
-})->skip(PHP_OS_FAMILY === 'Windows');
+});
 
 test('it retrieves last modified by user', function () {
     $lastModifiedBy = MetadataHelper::getLastModifiedBy($this->tempFilePath);
@@ -161,12 +173,18 @@ test('it returns null for directory extension', function () {
 });
 
 test('it retrieves symlink target', function () {
+    if (PHP_OS_FAMILY === 'Windows') {
+        expect(MetadataHelper::getSymlinkTarget($this->tempFilePath))->toBeNull();
+
+        return;
+    }
+
     $linkPath = sys_get_temp_dir().DIRECTORY_SEPARATOR.'valid_link';
     symlink($this->tempFilePath, $linkPath);
 
     expect(MetadataHelper::getSymlinkTarget($linkPath))->toBe($this->tempFilePath);
     unlink($linkPath);
-})->skip(PHP_OS_FAMILY === 'Windows');;
+});
 
 test('it returns null if path is not a symlink for target retrieval', function () {
     expect(MetadataHelper::getSymlinkTarget($this->tempFilePath))->toBeNull();

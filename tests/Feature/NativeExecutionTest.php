@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Infocyph\Pathwise\Core\ExecutionStrategy;
+use Infocyph\Pathwise\Exceptions\NativeExecutionException;
 use Infocyph\Pathwise\Exceptions\UnsupportedStorageOperationException;
 use Infocyph\Pathwise\FileManager\FileOperations;
 use Infocyph\Pathwise\Native\NativeOperationsAdapter;
@@ -24,15 +25,18 @@ afterEach(function () {
 });
 
 test('forced native file copy handles spaces quotes Unicode and shell metacharacters', function () {
-    if (!NativeOperationsAdapter::canUseNativeFileCopy()) {
-        $this->markTestSkipped('The platform native file-copy executable is unavailable.');
-    }
-
     $source = $this->nativeRoot . DIRECTORY_SEPARATOR . "source ' Ω ; \$.txt";
     $destination = $this->nativeRoot . DIRECTORY_SEPARATOR . "copied ' Ω ; \$.txt";
     file_put_contents($source, 'native-safe');
 
     $operations = new FileOperations($source);
+    if (!NativeOperationsAdapter::canUseNativeFileCopy()) {
+        expect(fn () => $operations->setExecutionStrategy(ExecutionStrategy::NATIVE)->copy($destination))
+            ->toThrow(NativeExecutionException::class);
+
+        return;
+    }
+
     expect($operations->setExecutionStrategy(ExecutionStrategy::NATIVE)->copy($destination))->toBe($operations)
         ->and(file_get_contents($destination))->toBe('native-safe');
 });

@@ -224,16 +224,6 @@ trait UploadProcessorValidationConcern
         }
     }
 
-    /**
-     * Sanitize a path to remove invalid characters.
-     */
-    private function sanitizePath(string $path): string
-    {
-        $sanitized = preg_replace('/[^a-zA-Z0-9\/\\\\:_.-]/', '', $path) ?? '';
-
-        return rtrim($sanitized, '/\\');
-    }
-
     private function scanForMalware(string $filePath, string $fileType): void
     {
         if (!is_callable($this->malwareScanner)) {
@@ -277,6 +267,15 @@ trait UploadProcessorValidationConcern
 
         $this->validateMimeTypeMatchesExtension($fileType, $normalizedExtension);
         $this->validateMagicSignatureForExtension($filePath, $normalizedExtension);
+    }
+
+    private function validateDirectoryPath(string $path): string
+    {
+        if ($path === '' || str_contains($path, "\0")) {
+            throw new UploadException('Invalid upload directory path.');
+        }
+
+        return $path;
     }
 
     /**

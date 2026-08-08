@@ -321,10 +321,10 @@ class UploadProcessor
      */
     public function setDirectorySettings(string $uploadDir, bool $useDateDirectories = false, ?string $tempDir = null): void
     {
-        $this->uploadDir = PathHelper::normalize($this->sanitizePath($uploadDir));
+        $this->uploadDir = PathHelper::normalize($this->validateDirectoryPath($uploadDir));
         $this->useDateDirectories = $useDateDirectories;
-        $this->tempDir = $tempDir
-            ? PathHelper::normalize($this->sanitizePath($tempDir))
+        $this->tempDir = $tempDir !== null
+            ? PathHelper::normalize($this->validateDirectoryPath($tempDir))
             : sys_get_temp_dir();
         $this->ensureUploadDirectoryExists();
     }

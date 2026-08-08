@@ -80,7 +80,16 @@ test('archive validation rejects symbolic link entries', function () {
 
 test('archive validation rejects extraction through an existing destination symlink', function () {
     if (PHP_OS_FAMILY === 'Windows') {
-        $this->markTestSkipped('Symbolic-link creation is not consistently available on Windows CI.');
+        $zip = new ZipArchive();
+        expect($zip->open($this->archivePath, ZipArchive::CREATE | ZipArchive::OVERWRITE))->toBeTrue();
+        $zip->addFromString('linked/escape.txt', '../outside.txt');
+        $zip->setExternalAttributesName('linked/escape.txt', ZipArchive::OPSYS_UNIX, 0120777 << 16);
+        $zip->close();
+
+        expect(fn () => (new FileCompression($this->archivePath))->decompress($this->extractPath))
+            ->toThrow(UnsafeArchiveEntryException::class, 'Symbolic-link ZIP entry');
+
+        return;
     }
 
     $outside = $this->securityRoot . DIRECTORY_SEPARATOR . 'outside';

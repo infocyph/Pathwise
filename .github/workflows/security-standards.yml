@@ -24,7 +24,7 @@ jobs:
       psalm_threads: "1"
       run_analysis: true
       run_svg_report: true
-      fail_on_skipped_tests: false
+      fail_on_skipped_tests: true
       run_clean_install: true
       benchmark_composer_script: ""
       benchmark_result_file: ""
@@ -68,6 +68,8 @@ jobs:
   adapter-contracts:
     name: "Optional adapter contracts"
     runs-on: ubuntu-latest
+    env:
+      PATHWISE_REQUIRE_ADAPTER_CONTRACTS: "1"
     steps:
       - uses: actions/checkout@v4
       - name: "Set up PHP"
