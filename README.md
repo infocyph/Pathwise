@@ -1,6 +1,6 @@
 # Pathwise
 
-![Security & Standards](https://github.com/infocyph/Pathwise/actions/workflows/security-standards.yml/badge.svg)](https://github.com/infocyph/Pathwise/actions/workflows/security-standards.yml)
+[![Security & Standards](https://github.com/infocyph/Pathwise/actions/workflows/security-standards.yml/badge.svg)](https://github.com/infocyph/Pathwise/actions/workflows/security-standards.yml)
 ![Packagist Downloads](https://img.shields.io/packagist/dt/infocyph/Pathwise?color=green\&link=https%3A%2F%2Fpackagist.org%2Fpackages%2Finfocyph%2FPathwise)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 ![Packagist Version](https://img.shields.io/packagist/v/infocyph/Pathwise)
@@ -59,7 +59,7 @@ Storage-neutral reads, writes, copies, streams, uploads, downloads, ZIP staging,
 
 Local `append()` uses native append mode. Mounted stores must opt into `appendEmulated()`, which visibly represents a complete object replacement. Local transactions use a structured, disk-backed rollback journal and reject nesting.
 
-See the [storage capability contract](docs/storage-contracts.rst) for the compatibility matrix, atomicity, locking, sync, native execution, archive security, and performance characteristics.
+See the `storage capability contract` in the documentation for the compatibility matrix, atomicity, locking, sync, native execution, archive security, and performance characteristics.
 
 ## Synchronization and result types
 
