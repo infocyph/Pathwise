@@ -73,7 +73,7 @@ test('it throws exception on invalid JSON decoding', function () {
 });
 
 test('it applies and releases lock on file', function () {
-    $reader = new SafeFileReader($this->tempFilePath, 'r', true);
+    $reader = new SafeFileReader($this->tempFilePath, 'r', LOCK_EX);
     expect($reader)->toBeInstanceOf(SafeFileReader::class);
     $reader->releaseLock();
     expect(true)->toBeTrue(); // Just verifies the lock was applied and released without issue
@@ -141,4 +141,24 @@ test('it reads mounted files through local staging', function () {
     $lines = array_map('trim', iterator_to_array($reader->lines(), false));
 
     expect($lines)->toBe(['A', 'B']);
+});
+
+test('character and chunk readers have exact EOF semantics', function (string $contents, int $chunkSize, array $expectedChunks) {
+    file_put_contents($this->tempFilePath, $contents);
+    $reader = new SafeFileReader($this->tempFilePath);
+
+    expect(iterator_to_array($reader->characters(), false))->toBe(str_split($contents))
+        ->and(iterator_to_array($reader->chunks($chunkSize), false))->toBe($expectedChunks);
+})->with([
+    'empty' => ['', 4, []],
+    'one byte' => ['A', 4, ['A']],
+    'exact boundary' => ['ABCD', 4, ['ABCD']],
+    'boundary plus one' => ['ABCDE', 4, ['ABCD', 'E']],
+]);
+
+test('it rejects invalid matching-line regex and non-positive fixed widths', function () {
+    $reader = new SafeFileReader($this->tempFilePath);
+
+    expect(fn () => $reader->matchingLines('['))->toThrow(InvalidArgumentException::class)
+        ->and(fn () => $reader->fixedWidth([0]))->toThrow(InvalidArgumentException::class);
 });

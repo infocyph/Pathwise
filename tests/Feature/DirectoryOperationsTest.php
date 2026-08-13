@@ -182,16 +182,16 @@ test('finds files based on criteria', function () {
     file_put_contents($file1, 'file one');
     file_put_contents($file2, 'file two');
 
-    // Set permissions compatible across platforms
-    if (strtoupper(substr(PHP_OS, 0, 3)) !== 'WIN') {
-        chmod($file1, 0644);
-    }
-
-    $foundFiles = $this->directoryOperations->find([
+    $criteria = [
         'name' => basename($file1),
         'extension' => 'txt',
-        'permissions' => 0644,
-    ]);
+    ];
+    if (PHP_OS_FAMILY !== 'Windows') {
+        chmod($file1, 0644);
+        $criteria['permissions'] = 0644;
+    }
+
+    $foundFiles = $this->directoryOperations->find($criteria);
 
     $foundFiles = array_map(fn($path) => realpath($path), $foundFiles);
 
@@ -263,4 +263,36 @@ test('unzip rejects zip-slip traversal entries', function () {
             unlink($outsidePath);
         }
     }
+});
+
+test('zip destination inside source is excluded from the archive', function () {
+    $destination = $this->tempDir . DIRECTORY_SEPARATOR . 'nested' . DIRECTORY_SEPARATOR . 'archive.zip';
+    mkdir(dirname($destination), 0755, true);
+
+    (new DirectoryOperations($this->tempDir))->zip($destination);
+    $zip = new ZipArchive();
+    expect($zip->open($destination))->toBeTrue();
+    $entries = [];
+    for ($index = 0; $index < $zip->numFiles; $index++) {
+        $entries[] = $zip->getNameIndex($index);
+    }
+    $zip->close();
+
+    expect($entries)->not->toContain('nested/archive.zip');
+});
+
+test('size and modified-time sync is idempotent when copy does not preserve mtime', function () {
+    $source = $this->tempDir . DIRECTORY_SEPARATOR . 'mtime-source';
+    $target = $this->tempDir . DIRECTORY_SEPARATOR . 'mtime-target';
+    mkdir($source);
+    file_put_contents($source . DIRECTORY_SEPARATOR . 'old.txt', 'same-content');
+    touch($source . DIRECTORY_SEPARATOR . 'old.txt', 946684800);
+
+    $operations = new DirectoryOperations($source);
+    $first = $operations->syncTo($target, false, null, \Infocyph\Pathwise\Core\SyncComparison::SIZE_AND_MODIFIED_TIME);
+    $second = $operations->syncTo($target, false, null, \Infocyph\Pathwise\Core\SyncComparison::SIZE_AND_MODIFIED_TIME);
+
+    expect($first->created)->toContain('old.txt')
+        ->and($second->unchanged)->toContain('old.txt')
+        ->and($second->updated)->toBe([]);
 });

@@ -78,7 +78,9 @@ $report = (new DirectoryOperations('/srv/source'))->syncTo(
 
 ## Secure archives
 
-Every extraction path validates every ZIP member before writing. Absolute paths, Windows drive paths, null bytes, traversal segments, symbolic-link entries, extraction-root escapes, and existing destination-symlink breakouts are rejected with `UnsafeArchiveEntryException`.
+Every extraction path validates every ZIP member before writing. Absolute paths, Windows drive paths, null bytes, traversal segments, symbolic-link entries, extraction-root escapes, and existing destination-symlink breakouts are rejected with `UnsafeArchiveEntryException`. Default entry-count, per-entry size, total uncompressed-size, and compression-ratio limits mitigate ZIP bombs and can be configured explicitly.
+
+`FileJobQueue` is direct-local-only and intended for bounded, lightweight single-host workloads—not as a remote or distributed broker.
 
 ## Auditing
 
@@ -86,7 +88,7 @@ Every extraction path validates every ZIP member before writing. Absolute paths,
 
 ## Native execution
 
-`ExecutionStrategy::PHP` always uses PHP, `AUTO` may use an available native executable and fall back, and `NATIVE` either completes natively or throws `NativeExecutionException`. Native execution accepts local paths only; command arguments are escaped and execution results retain command, output, and exit code.
+`ExecutionStrategy::PHP` always uses PHP, `AUTO` may use an available native executable and fall back, and `NATIVE` either completes natively or throws `NativeExecutionException`. Native execution accepts local paths only; commands are executed as argument arrays without a shell, and execution results retain command, output, and exit code.
 
 ## Security
 

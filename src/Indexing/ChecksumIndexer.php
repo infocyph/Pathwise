@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\Indexing;
 
+use Infocyph\Pathwise\Exceptions\FileAccessException;
 use Infocyph\Pathwise\Results\DeduplicationResult;
 
 use Infocyph\Pathwise\Utils\FlysystemHelper;
@@ -18,20 +19,23 @@ final class ChecksumIndexer
      *
      * @param string $directory The directory to index.
      * @param string $algorithm The hash algorithm to use. Defaults to 'sha256'.
-     * @return array<string, array<int, string>> Array mapping checksum to array of file paths.
+     * @return array<string, list<string>> Array mapping checksum to array of file paths.
      */
     public static function buildIndex(string $directory, string $algorithm = 'sha256'): array
     {
         $directory = PathHelper::normalize($directory);
-        if (!FlysystemHelper::directoryExists($directory) || !in_array($algorithm, hash_algos(), true)) {
-            return [];
+        if (!in_array($algorithm, hash_algos(), true)) {
+            throw new \InvalidArgumentException("Unsupported checksum algorithm: {$algorithm}.");
+        }
+        if (!FlysystemHelper::directoryExists($directory)) {
+            throw new FileAccessException("Checksum index directory does not exist: {$directory}.");
         }
 
         $index = [];
         foreach (self::iterFiles($directory) as $path) {
             $hash = self::hashPath($path, $algorithm);
             if (!is_string($hash)) {
-                continue;
+                throw new FileAccessException("Unable to calculate checksum for: {$path}.");
             }
 
             $index[$hash][] = $path;
@@ -57,40 +61,7 @@ final class ChecksumIndexer
         $skipped = [];
 
         foreach ($duplicates as $paths) {
-            $canonical = array_shift($paths);
-            if (!is_string($canonical) || !self::isLocalFile($canonical)) {
-                array_push($skipped, ...$paths);
-
-                continue;
-            }
-
-            foreach ($paths as $path) {
-                if (!self::isLocalFile($path)) {
-                    $skipped[] = $path;
-
-                    continue;
-                }
-
-                $tmp = self::temporarySiblingPath($path);
-                if ($tmp === null) {
-                    $skipped[] = $path;
-
-                    continue;
-                }
-                if (!self::runSilently(static fn(): bool => rename($path, $tmp))) {
-                    $skipped[] = $path;
-
-                    continue;
-                }
-
-                if (self::filesAreIdentical($canonical, $tmp) && self::runSilently(static fn(): bool => link($canonical, $path))) {
-                    self::unlinkSilently($tmp);
-                    $linked[] = $path;
-                } else {
-                    self::runSilently(static fn(): bool => rename($tmp, $path));
-                    $skipped[] = $path;
-                }
-            }
+            self::deduplicateGroup($paths, $linked, $skipped);
         }
 
         return new DeduplicationResult($linked, $skipped);
@@ -101,13 +72,65 @@ final class ChecksumIndexer
      *
      * @param string $directory The directory to search for duplicates.
      * @param string $algorithm The hash algorithm to use. Defaults to 'sha256'.
-     * @return array<string, array<int, string>> Array mapping checksum to array of duplicate file paths.
+     * @return array<string, list<string>> Array mapping checksum to array of duplicate file paths.
      */
     public static function findDuplicates(string $directory, string $algorithm = 'sha256'): array
     {
         $index = self::buildIndex($directory, $algorithm);
 
         return array_filter($index, static fn(array $paths): bool => count($paths) > 1);
+    }
+
+    /**
+     * @param list<string> $paths
+     * @param list<string> $linked
+     * @param list<string> $skipped
+     */
+    private static function deduplicateGroup(array $paths, array &$linked, array &$skipped): void
+    {
+        $canonical = array_shift($paths);
+        if (!is_string($canonical) || !self::isLocalFile($canonical)) {
+            array_push($skipped, ...$paths);
+
+            return;
+        }
+
+        foreach ($paths as $path) {
+            self::deduplicatePath($canonical, $path, $linked, $skipped);
+        }
+    }
+
+    /**
+     * @param list<string> $linked
+     * @param list<string> $skipped
+     */
+    private static function deduplicatePath(string $canonical, string $path, array &$linked, array &$skipped): void
+    {
+        if (!self::isLocalFile($path)) {
+            $skipped[] = $path;
+
+            return;
+        }
+
+        $temporary = self::temporarySiblingPath($path);
+        if ($temporary === null || !self::runSilently(static fn(): bool => rename($path, $temporary))) {
+            $skipped[] = $path;
+
+            return;
+        }
+
+        if (self::filesAreIdentical($canonical, $temporary) && self::runSilently(static fn(): bool => link($canonical, $path))) {
+            self::unlinkSilently($temporary);
+            $linked[] = $path;
+
+            return;
+        }
+        if (!self::runSilently(static fn(): bool => rename($temporary, $path))) {
+            throw new FileAccessException(
+                "Unable to restore deduplication target '{$path}'; recovery copy remains at '{$temporary}'.",
+            );
+        }
+        $skipped[] = $path;
     }
 
     private static function filesAreIdentical(string $firstPath, string $secondPath): bool

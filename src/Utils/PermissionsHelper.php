@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\Utils;
 
+use Infocyph\Pathwise\Exceptions\FileAccessException;
 use Infocyph\Pathwise\Exceptions\MissingExtensionException;
-use RuntimeException;
+use Infocyph\Pathwise\Exceptions\UnsupportedStorageOperationException;
 
 class PermissionsHelper
 {
@@ -22,6 +23,8 @@ class PermissionsHelper
      */
     public static function canExecute(string $path): bool
     {
+        self::assertDirectLocalPath($path);
+
         return is_executable($path);
     }
 
@@ -37,6 +40,8 @@ class PermissionsHelper
      */
     public static function canRead(string $path): bool
     {
+        self::assertDirectLocalPath($path);
+
         return is_readable($path);
     }
 
@@ -52,6 +57,8 @@ class PermissionsHelper
      */
     public static function canWrite(string $path): bool
     {
+        self::assertDirectLocalPath($path);
+
         return is_writable($path);
     }
 
@@ -101,6 +108,7 @@ class PermissionsHelper
      */
     public static function getHumanReadablePermissions(string $path): ?string
     {
+        self::assertDirectLocalPath($path);
         if (!file_exists($path)) {
             return null;
         }
@@ -127,6 +135,7 @@ class PermissionsHelper
      */
     public static function getOwnership(string $path): ?array
     {
+        self::assertDirectLocalPath($path);
         if (!self::isPosixSupported()) {
             throw new MissingExtensionException('Ownership operations require ext-posix.');
         }
@@ -170,6 +179,7 @@ class PermissionsHelper
      */
     public static function getPermissions(string $path): ?string
     {
+        self::assertDirectLocalPath($path);
         if (!file_exists($path)) {
             return null;
         }
@@ -190,6 +200,8 @@ class PermissionsHelper
      */
     public static function isOwnedByCurrentUser(string $path): bool
     {
+        self::assertDirectLocalPath($path);
+
         return self::isPosixSupported() && fileowner($path) === posix_geteuid();
     }
 
@@ -199,10 +211,12 @@ class PermissionsHelper
      * @param string $path The path to the file or directory to set ownership on.
      * @param string $owner The username of the new owner.
      * @param string|null $group The groupname of the new group, or null to leave the group unchanged.
-     * @throws RuntimeException If the operation fails or if ownership functions are not supported on the current system.
+     * @throws FileAccessException If the ownership operation fails.
+     * @throws MissingExtensionException If ownership functions are unavailable.
      */
     public static function setOwnership(string $path, string $owner, ?string $group = null): self
     {
+        self::assertDirectLocalPath($path);
         if (!self::isPosixSupported()) {
             throw new MissingExtensionException('Ownership operations require ext-posix.');
         }
@@ -213,7 +227,7 @@ class PermissionsHelper
         }
 
         if (!$result) {
-            throw new RuntimeException("Failed to set ownership on {$path}");
+            throw new FileAccessException("Failed to set ownership on {$path}");
         }
 
         return new self();
@@ -228,15 +242,25 @@ class PermissionsHelper
      *
      * @param string $path The path to the file or directory to set permissions on.
      * @param int $permissions The new permissions for the file or directory.
-     * @throws RuntimeException If the operation fails.
+     * @throws FileAccessException If the operation fails.
      */
     public static function setPermissions(string $path, int $permissions): self
     {
+        self::assertDirectLocalPath($path);
         if (!chmod($path, $permissions)) {
-            throw new RuntimeException("Failed to set permissions on {$path}");
+            throw new FileAccessException("Failed to set permissions on {$path}");
         }
 
         return new self();
+    }
+
+    private static function assertDirectLocalPath(string $path): void
+    {
+        if (!FlysystemHelper::isLocalPath($path)) {
+            throw new UnsupportedStorageOperationException(
+                "Permission operations require a direct-local path: {$path}",
+            );
+        }
     }
 
     private static function isPosixSupported(): bool

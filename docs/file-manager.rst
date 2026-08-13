@@ -36,7 +36,9 @@ Example:
 
 Brief capabilities:
 
-* Memory-safe reads: line, char, binary chunk, CSV, JSON, XML.
+* Streaming line, character, binary chunk, CSV, JSON Lines, and XML modes.
+* Whole-document ``jsonArray()`` decoding for complete JSON arrays (memory use
+  is proportional to the document size).
 * Lock-aware reads for safer concurrent usage.
 * Explicit generator APIs; the reader itself implements ``Countable``, not ``Iterator``.
 

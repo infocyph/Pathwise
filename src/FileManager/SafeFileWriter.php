@@ -62,6 +62,9 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
         } catch (\Throwable) {
             // Never throw from destructors.
         } finally {
+            if (is_string($this->atomicTempFilePath) && is_file($this->atomicTempFilePath)) {
+                $this->unlinkPathSilently($this->atomicTempFilePath);
+            }
             if ($this->cleanupLocalWorkingPath && is_string($this->localWorkingPath) && is_file($this->localWorkingPath)) {
                 $this->unlinkPathSilently($this->localWorkingPath);
             }
@@ -150,10 +153,11 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      *
      * @return DateTime The creation date of the file.
      */
-    public function getCreationDate(): DateTime
+    public function getCreationDate(): ?DateTime
     {
         return $this->resolveFileDate(
             static fn(string $path): int => (int) filectime($path),
+            false,
         );
     }
 
@@ -162,10 +166,11 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      *
      * @return DateTime The last modification date of the file.
      */
-    public function getModificationDate(): DateTime
+    public function getModificationDate(): ?DateTime
     {
         return $this->resolveFileDate(
             static fn(string $path): int => (int) filemtime($path),
+            true,
         );
     }
 
@@ -210,8 +215,8 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
             'size' => $this->getSize(),
             'writes' => $this->writeCount,
             'writeTypesCount' => $this->writeTypesCount,
-            'modificationDate' => $this->getModificationDate()->format(DateTimeInterface::ATOM),
-            'creationDate' => $this->getCreationDate()->format(DateTimeInterface::ATOM),
+            'modificationDate' => $this->getModificationDate()?->format(DateTimeInterface::ATOM),
+            'creationDate' => $this->getCreationDate()?->format(DateTimeInterface::ATOM),
         ];
     }
 
@@ -341,12 +346,7 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
 
     public function writeCharacters(string $characters): int
     {
-        $written = 0;
-        foreach (str_split($characters) as $character) {
-            $written += $this->performWrite('characters', fn(): int|false => $this->writeCharacterData($character));
-        }
-
-        return $written;
+        return $this->performWrite('characters', fn(): int|false => $this->writeCharacterData($characters));
     }
 
     /** @param list<string|int|float|bool|null> $row */
@@ -361,6 +361,10 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
      */
     public function writeFixedWidth(array $data, array $widths): int
     {
+        if ($widths === [] || array_any($widths, static fn(int $width): bool => $width < 1)) {
+            throw new FileAccessException('Fixed-width definitions must be positive integers.');
+        }
+
         return $this->performWrite('fixed-width', fn(): int|false => $this->writeFixedWidthData($data, $widths));
     }
 
@@ -438,7 +442,10 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
         }
 
         if ($this->isRemoteTarget()) {
-            $this->localWorkingPath ??= $this->createLocalTempFile('pathwise_writer_sync_');
+            if ($this->localWorkingPath === null) {
+                $this->localWorkingPath = $this->createLocalTempFile('pathwise_writer_sync_');
+                $this->cleanupLocalWorkingPath = true;
+            }
             if (!$this->runSilently(fn(): bool => rename($this->atomicTempFilePath, $this->localWorkingPath))) {
                 if (!$this->runSilently(fn(): bool => copy($this->atomicTempFilePath, $this->localWorkingPath))) {
                     throw new FileAccessException("Failed to finalize atomic write for {$this->filename}");
@@ -536,7 +543,7 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
     /**
      * @param callable(string): int $localDateResolver
      */
-    private function resolveFileDate(callable $localDateResolver): DateTime
+    private function resolveFileDate(callable $localDateResolver, bool $useAdapterLastModified): ?DateTime
     {
         $target = $this->getActiveOrFinalPath();
         if (is_file($target)) {
@@ -545,11 +552,11 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
             return new DateTime('@' . $timestamp);
         }
 
-        if (FlysystemHelper::fileExists($this->filename)) {
+        if ($useAdapterLastModified && FlysystemHelper::fileExists($this->filename)) {
             return new DateTime('@' . FlysystemHelper::lastModified($this->filename));
         }
 
-        return new DateTime();
+        return null;
     }
 
     private function resolveNonAtomicTargetFilePath(): string
@@ -593,12 +600,21 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
 
     private function syncWorkingCopyBack(): void
     {
-        StreamTransferHelper::syncLocalFileToPathOrThrow(
-            $this->syncBackOnClose,
-            $this->localWorkingPath,
-            $this->filename,
-            fn(): \Throwable => new FileAccessException("Cannot write to file: {$this->filename}"),
-        );
+        try {
+            StreamTransferHelper::syncLocalFileToPathOrThrow(
+                $this->syncBackOnClose,
+                $this->localWorkingPath,
+                $this->filename,
+                fn(): \Throwable => new FileAccessException("Cannot write to file: {$this->filename}"),
+            );
+        } finally {
+            if ($this->cleanupLocalWorkingPath && is_string($this->localWorkingPath)) {
+                $this->unlinkPathSilently($this->localWorkingPath);
+            }
+            $this->localWorkingPath = null;
+            $this->cleanupLocalWorkingPath = false;
+            $this->syncBackOnClose = false;
+        }
     }
 
     private function unlinkPathSilently(string $path): void

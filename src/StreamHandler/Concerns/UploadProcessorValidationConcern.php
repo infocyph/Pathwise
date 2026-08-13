@@ -21,6 +21,23 @@ use Infocyph\Pathwise\Utils\PathHelper;
  */
 trait UploadProcessorValidationConcern
 {
+    /**
+     * Get a unique destination for the uploaded file.
+     */
+    private function buildDestination(string $fileName): string
+    {
+        $subDir = $this->useDateDirectories ? date('Y/m/d') : '';
+        $destinationDir = $subDir !== ''
+            ? PathHelper::join($this->uploadDir, $subDir)
+            : $this->uploadDir;
+
+        if (!FlysystemHelper::directoryExists($destinationDir)) {
+            FlysystemHelper::createDirectory($destinationDir);
+        }
+
+        return PathHelper::join($destinationDir, $fileName);
+    }
+
     private function copyImageToInspectionFile(string $filePath, string $tempFile): void
     {
         $stream = FlysystemHelper::readStream($filePath);
@@ -42,6 +59,13 @@ trait UploadProcessorValidationConcern
         fclose($target);
     }
 
+    private function deleteIncomingFile(string $path): void
+    {
+        if (FlysystemHelper::fileExists($path)) {
+            FlysystemHelper::delete($path);
+        }
+    }
+
     /**
      * Ensure the upload directory exists.
      */
@@ -50,6 +74,44 @@ trait UploadProcessorValidationConcern
         if (!FlysystemHelper::directoryExists($this->uploadDir)) {
             FlysystemHelper::createDirectory($this->uploadDir);
         }
+    }
+
+    private function finalizeIncomingFile(string $source, string $extension): string
+    {
+        if ($this->namingStrategy === 'hash') {
+            $fileName = $this->generateFileName($source, $extension);
+            $destination = $this->buildDestination($fileName);
+            if (!FlysystemHelper::fileExists($destination)) {
+                $this->moveIncomingFile($source, $destination);
+
+                return $destination;
+            }
+
+            $destinationChecksum = FlysystemHelper::checksum($destination, 'sha256');
+            $sourceChecksum = FlysystemHelper::checksum($source, 'sha256');
+            if (
+                is_string($destinationChecksum)
+                && is_string($sourceChecksum)
+                && hash_equals($destinationChecksum, $sourceChecksum)
+            ) {
+                $this->deleteIncomingFile($source);
+
+                return $destination;
+            }
+
+            throw new UploadException('A file-name collision was detected for different content.');
+        }
+
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $destination = $this->buildDestination($this->generateFileName(null, $extension));
+            if (!FlysystemHelper::fileExists($destination)) {
+                $this->moveIncomingFile($source, $destination);
+
+                return $destination;
+            }
+        }
+
+        throw new UploadException('Unable to allocate a unique upload destination.');
     }
 
     /**
@@ -63,29 +125,6 @@ trait UploadProcessorValidationConcern
         }
 
         return $mimeType;
-    }
-
-    /**
-     * Get a unique destination for the uploaded file.
-     */
-    private function getUniqueDestination(string $fileName): string
-    {
-        $subDir = $this->useDateDirectories ? date('Y/m/d') : '';
-        $destinationDir = $subDir !== ''
-            ? PathHelper::join($this->uploadDir, $subDir)
-            : $this->uploadDir;
-
-        if (!FlysystemHelper::directoryExists($destinationDir)) {
-            FlysystemHelper::createDirectory($destinationDir);
-        }
-
-        $destination = PathHelper::join($destinationDir, $fileName);
-
-        if (FlysystemHelper::fileExists($destination)) {
-            throw new UploadException('File with the same name already exists.');
-        }
-
-        return $destination;
     }
 
     /**
@@ -167,14 +206,23 @@ trait UploadProcessorValidationConcern
     private function normalizeUploadSize(int|string $size): int
     {
         if (is_int($size)) {
+            if ($size < 0) {
+                throw new UploadException('Invalid upload size metadata.');
+            }
+
             return $size;
         }
 
-        if (!is_numeric($size)) {
+        if (preg_match('/^(?:0|[1-9][0-9]*)$/', $size) !== 1) {
             throw new UploadException('Invalid upload size metadata.');
         }
 
-        return (int) $size;
+        $normalized = filter_var($size, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]);
+        if (!is_int($normalized)) {
+            throw new UploadException('Invalid upload size metadata.');
+        }
+
+        return $normalized;
     }
 
     /**

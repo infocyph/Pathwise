@@ -63,6 +63,7 @@ trait DirectoryOperationsSyncConcern
         if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
             throw new NativeExecutionException(
                 "Native directory copy failed with exit code {$native->exitCode}: " . implode("\n", $native->output),
+                $native,
             );
         }
 
@@ -191,7 +192,10 @@ trait DirectoryOperationsSyncConcern
             SyncComparison::ALWAYS_COPY => false,
             SyncComparison::SIZE => FlysystemHelper::size($sourcePath) === FlysystemHelper::size($targetPath),
             SyncComparison::SIZE_AND_MODIFIED_TIME => FlysystemHelper::size($sourcePath) === FlysystemHelper::size($targetPath)
-                && FlysystemHelper::lastModified($sourcePath) === FlysystemHelper::lastModified($targetPath),
+                && (
+                    FlysystemHelper::lastModified($sourcePath) === FlysystemHelper::lastModified($targetPath)
+                    || $this->checksumsMatch($sourcePath, $targetPath)
+                ),
             SyncComparison::CHECKSUM => $this->checksumsMatch($sourcePath, $targetPath),
         };
     }

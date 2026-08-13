@@ -202,3 +202,18 @@ test('it writes mounted files through local staging and sync', function () {
 
     expect($normalizedContent)->toBe("hello\n");
 });
+
+test('matching-line writer returns zero for no match and rejects invalid regex', function () {
+    $writer = new SafeFileWriter($this->tempFilePath);
+
+    expect($writer->writeMatchingLine('hello', '/world/'))->toBe(0)
+        ->and($writer->count())->toBe(0)
+        ->and(fn () => $writer->writeMatchingLine('hello', '['))->toThrow(FileAccessException::class);
+});
+
+test('fixed-width and serialized writers reject unsafe values', function () {
+    $writer = new SafeFileWriter($this->tempFilePath);
+
+    expect(fn () => $writer->writeFixedWidth(['x'], [0]))->toThrow(FileAccessException::class)
+        ->and(fn () => $writer->writeSerialized((object) ['x' => 1]))->toThrow(FileAccessException::class);
+});

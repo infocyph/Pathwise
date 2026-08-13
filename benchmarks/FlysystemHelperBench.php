@@ -39,6 +39,18 @@ final class FlysystemHelperBench
         FlysystemHelper::checksum($this->filePath, 'sha256');
     }
 
+    public function benchCopyThroughCachedLocalResolver(): void
+    {
+        $destination = PathHelper::join($this->baseDir, 'copy.txt');
+        FlysystemHelper::copy($this->filePath, $destination);
+        FlysystemHelper::delete($destination);
+    }
+
+    public function benchFileExistsThroughCachedLocalResolver(): void
+    {
+        FlysystemHelper::fileExists($this->filePath);
+    }
+
     public function benchGetMetadataSizeAndMtime(): void
     {
         FlysystemHelper::size($this->filePath);

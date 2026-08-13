@@ -113,7 +113,9 @@ class FileOperations
      */
     public function copy(string $destination, ?callable $progress = null): self
     {
+        $destination = PathHelper::normalize($destination);
         $this->assertPolicy('copy', $this->filePath, ['destination' => $destination]);
+        $this->assertPolicy('write', $destination, ['source' => $this->filePath, 'operation' => 'copy']);
 
         $this->emitCopyProgress($progress, $destination, 0);
         $this->recordFileState($destination);
@@ -129,11 +131,11 @@ class FileOperations
      */
     public function copyWithVerification(string $destination, string $algorithm = 'sha256'): self
     {
-        $this->copy($destination);
-
         if (!in_array($algorithm, hash_algos(), true)) {
             throw new FileAccessException("Unsupported checksum algorithm: {$algorithm}");
         }
+
+        $this->copy($destination);
 
         $sourceHash = FlysystemHelper::checksum($this->filePath, $algorithm);
         $destinationHash = FlysystemHelper::checksum($destination, $algorithm);
@@ -316,11 +318,13 @@ class FileOperations
      */
     public function rename(string $newPath): self
     {
-        $this->assertPolicy('rename', $this->filePath, ['destination' => $newPath]);
         $newPath = PathHelper::normalize($newPath);
+        $this->assertPolicy('rename', $this->filePath, ['destination' => $newPath]);
+        $this->assertPolicy('write', $newPath, ['source' => $this->filePath, 'operation' => 'rename']);
         $oldPath = $this->filePath;
         $this->recordFileState($oldPath);
         $this->recordFileState($newPath);
+        $this->file = null;
 
         try {
             FlysystemHelper::move($this->filePath, $newPath);
@@ -328,7 +332,6 @@ class FileOperations
             throw new FileAccessException("Unable to rename or move file to $newPath.", 0, $e);
         }
         $this->filePath = $newPath;
-        $this->initFile(); // Reinitialize file object with new path
         $this->audit('rename', ['from' => $oldPath, 'to' => $newPath]);
 
         return $this;
@@ -339,47 +342,56 @@ class FileOperations
      *
      * @return self This instance for method chaining.
      */
-    public function rollbackTransaction(): self
+    public function rollbackTransaction(?\Throwable $originalFailure = null): self
     {
         $this->assertTransactionActive('rollback');
         $journal = $this->transactionJournal;
         if (!$journal instanceof FileTransactionJournal) {
             throw new TransactionStateException('Transaction journal is unavailable.');
         }
-        $journal->rollback();
-        $this->filePath = $journal->originalPath;
-        $this->file = null;
-        $this->transactionActive = false;
-        $this->transactionJournal = null;
+
+        try {
+            $journal->rollback($originalFailure);
+        } finally {
+            $this->filePath = $journal->originalPath;
+            $this->file = null;
+            $this->transactionActive = false;
+            $this->transactionJournal = null;
+        }
 
         return $this;
     }
 
-    /**
-     * Search for a term in the file using OS-native commands and return matching lines.
-     *
-     * @return list<string>
-     */
+    /** @return list<string> */
     public function searchContent(string $searchTerm): array
     {
-        $this->assertLocalOperation('native content searching');
-        $command = escapeshellarg($this->filePath);
-        $escapedTerm = escapeshellarg($searchTerm);
+        if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
+            if (!FlysystemHelper::isLocalPath($this->filePath)) {
+                throw new UnsupportedStorageOperationException('Native content search requires a local file path.');
+            }
+            if (!NativeOperationsAdapter::canUseNativeSearch()) {
+                throw new NativeExecutionException('Native content search executable is unavailable.');
+            }
 
-        $output = [];
-        $returnVar = 0;
+            $result = $this->searchContentNatively($searchTerm, true);
+            if ($result === null) {
+                throw new NativeExecutionException('Native content search failed without a result.');
+            }
 
-        if (PHP_OS_FAMILY === 'Windows') {
-            exec("findstr /I $escapedTerm $command", $output, $returnVar);
-        } else {
-            exec("grep -i $escapedTerm $command", $output, $returnVar);
+            return $result;
+        }
+        if (
+            $this->executionStrategy === ExecutionStrategy::AUTO
+            && FlysystemHelper::isLocalPath($this->filePath)
+            && NativeOperationsAdapter::canUseNativeSearch()
+        ) {
+            $native = $this->searchContentNatively($searchTerm, false);
+            if ($native !== null) {
+                return $native;
+            }
         }
 
-        if ($returnVar !== 0 && empty($output)) {
-            return [];
-        }
-
-        return $output;
+        return $this->searchContentWithPhp($searchTerm);
     }
 
     /**
@@ -474,6 +486,11 @@ class FileOperations
      */
     public function setVisibility(string $visibility): self
     {
+        if ($this->transactionActive) {
+            throw new UnsupportedStorageOperationException(
+                'Visibility changes are not supported inside file transactions.',
+            );
+        }
         $this->assertPolicy('set-visibility', $this->filePath, ['visibility' => $visibility]);
         FlysystemHelper::setVisibility($this->filePath, $visibility);
         $this->audit('set-visibility', ['path' => $this->filePath, 'visibility' => $visibility]);
@@ -515,15 +532,7 @@ class FileOperations
 
             return $result;
         } catch (\Throwable $e) {
-            try {
-                $this->rollbackTransaction();
-            } catch (\Throwable $rollbackFailure) {
-                throw new FileAccessException(
-                    'Transaction failed and rollback was incomplete: ' . $rollbackFailure->getMessage(),
-                    0,
-                    $e,
-                );
-            }
+            $this->rollbackTransaction($e);
 
             throw $e;
         }
@@ -728,7 +737,11 @@ class FileOperations
     private function performCopy(string $destination): void
     {
         if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
-            $this->assertLocalOperation('native copy');
+            if (!FlysystemHelper::isLocalPath($this->filePath) || !FlysystemHelper::isLocalPath($destination)) {
+                throw new UnsupportedStorageOperationException(
+                    'Native copy requires local filesystem paths for both source and destination.',
+                );
+            }
             if (!NativeOperationsAdapter::canUseNativeFileCopy()) {
                 throw new NativeExecutionException('Native file copy executable is unavailable.');
             }
@@ -736,6 +749,7 @@ class FileOperations
             if (!$native->success) {
                 throw new NativeExecutionException(
                     "Native file copy failed with exit code {$native->exitCode}: {$native->command}",
+                    $native,
                 );
             }
 
@@ -785,5 +799,48 @@ class FileOperations
         }
 
         return $this->file;
+    }
+
+    /** @return list<string>|null */
+    private function searchContentNatively(string $searchTerm, bool $throwOnFailure): ?array
+    {
+        $result = NativeOperationsAdapter::searchFile($this->filePath, $searchTerm);
+        if ($result->success) {
+            return $result->output;
+        }
+        if ($result->exitCode === 1) {
+            return [];
+        }
+        if ($throwOnFailure) {
+            throw new NativeExecutionException(
+                "Native content search failed with exit code {$result->exitCode}.",
+                $result,
+            );
+        }
+
+        return null;
+    }
+
+    /** @return list<string> */
+    private function searchContentWithPhp(string $searchTerm): array
+    {
+        $stream = FlysystemHelper::readStream($this->filePath);
+        if (!is_resource($stream)) {
+            throw new FileAccessException("Unable to read file: {$this->filePath}.");
+        }
+
+        $matches = [];
+
+        try {
+            while (($line = fgets($stream)) !== false) {
+                if (stripos($line, $searchTerm) !== false) {
+                    $matches[] = rtrim($line, "\r\n");
+                }
+            }
+        } finally {
+            fclose($stream);
+        }
+
+        return $matches;
     }
 }

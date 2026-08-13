@@ -21,6 +21,9 @@ final class FlysystemHelper
     private static ?FilesystemOperator $defaultFilesystem = null;
 
     /** @var array<string, FilesystemOperator> */
+    private static array $localFilesystems = [];
+
+    /** @var array<string, FilesystemOperator> */
     private static array $mounts = [];
 
     /**
@@ -100,6 +103,10 @@ final class FlysystemHelper
      */
     public static function copyDirectory(string $source, string $destination, array $config = []): void
     {
+        if (self::isSameOrDescendant($source, $destination)) {
+            throw new \InvalidArgumentException('A directory cannot be copied into itself or one of its descendants.');
+        }
+
         [$sourceFilesystem, $sourceLocation] = self::filesystemForDirectory($source);
         [$destinationFilesystem, $destinationLocation] = self::filesystemForDirectory($destination);
         $destinationFilesystem->createDirectory($destinationLocation, $config);
@@ -178,13 +185,9 @@ final class FlysystemHelper
      */
     public static function directoryExists(string $path): bool
     {
-        try {
-            [$filesystem, $location] = self::filesystemForDirectory($path);
+        [$filesystem, $location] = self::filesystemForDirectory($path);
 
-            return $filesystem->directoryExists($location);
-        } catch (\Throwable) {
-            return false;
-        }
+        return $filesystem->directoryExists($location);
     }
 
     /**
@@ -195,13 +198,9 @@ final class FlysystemHelper
      */
     public static function fileExists(string $path): bool
     {
-        try {
-            [$filesystem, $location] = self::filesystemForFile($path);
+        [$filesystem, $location] = self::filesystemForFile($path);
 
-            return $filesystem->fileExists($location);
-        } catch (\Throwable) {
-            return false;
-        }
+        return $filesystem->fileExists($location);
     }
 
     /**
@@ -212,13 +211,9 @@ final class FlysystemHelper
      */
     public static function has(string $path): bool
     {
-        try {
-            [$filesystem, $location] = self::filesystemForPath($path);
+        [$filesystem, $location] = self::filesystemForPath($path);
 
-            return $filesystem->has($location);
-        } catch (\Throwable) {
-            return false;
-        }
+        return $filesystem->has($location);
     }
 
     /**
@@ -231,6 +226,11 @@ final class FlysystemHelper
         return self::$defaultFilesystem !== null;
     }
 
+    public static function hasMount(string $name): bool
+    {
+        return isset(self::$mounts[self::normalizeMountName($name)]);
+    }
+
     /**
      * Determine whether a path is handled directly by the local filesystem.
      *
@@ -240,6 +240,33 @@ final class FlysystemHelper
     {
         return !PathHelper::hasScheme($path)
             && (PathHelper::isAbsolute($path) || self::$defaultFilesystem === null);
+    }
+
+    /**
+     * Determine whether two paths resolve to the same filesystem and the target
+     * is the source directory itself or one of its descendants.
+     */
+    public static function isSameOrDescendant(string $sourceDirectory, string $target): bool
+    {
+        if (self::isLocalPath($sourceDirectory) && self::isLocalPath($target)) {
+            $source = rtrim(self::canonicalLocalPath($sourceDirectory), '/');
+            $destination = rtrim(self::canonicalLocalPath($target), '/');
+
+            return self::pathsMatch($source, $destination)
+                || self::pathStartsWith($destination, $source . '/');
+        }
+
+        [$sourceFilesystem, $sourceLocation] = self::filesystemForDirectory($sourceDirectory);
+        [$targetFilesystem, $targetLocation] = self::filesystemForPath($target);
+        if ($sourceFilesystem !== $targetFilesystem) {
+            return false;
+        }
+
+        $sourceLocation = trim(str_replace('\\', '/', $sourceLocation), '/');
+        $targetLocation = trim(str_replace('\\', '/', $targetLocation), '/');
+
+        return $sourceLocation === $targetLocation
+            || ($sourceLocation === '' ? $targetLocation !== '' : str_starts_with($targetLocation, $sourceLocation . '/'));
     }
 
     /**
@@ -312,6 +339,9 @@ final class FlysystemHelper
     public static function mount(string $name, FilesystemOperator $filesystem): void
     {
         $normalized = self::normalizeMountName($name);
+        if (isset(self::$mounts[$normalized])) {
+            throw new \InvalidArgumentException("Flysystem mount '{$normalized}' is already registered.");
+        }
         self::$mounts[$normalized] = $filesystem;
     }
 
@@ -346,6 +376,10 @@ final class FlysystemHelper
      */
     public static function moveDirectory(string $source, string $destination, array $config = []): void
     {
+        if (self::isSameOrDescendant($source, $destination)) {
+            throw new \InvalidArgumentException('A directory cannot be moved into itself or one of its descendants.');
+        }
+
         self::copyDirectory($source, $destination, $config);
         self::deleteDirectory($source);
     }
@@ -395,6 +429,12 @@ final class FlysystemHelper
         return $filesystem->readStream($location);
     }
 
+    /** Replace an existing mount explicitly. */
+    public static function replaceMount(string $name, FilesystemOperator $filesystem): void
+    {
+        self::$mounts[self::normalizeMountName($name)] = $filesystem;
+    }
+
     /**
      * Reset the helper by clearing default filesystem and mounts.
      */
@@ -402,6 +442,7 @@ final class FlysystemHelper
     {
         self::clearDefaultFilesystem();
         self::clearMounts();
+        self::$localFilesystems = [];
     }
 
     /**
@@ -529,6 +570,23 @@ final class FlysystemHelper
         $filesystem->writeStream($location, $stream, $config);
     }
 
+    private static function canonicalLocalPath(string $path): string
+    {
+        $absolute = PathHelper::toAbsolutePath($path);
+        $suffix = [];
+        $candidate = $absolute;
+        while (!file_exists($candidate) && dirname($candidate) !== $candidate) {
+            array_unshift($suffix, basename($candidate));
+            $candidate = dirname($candidate);
+        }
+
+        $resolved = realpath($candidate);
+        $base = is_string($resolved) ? $resolved : $candidate;
+        $canonical = PathHelper::normalize(PathHelper::join($base, ...$suffix));
+
+        return str_replace('\\', '/', $canonical);
+    }
+
     /**
      * @return array{FilesystemOperator, string}
      */
@@ -574,18 +632,9 @@ final class FlysystemHelper
      */
     private static function filesystemForLocalDirectory(string $path): array
     {
-        $path = PathHelper::normalize(rtrim($path, '/\\'));
-        if ($path === '' || $path === DIRECTORY_SEPARATOR) {
-            return [new Filesystem(new LocalFilesystemAdapter(DIRECTORY_SEPARATOR)), ''];
-        }
+        [$root, $location] = self::localRootAndLocation($path);
 
-        $parent = dirname($path);
-        $location = basename($path);
-
-        return [
-            new Filesystem(new LocalFilesystemAdapter($parent)),
-            str_replace('\\', '/', $location),
-        ];
+        return [self::localFilesystem($root), rtrim($location, '/')];
     }
 
     /**
@@ -593,14 +642,9 @@ final class FlysystemHelper
      */
     private static function filesystemForLocalFile(string $path): array
     {
-        $path = PathHelper::normalize($path);
-        $directory = dirname($path);
-        $location = basename($path);
+        [$root, $location] = self::localRootAndLocation($path);
 
-        return [
-            new Filesystem(new LocalFilesystemAdapter($directory)),
-            str_replace('\\', '/', $location),
-        ];
+        return [self::localFilesystem($root), ltrim($location, '/')];
     }
 
     /**
@@ -611,9 +655,30 @@ final class FlysystemHelper
         return self::filesystemFor($path, false);
     }
 
+    private static function localFilesystem(string $root): FilesystemOperator
+    {
+        return self::$localFilesystems[$root] ??= new Filesystem(new LocalFilesystemAdapter($root));
+    }
+
+    /** @return array{string, string} */
+    private static function localRootAndLocation(string $path): array
+    {
+        $absolute = str_replace('\\', '/', PathHelper::toAbsolutePath($path));
+        if (preg_match('/^([A-Za-z]:)\/(.*)$/', $absolute, $matches) === 1) {
+            return [$matches[1] . DIRECTORY_SEPARATOR, $matches[2]];
+        }
+
+        return [DIRECTORY_SEPARATOR, ltrim($absolute, '/')];
+    }
+
     private static function normalizeMountName(string $name): string
     {
-        return strtolower(trim($name, " \t\n\r\0\x0B:/"));
+        $normalized = strtolower(trim($name));
+        if (preg_match('/^[a-z][a-z0-9._-]*$/', $normalized) !== 1) {
+            throw new \InvalidArgumentException("Invalid Flysystem mount name: '{$name}'.");
+        }
+
+        return $normalized;
     }
 
     /**
@@ -656,6 +721,20 @@ final class FlysystemHelper
         }
 
         return $normalized;
+    }
+
+    private static function pathsMatch(string $first, string $second): bool
+    {
+        return PHP_OS_FAMILY === 'Windows'
+            ? strcasecmp($first, $second) === 0
+            : $first === $second;
+    }
+
+    private static function pathStartsWith(string $path, string $prefix): bool
+    {
+        return PHP_OS_FAMILY === 'Windows'
+            ? str_starts_with(strtolower($path), strtolower($prefix))
+            : str_starts_with($path, $prefix);
     }
 
     /**

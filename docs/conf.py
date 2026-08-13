@@ -16,7 +16,6 @@ extensions = [
     "myst_parser",
     "sphinx.ext.todo",
     "sphinx.ext.autosectionlabel",
-    "sphinx.ext.intersphinx",
     "sphinx_copybutton",
     "sphinx_design",
     "sphinxcontrib.phpdomain",
@@ -33,11 +32,7 @@ myst_enable_extensions = [
 
 myst_heading_anchors = 3
 autosectionlabel_prefix_document = True
-todo_include_todos = True
-
-intersphinx_mapping = {
-    "php": ("https://www.php.net/manual/en/", None),
-}
+todo_include_todos = False
 
 html_theme = "sphinx_book_theme"
 html_theme_options = {
@@ -58,4 +53,3 @@ html_title = f"Pathwise - {version} Documentation"
 html_show_sourcelink = True
 html_show_sphinx = False
 html_last_updated_fmt = "%Y-%m-%d"
-

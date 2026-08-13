@@ -68,7 +68,7 @@ final class StreamHandlerBench
         file_put_contents($tmpUpload, str_repeat('upload-payload', 128));
 
         try {
-            $destination = $this->uploadProcessor->processUpload([
+            $destination = $this->uploadProcessor->ingestFile([
                 'error' => UPLOAD_ERR_OK,
                 'size' => filesize($tmpUpload) ?: 0,
                 'tmp_name' => $tmpUpload,

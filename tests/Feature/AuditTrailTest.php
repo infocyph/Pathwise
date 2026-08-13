@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Infocyph\Pathwise\Observability\AuditTrail;
+use Infocyph\Pathwise\Exceptions\AuditException;
 use Infocyph\Pathwise\Exceptions\UnsupportedStorageOperationException;
 use Infocyph\Pathwise\Observability\CallbackAuditSink;
 use Infocyph\Pathwise\Observability\PartitionedAuditSink;
@@ -38,7 +39,7 @@ test('it fails without corrupting the log when context cannot be encoded', funct
     $stream = fopen('php://temp', 'rb');
 
     try {
-        expect(fn() => $audit->log('invalid', ['stream' => $stream]))->toThrow(JsonException::class)
+        expect(fn() => $audit->log('invalid', ['stream' => $stream]))->toThrow(AuditException::class)
             ->and(file($logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES))->toHaveCount(1);
     } finally {
         if (is_resource($stream)) {

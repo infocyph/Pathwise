@@ -113,6 +113,7 @@ final class StorageFactory
      */
     public static function createFilesystem(array $config): FilesystemOperator
     {
+        self::assertUnambiguousConfig($config);
         $provided = self::resolveProvidedFilesystem($config);
         if ($provided !== null) {
             return $provided;
@@ -198,8 +199,30 @@ final class StorageFactory
      */
     public static function mountMany(array $mounts): void
     {
+        $prepared = [];
         foreach ($mounts as $name => $config) {
-            self::mount((string) $name, $config);
+            if ($name === '') {
+                throw new \InvalidArgumentException('Mount names must be non-empty strings.');
+            }
+            if (FlysystemHelper::hasMount($name) || array_key_exists($name, $prepared)) {
+                throw new \InvalidArgumentException("Flysystem mount '{$name}' is already registered.");
+            }
+            $prepared[$name] = self::createFilesystem($config);
+        }
+
+        $mounted = [];
+
+        try {
+            foreach ($prepared as $name => $filesystem) {
+                FlysystemHelper::mount($name, $filesystem);
+                $mounted[] = $name;
+            }
+        } catch (\Throwable $exception) {
+            foreach ($mounted as $name) {
+                FlysystemHelper::unmount($name);
+            }
+
+            throw $exception;
         }
     }
 
@@ -226,6 +249,9 @@ final class StorageFactory
         if ($driver === '') {
             throw new \InvalidArgumentException('Driver name is required.');
         }
+        if (isset(self::OFFICIAL_DRIVERS[$driver]) || isset(self::$drivers[$driver])) {
+            throw new \InvalidArgumentException("Storage driver name '{$name}' is reserved or already registered.");
+        }
 
         self::$drivers[$driver] = $factory;
     }
@@ -251,6 +277,24 @@ final class StorageFactory
     public static function unregisterDriver(string $name): void
     {
         unset(self::$drivers[self::canonicalDriverName($name)]);
+    }
+
+    /** @param array<string, mixed> $config */
+    private static function assertUnambiguousConfig(array $config): void
+    {
+        $hasFilesystem = array_key_exists('filesystem', $config);
+        $hasAdapter = array_key_exists('adapter', $config);
+        $hasDriver = array_key_exists('driver', $config)
+            || array_key_exists('root', $config)
+            || array_key_exists('constructor', $config);
+        if (array_sum([(int) $hasFilesystem, (int) $hasAdapter, (int) $hasDriver]) > 1) {
+            throw new \InvalidArgumentException(
+                'Storage configuration must use exactly one of filesystem, adapter, or driver mode.',
+            );
+        }
+        if (array_key_exists('constructor', $config) && !array_key_exists('driver', $config)) {
+            throw new \InvalidArgumentException('Storage "constructor" requires an explicit driver.');
+        }
     }
 
     private static function canonicalDriverName(string $name): string
@@ -345,7 +389,10 @@ final class StorageFactory
             );
         }
 
-        $arguments = array_is_list($constructor) ? $constructor : array_values($constructor);
+        if (!array_is_list($constructor)) {
+            throw new \InvalidArgumentException('Storage "constructor" must be a list of positional arguments.');
+        }
+        $arguments = $constructor;
         $adapter = new \ReflectionClass($adapterClass)->newInstanceArgs($arguments);
 
         return new Filesystem($adapter, self::resolveOptions($config));
@@ -399,7 +446,7 @@ final class StorageFactory
         $normalized = [];
         foreach ($options as $key => $value) {
             if (!is_string($key)) {
-                continue;
+                throw new \InvalidArgumentException('Storage "options" keys must be strings.');
             }
 
             $normalized[$key] = $value;

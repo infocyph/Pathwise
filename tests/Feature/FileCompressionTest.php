@@ -236,3 +236,15 @@ test('it supports mounted zip and source paths', function () {
     expect(FlysystemHelper::read('zipmnt://dst/a.txt'))->toBe('A')
         ->and(FlysystemHelper::read('zipmnt://dst/nested/b.txt'))->toBe('B');
 });
+
+test('it rejects an empty archive password', function () {
+    expect(fn () => (new FileCompression($this->zipFilePath, true))->setPassword(''))
+        ->toThrow(CompressionException::class, 'must not be empty');
+});
+
+test('create mode replaces stale archive entries', function () {
+    (new FileCompression($this->zipFilePath, true))->addFile($this->file1, 'stale.txt')->save();
+    $fresh = (new FileCompression($this->zipFilePath, true))->addFile($this->file2, 'fresh.txt')->save();
+
+    expect($fresh->listFiles())->toBe(['fresh.txt']);
+});

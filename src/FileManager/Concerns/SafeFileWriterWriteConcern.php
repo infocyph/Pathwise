@@ -10,6 +10,24 @@ use SplFileObject;
 
 trait SafeFileWriterWriteConcern
 {
+    private function isSafeSerializedValue(mixed $value, int $depth = 0): bool
+    {
+        if ($depth > 256) {
+            return false;
+        }
+        if (is_float($value)) {
+            return is_finite($value);
+        }
+        if ($value === null || is_bool($value) || is_int($value) || is_string($value)) {
+            return true;
+        }
+        if (!is_array($value)) {
+            return false;
+        }
+
+        return array_all($value, fn(mixed $item): bool => $this->isSafeSerializedValue($item, $depth + 1));
+    }
+
     /**
      * @param list<mixed> $params
      */
@@ -69,6 +87,9 @@ trait SafeFileWriterWriteConcern
         foreach ($value as $column) {
             if (!is_string($column) && !is_int($column) && !is_float($column) && !is_bool($column) && $column !== null) {
                 throw new FileAccessException("Write type '{$type}' expects scalar CSV values.");
+            }
+            if (is_float($column) && !is_finite($column)) {
+                throw new FileAccessException("Write type '{$type}' expects finite CSV values.");
             }
 
             $row[] = $column;
@@ -256,10 +277,12 @@ trait SafeFileWriterWriteConcern
 
     private function writeJsonEncodedLine(mixed $data, bool $prettyPrint): int|false
     {
-        $jsonOptions = $prettyPrint ? JSON_PRETTY_PRINT : 0;
-        $jsonData = json_encode($data, $jsonOptions);
-        if ($jsonData === false) {
-            throw new FileAccessException('JSON encoding failed: ' . json_last_error_msg());
+        $jsonOptions = JSON_THROW_ON_ERROR | ($prettyPrint ? JSON_PRETTY_PRINT : 0);
+
+        try {
+            $jsonData = json_encode($data, $jsonOptions);
+        } catch (\JsonException $exception) {
+            throw new FileAccessException('JSON encoding failed: ' . $exception->getMessage(), 0, $exception);
         }
         $this->writeCount++;
 
@@ -312,13 +335,23 @@ trait SafeFileWriterWriteConcern
      */
     private function writeMatchingLineData(string $content, string $pattern): int|false
     {
-        if (preg_match($pattern, $content)) {
+        set_error_handler(static fn(): bool => true);
+
+        try {
+            $matched = preg_match($pattern, $content);
+        } finally {
+            restore_error_handler();
+        }
+        if ($matched === false) {
+            throw new FileAccessException('Invalid regular-expression pattern.');
+        }
+        if ($matched === 1) {
             $this->writeCount++;
 
             return $this->requireFileHandle()->fwrite($content . PHP_EOL);
         }
 
-        return false;
+        return 0;
     }
 
     /**
@@ -333,6 +366,9 @@ trait SafeFileWriterWriteConcern
      */
     private function writeSerializedData(mixed $data): int|false
     {
+        if (!$this->isSafeSerializedValue($data)) {
+            throw new FileAccessException('Serialized values must contain only safe scalar and array types.');
+        }
         $serializedData = serialize($data);
         $this->writeCount++;
 
@@ -350,8 +386,12 @@ trait SafeFileWriterWriteConcern
      */
     private function writeXmlData(SimpleXMLElement $element): int|false
     {
+        $xml = $element->asXML();
+        if (!is_string($xml)) {
+            throw new FileAccessException('XML serialization failed.');
+        }
         $this->writeCount++;
 
-        return $this->requireFileHandle()->fwrite($element->asXML() . PHP_EOL);
+        return $this->requireFileHandle()->fwrite($xml . PHP_EOL);
     }
 }

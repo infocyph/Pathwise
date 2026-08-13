@@ -4,7 +4,8 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\Observability;
 
-use DateTimeInterface;
+use DateTimeImmutable;
+use DateTimeZone;
 
 final readonly class AuditTrail
 {
@@ -34,7 +35,8 @@ final readonly class AuditTrail
     public function log(string $operation, array $context = []): void
     {
         $record = [
-            'timestamp' => date(DateTimeInterface::ATOM),
+            'timestamp' => new DateTimeImmutable('now', new DateTimeZone('UTC'))
+                ->format('Y-m-d\TH:i:s.u\Z'),
             'operation' => $operation,
             'context' => $context,
         ];

@@ -3,6 +3,9 @@
 declare(strict_types=1);
 
 use Infocyph\Pathwise\Queue\FileJobQueue;
+use Infocyph\Pathwise\Utils\FlysystemHelper;
+use League\Flysystem\Filesystem;
+use League\Flysystem\Local\LocalFilesystemAdapter;
 
 beforeEach(function () {
     $this->queueFile = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('queue_', true) . '.json';
@@ -11,6 +14,46 @@ beforeEach(function () {
 afterEach(function () {
     if (is_file($this->queueFile)) {
         unlink($this->queueFile);
+    }
+    FlysystemHelper::reset();
+});
+
+test('it rejects malformed jobs instead of dropping them', function () {
+    new FileJobQueue($this->queueFile);
+    file_put_contents($this->queueFile, json_encode([
+        'pending' => [['id' => '', 'type' => 'x', 'payload' => [], 'priority' => 0, 'createdAt' => time()]],
+        'processing' => [],
+        'failed' => [],
+    ], JSON_THROW_ON_ERROR));
+
+    expect(fn () => (new FileJobQueue($this->queueFile))->stats())
+        ->toThrow(RuntimeException::class, 'malformed job');
+});
+
+test('it enforces payload and total job bounds', function () {
+    $queue = new FileJobQueue($this->queueFile, maxJobs: 1, maxPayloadBytes: 8);
+
+    expect(fn () => $queue->enqueue('too-large', ['value' => 'payload']))
+        ->toThrow(RuntimeException::class, 'payload exceeds')
+        ->and($queue->enqueue('first'))->toStartWith('job_')
+        ->and(fn () => $queue->enqueue('second'))->toThrow(RuntimeException::class, 'job-count');
+});
+
+test('it rejects mounted and default-filesystem queue paths', function () {
+    $root = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('queue_mount_', true);
+    mkdir($root);
+    FlysystemHelper::mount('queue', new Filesystem(new LocalFilesystemAdapter($root)));
+
+    try {
+        expect(fn () => new FileJobQueue('queue://jobs.json'))
+            ->toThrow(RuntimeException::class, 'direct-local');
+
+        FlysystemHelper::setDefaultFilesystem(new Filesystem(new LocalFilesystemAdapter($root)));
+        expect(fn () => new FileJobQueue('jobs.json'))
+            ->toThrow(RuntimeException::class, 'direct-local');
+    } finally {
+        FlysystemHelper::reset();
+        rmdir($root);
     }
 });
 

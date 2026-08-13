@@ -159,7 +159,13 @@ test('it retrieves file ownership details', function () {
 
 test('it retrieves last modified by user', function () {
     $lastModifiedBy = MetadataHelper::getLastModifiedBy($this->tempFilePath);
-    expect($lastModifiedBy)->toBeString()->not->toBeNull();
+    if (PHP_OS_FAMILY === 'Windows') {
+        expect($lastModifiedBy)->toBeNull();
+
+        return;
+    }
+
+    expect($lastModifiedBy)->toBeString();
 });
 
 test('it retrieves file extension', function () {
@@ -208,7 +214,6 @@ test('it retrieves all metadata for file', function () {
         'mime_type',
         'type',
         'ownership',
-        'last_modified_by',
         'extension',
         'is_hidden',
         'symlink_target',
