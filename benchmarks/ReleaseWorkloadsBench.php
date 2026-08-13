@@ -43,27 +43,12 @@ final class ReleaseWorkloadsBench
 
     public function benchChunkAssembly100(): void
     {
-        $this->benchmarkChunkAssembly(100);
-    }
-
-    public function benchChunkAssembly1000ReverseArrival(): void
-    {
-        $this->benchmarkChunkAssembly(1_000, true);
+        $this->runChunkAssembly(100);
     }
 
     public function benchQueue100(): void
     {
-        $this->benchmarkQueue(100);
-    }
-
-    public function benchQueue1000(): void
-    {
-        $this->benchmarkQueue(1_000);
-    }
-
-    public function benchQueue10000(): void
-    {
-        $this->benchmarkQueue(10_000);
+        $this->runQueueWorkload(100);
     }
 
     public function benchReader128KiB(): void
@@ -83,35 +68,51 @@ final class ReleaseWorkloadsBench
 
     public function benchSyncChecksum1000Files(): void
     {
-        $this->benchmarkSync(SyncComparison::CHECKSUM);
+        $this->runSyncWorkload(SyncComparison::CHECKSUM);
     }
 
     public function benchSyncSize1000Files(): void
     {
-        $this->benchmarkSync(SyncComparison::SIZE);
+        $this->runSyncWorkload(SyncComparison::SIZE);
     }
 
     public function benchSyncSizeAndModifiedTime1000Files(): void
     {
-        $this->benchmarkSync(SyncComparison::SIZE_AND_MODIFIED_TIME);
-    }
-
-    public function benchTransactionHundredUpdates(): void
-    {
-        $this->benchmarkTransaction(100);
+        $this->runSyncWorkload(SyncComparison::SIZE_AND_MODIFIED_TIME);
     }
 
     public function benchTransactionOneUpdate(): void
     {
-        $this->benchmarkTransaction(1);
+        $this->runTransactionWorkload(1);
     }
 
     public function benchTransactionTenUpdates(): void
     {
-        $this->benchmarkTransaction(10);
+        $this->runTransactionWorkload(10);
     }
 
-    private function benchmarkChunkAssembly(int $chunks, bool $reverse = false): void
+    private function consumeReader(int $chunkSize): void
+    {
+        $this->createLargeFile();
+        foreach ((new SafeFileReader($this->largeFile))->chunks($chunkSize) as $chunk) {
+            strlen($chunk);
+        }
+
+        $download = new DownloadProcessor();
+        $download->setChunkSize($chunkSize);
+        $output = fopen('php://temp', 'w+b');
+        if (is_resource($output)) {
+            $download->streamDownload($this->largeFile, $output);
+            fclose($output);
+        }
+    }
+
+    private function createLargeFile(): void
+    {
+        FlysystemHelper::write($this->largeFile, str_repeat('0123456789abcdef', 512 * 1024));
+    }
+
+    private function runChunkAssembly(int $chunks, bool $reverse = false): void
     {
         $uploadDirectory = PathHelper::join($this->baseDirectory, 'uploads-' . $chunks);
         $temporaryDirectory = PathHelper::join($this->baseDirectory, 'chunks-' . $chunks);
@@ -134,7 +135,7 @@ final class ReleaseWorkloadsBench
         $uploader->finalizeChunkUpload("bench_{$chunks}");
     }
 
-    private function benchmarkQueue(int $jobs): void
+    private function runQueueWorkload(int $jobs): void
     {
         $queue = new FileJobQueue(PathHelper::join($this->baseDirectory, "queue-{$jobs}.json"), maxJobs: $jobs);
         for ($index = 0; $index < $jobs; $index++) {
@@ -143,7 +144,7 @@ final class ReleaseWorkloadsBench
         $queue->process(static function (): void {});
     }
 
-    private function benchmarkSync(SyncComparison $comparison): void
+    private function runSyncWorkload(SyncComparison $comparison): void
     {
         FlysystemHelper::createDirectory($this->sourceDirectory);
         for ($index = 0; $index < 1_000; $index++) {
@@ -156,7 +157,7 @@ final class ReleaseWorkloadsBench
         (new DirectoryOperations($this->sourceDirectory))->syncTo($target, true, null, $comparison);
     }
 
-    private function benchmarkTransaction(int $updates): void
+    private function runTransactionWorkload(int $updates): void
     {
         $this->createLargeFile();
         $path = PathHelper::join($this->baseDirectory, "transaction-{$updates}.bin");
@@ -166,26 +167,5 @@ final class ReleaseWorkloadsBench
                 $operations->update(str_repeat((string) ($index % 10), 8 * 1024 * 1024));
             }
         });
-    }
-
-    private function consumeReader(int $chunkSize): void
-    {
-        $this->createLargeFile();
-        foreach ((new SafeFileReader($this->largeFile))->chunks($chunkSize) as $chunk) {
-            strlen($chunk);
-        }
-
-        $download = new DownloadProcessor();
-        $download->setChunkSize($chunkSize);
-        $output = fopen('php://temp', 'w+b');
-        if (is_resource($output)) {
-            $download->streamDownload($this->largeFile, $output);
-            fclose($output);
-        }
-    }
-
-    private function createLargeFile(): void
-    {
-        FlysystemHelper::write($this->largeFile, str_repeat('0123456789abcdef', 512 * 1024));
     }
 }
