@@ -140,6 +140,17 @@ composer ic:bench:quick
 composer ic:bench:chart
 ```
 
+The default PHPForge commands intentionally exclude release stress workloads.
+Run those explicitly, with their declared single-revolution settings:
+
+```bash
+vendor/bin/phpbench run benchmarks/stress/ReleaseStress.php --bootstrap=vendor/autoload.php
+```
+
+The 10,000-job file-queue subject is a limit-finding workload and can take
+several minutes. It must not be combined with the quick suite's global
+revolution and iteration overrides.
+
 Performance claims must include reproducible before-and-after results from comparable environments. Avoid conclusions based on a single unstable run.
 
 Add or update benchmark coverage when existing benchmarks do not represent the changed execution path.
