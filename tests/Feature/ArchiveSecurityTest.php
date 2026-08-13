@@ -115,3 +115,31 @@ test('batch extraction validates unselected entries before writing selected file
     ))->toThrow(UnsafeArchiveEntryException::class)
         ->and(file_exists($this->extractPath . DIRECTORY_SEPARATOR . 'safe.txt'))->toBeFalse();
 });
+
+test('archive limits are checked before creating destination content', function () {
+    $zip = new ZipArchive();
+    expect($zip->open($this->archivePath, ZipArchive::CREATE | ZipArchive::OVERWRITE))->toBeTrue();
+    $zip->addFromString('one.txt', 'one');
+    $zip->addFromString('two.txt', 'two');
+    $zip->close();
+    rmdir($this->extractPath);
+
+    expect(fn () => (new FileCompression($this->archivePath))
+        ->setExtractionLimits(maxEntries: 1)
+        ->decompress($this->extractPath))
+        ->toThrow(UnsafeArchiveEntryException::class)
+        ->and(is_dir($this->extractPath))->toBeFalse();
+});
+
+test('archive per-entry and compression-ratio limits reject oversized entries', function () {
+    ($this->writeArchive)('large.txt', str_repeat('A', 4096));
+
+    expect(fn () => (new FileCompression($this->archivePath))
+        ->setExtractionLimits(maxEntryUncompressedBytes: 100)
+        ->decompress($this->extractPath))
+        ->toThrow(UnsafeArchiveEntryException::class)
+        ->and(fn () => (new FileCompression($this->archivePath))
+            ->setExtractionLimits(maxCompressionRatio: 1.1)
+            ->decompress($this->extractPath))
+        ->toThrow(UnsafeArchiveEntryException::class);
+});

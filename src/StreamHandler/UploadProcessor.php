@@ -24,7 +24,6 @@ use Psr\Log\LoggerInterface;
  *     uploadId: string,
  *     originalFilename: string,
  *     totalChunks: int,
- *     received: array<int|string, string>,
  *     createdAt: int
  * }
  * @phpstan-type UploadInfo array{
@@ -93,7 +92,7 @@ class UploadProcessor
 
     private int $maxChunkSize = 0;
 
-    private int $maxFileSize = 30720;
+    private int $maxFileSize = 25 * 1024 * 1024;
 
     private int $maxImageHeight = 0;
 
@@ -103,7 +102,7 @@ class UploadProcessor
 
     private bool $requireMalwareScan = false;
 
-    private bool $strictContentTypeValidation = false;
+    private bool $strictContentTypeValidation = true;
 
     private ?string $tempDir = null;
 
@@ -127,19 +126,35 @@ class UploadProcessor
         }
 
         $this->validateUploadId($uploadId);
-        [$manifest, $totalChunks, $received] = $this->resolveCompleteChunkState($uploadId);
-        $originalFilename = $manifest['originalFilename'];
-        $extension = pathinfo($originalFilename, PATHINFO_EXTENSION);
-        $this->validateFileExtension($extension);
-        $fileName = $this->generateFileName(null, $extension);
-        $destination = $this->getUniqueDestination($fileName);
-        $chunkDirectory = $this->getChunkDirectory($uploadId);
 
-        $this->mergeChunksToDestination($chunkDirectory, $received, $totalChunks, $destination);
-        $this->validateFinalizedUpload($destination);
-        $this->cleanupChunkUploadArtifacts($uploadId, $chunkDirectory, $received);
+        return $this->withChunkSessionLock($uploadId, function () use ($uploadId): string {
+            [$manifest, $totalChunks] = $this->resolveCompleteChunkState($uploadId);
+            $originalFilename = $manifest['originalFilename'];
+            $extension = pathinfo($originalFilename, PATHINFO_EXTENSION);
+            $this->validateFileExtension($extension);
+            $chunkDirectory = $this->getChunkDirectory($uploadId);
+            $stagingName = '.assembled_' . bin2hex(random_bytes(16));
+            if ($extension !== '') {
+                $stagingName .= '.' . ltrim($extension, '.');
+            }
+            $stagingPath = PathHelper::join($chunkDirectory, $stagingName);
 
-        return $destination;
+            try {
+                $this->mergeChunksToDestination($chunkDirectory, $totalChunks, $stagingPath);
+                $this->validateFinalizedUpload($stagingPath);
+                $destination = $this->finalizeIncomingFile($stagingPath, $extension);
+            } catch (\Throwable $exception) {
+                if (FlysystemHelper::fileExists($stagingPath)) {
+                    FlysystemHelper::delete($stagingPath);
+                }
+
+                throw $exception;
+            }
+
+            $this->cleanupChunkUploadArtifacts($uploadId, $chunkDirectory);
+
+            return $destination;
+        });
     }
 
     /**
@@ -178,6 +193,17 @@ class UploadProcessor
     }
 
     /**
+     * Ingest a trusted CLI/application file that is not an HTTP upload.
+     *
+     * @param array<string, mixed> $file File metadata using the same keys as $_FILES.
+     * @param array<string, scalar|null> $metadata Explicit audit metadata for the log entry.
+     */
+    public function ingestFile(array $file, array $metadata = []): string
+    {
+        return $this->processIncomingFile($file, false, $metadata);
+    }
+
+    /**
      * Process an upload chunk and persist resumable state.
      *
      * @param array<string, mixed> $chunkFile The chunk file data from $_FILES.
@@ -200,104 +226,52 @@ class UploadProcessor
         $chunkFile = $this->validateFile($chunkFile);
         $this->validateChunkUploadRequest($chunkFile, $uploadId, $chunkIndex, $totalChunks, $originalFilename);
 
-        $chunkDirectory = $this->getChunkDirectory($uploadId);
-        if (!FlysystemHelper::directoryExists($chunkDirectory)) {
-            FlysystemHelper::createDirectory($chunkDirectory);
-        }
+        return $this->withChunkSessionLock($uploadId, function () use (
+            $chunkFile,
+            $uploadId,
+            $chunkIndex,
+            $totalChunks,
+            $originalFilename,
+        ): ChunkUploadState {
+            $chunkDirectory = $this->getChunkDirectory($uploadId);
+            if (!FlysystemHelper::directoryExists($chunkDirectory)) {
+                FlysystemHelper::createDirectory($chunkDirectory);
+            }
 
-        $chunkPath = PathHelper::join($chunkDirectory, sprintf('chunk_%06d.part', $chunkIndex));
-        $this->moveIncomingFile($chunkFile['tmp_name'], $chunkPath);
+            /** @var ChunkManifest $manifest */
+            $manifest = $this->loadChunkManifest($uploadId) ?? [
+                'uploadId' => $uploadId,
+                'originalFilename' => $originalFilename,
+                'totalChunks' => $totalChunks,
+                'createdAt' => time(),
+            ];
+            $this->assertChunkManifestIdentity($manifest, $uploadId, $originalFilename, $totalChunks);
+            $this->saveChunkManifest($uploadId, $manifest);
 
-        /** @var ChunkManifest $manifest */
-        $manifest = $this->loadChunkManifest($uploadId) ?? [
-            'uploadId' => $uploadId,
-            'originalFilename' => $originalFilename,
-            'totalChunks' => $totalChunks,
-            'received' => [],
-            'createdAt' => time(),
-        ];
+            $chunkPath = PathHelper::join($chunkDirectory, sprintf('chunk_%06d.part', $chunkIndex));
+            $this->moveIncomingFile($chunkFile['tmp_name'], $chunkPath);
+            $received = $this->receivedChunkMap($chunkDirectory, $totalChunks);
 
-        $manifest['originalFilename'] = $originalFilename;
-        $manifest['totalChunks'] = $totalChunks;
-        $manifest['received'][(string) $chunkIndex] = basename($chunkPath);
-        ksort($manifest['received']);
-        $this->saveChunkManifest($uploadId, $manifest);
-
-        return new ChunkUploadState(
-            uploadId: $uploadId,
-            receivedChunks: count($manifest['received']),
-            totalChunks: $totalChunks,
-            complete: count($manifest['received']) === $totalChunks,
-        );
+            return new ChunkUploadState(
+                uploadId: $uploadId,
+                receivedChunks: count($received),
+                totalChunks: $totalChunks,
+                complete: count($received) === $totalChunks,
+            );
+        });
     }
 
     /**
      * Process the upload and save the file.
      *
      * @param array<string, mixed> $file The file data from $_FILES.
+     * @param array<string, scalar|null> $metadata Explicit audit metadata for the log entry.
      * @return string The path to the saved file.
      * @throws UploadException If validation fails or upload directory is not set.
      */
-    public function processUpload(array $file): string
+    public function processUpload(array $file, array $metadata = []): string
     {
-        $logFileName = is_string($file['name'] ?? null) ? $file['name'] : null;
-
-        try {
-            if (!isset($this->uploadDir) || $this->uploadDir === '') {
-                throw new UploadException('Upload directory is not set.');
-            }
-
-            $file = $this->validateFile($file);
-            $tmpName = $file['tmp_name'];
-            $extension = pathinfo($file['name'], PATHINFO_EXTENSION);
-            $fileType = $this->validateUploadedPayload($tmpName, $extension, false);
-
-            $fileName = $this->generateFileName($tmpName, $extension);
-            $destination = $this->getUniqueDestination($fileName);
-
-            if (!move_uploaded_file($tmpName, $destination)) {
-                $stream = fopen($tmpName, 'rb');
-                if (!is_resource($stream)) {
-                    throw new UploadException('Failed to move uploaded file.');
-                }
-
-                try {
-                    FlysystemHelper::writeStream($destination, $stream);
-                } finally {
-                    fclose($stream);
-                }
-
-                $this->unlinkFileSilently($tmpName);
-            }
-
-            // Log upload metadata
-            if (isset($this->logger)) {
-                $backtrace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2);
-                $callingClass = $backtrace[1]['class'] ?? 'Unknown Class';
-                $callingMethod = $backtrace[1]['function'] ?? 'Unknown Method';
-
-                $this->logger->info('File uploaded successfully.', [
-                    'fileName' => $fileName,
-                    'destination' => $destination,
-                    'fileType' => $fileType,
-                    'uploader' => [
-                        'class' => $callingClass,
-                        'method' => $callingMethod,
-                    ],
-                ]);
-            }
-
-            return $destination;
-        } catch (\Throwable $e) {
-            if (isset($this->logger)) {
-                $this->logger->error('File upload failed.', [
-                    'error' => $e->getMessage(),
-                    'file' => $logFileName,
-                ]);
-            }
-
-            throw $e;
-        }
+        return $this->processIncomingFile($file, true, $metadata);
     }
 
     /**
@@ -308,8 +282,11 @@ class UploadProcessor
      */
     public function setChunkLimits(int $maxChunkCount = 0, int $maxChunkSize = 0): void
     {
-        $this->maxChunkCount = max(0, $maxChunkCount);
-        $this->maxChunkSize = max(0, $maxChunkSize);
+        if ($maxChunkCount < 0 || $maxChunkSize < 0) {
+            throw new UploadException('Chunk limits must be non-negative.');
+        }
+        $this->maxChunkCount = $maxChunkCount;
+        $this->maxChunkSize = $maxChunkSize;
     }
 
     /**
@@ -353,8 +330,11 @@ class UploadProcessor
      */
     public function setImageValidationSettings(int $maxImageWidth = 0, int $maxImageHeight = 0): void
     {
-        $this->maxImageWidth = max(0, $maxImageWidth);
-        $this->maxImageHeight = max(0, $maxImageHeight);
+        if ($maxImageWidth < 0 || $maxImageHeight < 0) {
+            throw new UploadException('Image limits must be non-negative.');
+        }
+        $this->maxImageWidth = $maxImageWidth;
+        $this->maxImageHeight = $maxImageHeight;
     }
 
     /**
@@ -441,6 +421,9 @@ class UploadProcessor
      */
     public function setValidationSettings(array $allowedFileTypes, int $maxFileSize): void
     {
+        if ($maxFileSize < 0) {
+            throw new UploadException('Maximum file size must be non-negative.');
+        }
         $this->allowedFileTypes = $allowedFileTypes;
         $this->maxFileSize = $maxFileSize;
         $this->validationProfile = null;
@@ -453,7 +436,9 @@ class UploadProcessor
     {
         $identifier = match ($this->namingStrategy) {
             'timestamp' => sprintf('%d_%s', time(), bin2hex(random_bytes(8))),
-            default => $dataSource !== null ? hash_file('sha256', $dataSource) : bin2hex(random_bytes(32)),
+            default => $dataSource !== null
+                ? FlysystemHelper::checksum($dataSource, 'sha256')
+                : bin2hex(random_bytes(32)),
         };
         if (!is_string($identifier)) {
             throw new UploadException('Unable to generate upload file name.');
@@ -464,5 +449,52 @@ class UploadProcessor
         return $extension !== ''
             ? sprintf('upload_%s.%s', $identifier, $extension)
             : sprintf('upload_%s', $identifier);
+    }
+
+    /**
+     * @param array<string, mixed> $file
+     * @param array<string, scalar|null> $metadata
+     */
+    private function processIncomingFile(array $file, bool $requireHttpUpload, array $metadata): string
+    {
+        $logFileName = is_string($file['name'] ?? null) ? $file['name'] : null;
+
+        try {
+            if (!isset($this->uploadDir) || $this->uploadDir === '') {
+                throw new UploadException('Upload directory is not set.');
+            }
+
+            $file = $this->validateFile($file);
+            $tmpName = $file['tmp_name'];
+            if ($requireHttpUpload && !is_uploaded_file($tmpName)) {
+                throw new UploadException('File is not a valid HTTP upload.');
+            }
+            $extension = pathinfo($file['name'], PATHINFO_EXTENSION);
+            $fileType = $this->validateUploadedPayload($tmpName, $extension, false);
+
+            $destination = $this->finalizeIncomingFile($tmpName, $extension);
+            $fileName = basename($destination);
+
+            if (isset($this->logger)) {
+                $this->logger->info('File uploaded successfully.', [
+                    'fileName' => $fileName,
+                    'destination' => $destination,
+                    'fileType' => $fileType,
+                    'metadata' => $metadata,
+                ]);
+            }
+
+            return $destination;
+        } catch (\Throwable $e) {
+            if (isset($this->logger)) {
+                $this->logger->error('File upload failed.', [
+                    'error' => $e->getMessage(),
+                    'file' => $logFileName,
+                    'metadata' => $metadata,
+                ]);
+            }
+
+            throw $e;
+        }
     }
 }

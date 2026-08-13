@@ -185,21 +185,21 @@ trait DirectoryOperationsEntryConcern
     /**
      * @param FindCriteria $criteria
      */
-    private function matchesFindCriteria(array $criteria, string $resolvedPath, int $size, bool $isWindows): bool
+    private function matchesFindCriteria(array $criteria, string $resolvedPath, int $size): bool
     {
-        return (empty($criteria['name']) || str_contains(basename($resolvedPath), $criteria['name']))
-            && (empty($criteria['extension']) || pathinfo($resolvedPath, PATHINFO_EXTENSION) === $criteria['extension'])
-            && $this->matchesPermissionsCriteria($criteria, $resolvedPath, $isWindows)
-            && (empty($criteria['minSize']) || $size >= $criteria['minSize'])
-            && (empty($criteria['maxSize']) || $size <= $criteria['maxSize']);
+        return (!array_key_exists('name', $criteria) || str_contains(basename($resolvedPath), $criteria['name']))
+            && (!array_key_exists('extension', $criteria) || pathinfo($resolvedPath, PATHINFO_EXTENSION) === $criteria['extension'])
+            && $this->matchesPermissionsCriteria($criteria, $resolvedPath)
+            && (!array_key_exists('minSize', $criteria) || $size >= $criteria['minSize'])
+            && (!array_key_exists('maxSize', $criteria) || $size <= $criteria['maxSize']);
     }
 
     /**
      * @param FindCriteria $criteria
      */
-    private function matchesPermissionsCriteria(array $criteria, string $resolvedPath, bool $isWindows): bool
+    private function matchesPermissionsCriteria(array $criteria, string $resolvedPath): bool
     {
-        if (empty($criteria['permissions']) || $isWindows) {
+        if (!array_key_exists('permissions', $criteria)) {
             return true;
         }
 

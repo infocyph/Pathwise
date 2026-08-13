@@ -9,6 +9,14 @@ use ZipArchive;
 
 final class ZipEntryValidator
 {
+    public const float DEFAULT_MAX_COMPRESSION_RATIO = 1_000.0;
+
+    public const int DEFAULT_MAX_ENTRIES = 10_000;
+
+    public const int DEFAULT_MAX_ENTRY_UNCOMPRESSED_BYTES = 1_073_741_824;
+
+    public const int DEFAULT_MAX_TOTAL_UNCOMPRESSED_BYTES = 4_294_967_296;
+
     private const int UNIX_FILE_TYPE_MASK = 0170000;
 
     private const int UNIX_SYMBOLIC_LINK = 0120000;
@@ -59,9 +67,28 @@ final class ZipEntryValidator
     /**
      * @return array<int, string>
      */
-    public static function validateArchive(ZipArchive $archive, string $extractionRoot): array
-    {
+    public static function validateArchive(
+        ZipArchive $archive,
+        string $extractionRoot,
+        int $maxEntries = self::DEFAULT_MAX_ENTRIES,
+        int $maxEntryUncompressedBytes = self::DEFAULT_MAX_ENTRY_UNCOMPRESSED_BYTES,
+        int $maxTotalUncompressedBytes = self::DEFAULT_MAX_TOTAL_UNCOMPRESSED_BYTES,
+        float $maxCompressionRatio = self::DEFAULT_MAX_COMPRESSION_RATIO,
+    ): array {
+        self::validateArchiveLimits(
+            $maxEntries,
+            $maxEntryUncompressedBytes,
+            $maxTotalUncompressedBytes,
+            $maxCompressionRatio,
+        );
+        if ($maxEntries > 0 && $archive->numFiles > $maxEntries) {
+            throw new UnsafeArchiveEntryException(
+                "ZIP archive contains {$archive->numFiles} entries; the configured maximum is {$maxEntries}.",
+            );
+        }
+
         $entries = [];
+        $totalUncompressedBytes = 0;
 
         for ($index = 0; $index < $archive->numFiles; $index++) {
             $entry = $archive->getNameIndex($index);
@@ -71,9 +98,35 @@ final class ZipEntryValidator
 
             $entries[$index] = self::validate($entry, $extractionRoot);
             self::assertNotSymbolicLink($archive, $index, $entry);
+            $totalUncompressedBytes = self::validateEntryResources(
+                $archive,
+                $index,
+                $entry,
+                $totalUncompressedBytes,
+                $maxEntryUncompressedBytes,
+                $maxTotalUncompressedBytes,
+                $maxCompressionRatio,
+            );
         }
 
         return $entries;
+    }
+
+    public static function validateArchiveLimits(
+        int $maxEntries,
+        int $maxEntryUncompressedBytes,
+        int $maxTotalUncompressedBytes,
+        float $maxCompressionRatio,
+    ): void {
+        if (
+            $maxEntries < 0
+            || $maxEntryUncompressedBytes < 0
+            || $maxTotalUncompressedBytes < 0
+            || $maxCompressionRatio < 0
+            || !is_finite($maxCompressionRatio)
+        ) {
+            throw new \InvalidArgumentException('ZIP extraction limits must be finite, non-negative values.');
+        }
     }
 
     /** @param list<string> $segments */
@@ -111,5 +164,50 @@ final class ZipEntryValidator
         if ($mode === self::UNIX_SYMBOLIC_LINK) {
             throw new UnsafeArchiveEntryException("Symbolic-link ZIP entry detected: {$entry}");
         }
+    }
+
+    private static function validateEntryResources(
+        ZipArchive $archive,
+        int $index,
+        string $entry,
+        int $currentTotal,
+        int $maxEntryUncompressedBytes,
+        int $maxTotalUncompressedBytes,
+        float $maxCompressionRatio,
+    ): int {
+        $stat = $archive->statIndex($index);
+        if (!is_array($stat)) {
+            throw new UnsafeArchiveEntryException("Unable to read ZIP resource metadata for entry: {$entry}");
+        }
+
+        $size = $stat['size'];
+        $compressedSize = $stat['comp_size'];
+        if ($size < 0 || $compressedSize < 0) {
+            throw new UnsafeArchiveEntryException("Invalid ZIP resource metadata for entry: {$entry}");
+        }
+        if ($maxEntryUncompressedBytes > 0 && $size > $maxEntryUncompressedBytes) {
+            throw new UnsafeArchiveEntryException(
+                "ZIP entry exceeds the configured uncompressed-size limit: {$entry}",
+            );
+        }
+        if ($size > PHP_INT_MAX - $currentTotal) {
+            throw new UnsafeArchiveEntryException('ZIP archive uncompressed size exceeds the platform integer range.');
+        }
+
+        $total = $currentTotal + $size;
+        if ($maxTotalUncompressedBytes > 0 && $total > $maxTotalUncompressedBytes) {
+            throw new UnsafeArchiveEntryException('ZIP archive exceeds the configured total uncompressed-size limit.');
+        }
+        if (
+            $maxCompressionRatio > 0
+            && $size > 0
+            && ($compressedSize === 0 || ($size / $compressedSize) > $maxCompressionRatio)
+        ) {
+            throw new UnsafeArchiveEntryException(
+                "ZIP entry exceeds the configured compression-ratio limit: {$entry}",
+            );
+        }
+
+        return $total;
     }
 }

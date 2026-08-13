@@ -13,6 +13,7 @@ use Infocyph\Pathwise\DirectoryManager\Concerns\DirectoryOperationsZipConcern;
 use Infocyph\Pathwise\Exceptions\DirectoryOperationException;
 use Infocyph\Pathwise\Exceptions\UnsupportedStorageOperationException;
 use Infocyph\Pathwise\Results\SyncReport;
+use Infocyph\Pathwise\Security\ZipEntryValidator;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use Infocyph\Pathwise\Utils\PermissionsHelper;
@@ -47,6 +48,16 @@ class DirectoryOperations
 
     private ExecutionStrategy $executionStrategy = ExecutionStrategy::AUTO;
 
+    private float $maxCompressionRatio = ZipEntryValidator::DEFAULT_MAX_COMPRESSION_RATIO;
+
+    private int $maxEntries = ZipEntryValidator::DEFAULT_MAX_ENTRIES;
+
+    private int $maxEntryUncompressedBytes = ZipEntryValidator::DEFAULT_MAX_ENTRY_UNCOMPRESSED_BYTES;
+
+    private int $maxTotalUncompressedBytes = ZipEntryValidator::DEFAULT_MAX_TOTAL_UNCOMPRESSED_BYTES;
+
+    private ?string $zipDestination = null;
+
     /**
      * Constructor to initialize the directory path.
      *
@@ -71,6 +82,7 @@ class DirectoryOperations
         }
 
         $destination = PathHelper::normalize($destination);
+        $this->assertDestinationOutsideSource($destination, 'copy');
         if (!FlysystemHelper::directoryExists($destination)) {
             FlysystemHelper::createDirectory($destination);
         }
@@ -163,20 +175,21 @@ class DirectoryOperations
      * - minSize: minimum size of the file
      * - maxSize: maximum size of the file
      *
-     * @param FindCriteria $criteria The criteria to match against.
+     * @param array<string, mixed> $criteria The criteria to match against.
      * @return list<string> A list of file paths that match the criteria.
      */
     public function find(array $criteria = []): array
     {
         $results = [];
         $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
+        $criteria = $this->validateFindCriteria($criteria, $isWindows);
 
         foreach ($this->iterateResolvedEntries(true, true) as $entry) {
             $resolvedPath = $entry['path'];
             $item = $entry['item'];
             $size = $this->entrySize($item);
 
-            if (!$this->matchesFindCriteria($criteria, $resolvedPath, $size, $isWindows)) {
+            if (!$this->matchesFindCriteria($criteria, $resolvedPath, $size)) {
                 continue;
             }
 
@@ -324,6 +337,10 @@ class DirectoryOperations
      */
     public function listSortedContents(string $sortOrder = 'asc'): array
     {
+        if (!in_array($sortOrder, ['asc', 'desc'], true)) {
+            throw new InvalidArgumentException("Invalid sort order: {$sortOrder}.");
+        }
+
         $contents = [];
 
         foreach ($this->iterateResolvedEntries(false, false) as $entry) {
@@ -350,9 +367,11 @@ class DirectoryOperations
             throw new DirectoryOperationException("Directory does not exist: {$this->path}");
         }
 
-        FlysystemHelper::moveDirectory($this->path, PathHelper::normalize($destination));
+        $destination = PathHelper::normalize($destination);
+        $this->assertDestinationOutsideSource($destination, 'move');
+        FlysystemHelper::moveDirectory($this->path, $destination);
 
-        $this->path = PathHelper::normalize($destination);
+        $this->path = $destination;
 
         return $this;
     }
@@ -366,6 +385,29 @@ class DirectoryOperations
     public function setExecutionStrategy(ExecutionStrategy $executionStrategy): self
     {
         $this->executionStrategy = $executionStrategy;
+
+        return $this;
+    }
+
+    /**
+     * Configure unzip resource limits. A value of zero disables that limit.
+     */
+    public function setExtractionLimits(
+        int $maxEntries = ZipEntryValidator::DEFAULT_MAX_ENTRIES,
+        int $maxEntryUncompressedBytes = ZipEntryValidator::DEFAULT_MAX_ENTRY_UNCOMPRESSED_BYTES,
+        int $maxTotalUncompressedBytes = ZipEntryValidator::DEFAULT_MAX_TOTAL_UNCOMPRESSED_BYTES,
+        float $maxCompressionRatio = ZipEntryValidator::DEFAULT_MAX_COMPRESSION_RATIO,
+    ): self {
+        ZipEntryValidator::validateArchiveLimits(
+            $maxEntries,
+            $maxEntryUncompressedBytes,
+            $maxTotalUncompressedBytes,
+            $maxCompressionRatio,
+        );
+        $this->maxEntries = $maxEntries;
+        $this->maxEntryUncompressedBytes = $maxEntryUncompressedBytes;
+        $this->maxTotalUncompressedBytes = $maxTotalUncompressedBytes;
+        $this->maxCompressionRatio = $maxCompressionRatio;
 
         return $this;
     }
@@ -436,15 +478,15 @@ class DirectoryOperations
         ?SyncComparison $comparison = null,
     ): SyncReport {
         $this->assertSourceDirectoryExists();
+        $destination = PathHelper::normalize($destination);
+        $this->assertDestinationOutsideSource($destination, 'synchronize');
         $destination = $this->ensureDirectoryExists($destination);
         $report = $this->newSyncReport();
         $sourceEntries = [];
 
         $sourceLocation = $this->storageLocation($this->path);
         $sourceItems = $this->listStorageEntries($this->path, true);
-        $comparison ??= $this->isLocalPath($this->path) && $this->isLocalPath($destination)
-            ? SyncComparison::SIZE_AND_MODIFIED_TIME
-            : SyncComparison::SIZE;
+        $comparison ??= SyncComparison::CHECKSUM;
         $current = 0;
 
         foreach ($sourceItems as $item) {
@@ -474,11 +516,11 @@ class DirectoryOperations
     {
         $source = PathHelper::normalize($source);
         $this->assertZipSourceExists($source);
-        $this->ensureDirectoryExists($this->path);
         [$localSource, $cleanupSource] = $this->prepareLocalZipSource($source);
 
         try {
             $validatedEntries = $this->validateZipEntries($localSource, $source);
+            $this->ensureDirectoryExists($this->path);
 
             if ($this->tryNativeUnzip($localSource, $source)) {
                 return $this;
@@ -522,13 +564,25 @@ class DirectoryOperations
             return $this;
         }
 
+        $this->zipDestination = $destination;
         $zipPath = $this->prepareZipPath($destination, $useLocalDestination);
         $zip = $this->openZipArchive($zipPath, $destination, $useLocalDestination);
+        $stagingDirectory = null;
 
         try {
-            $this->addContentsToZip($zip, $zipPath);
-        } finally {
+            $stagingDirectory = $this->addContentsToZip($zip, $zipPath);
+            if (!$zip->close()) {
+                throw new DirectoryOperationException("Unable to save ZIP archive at '{$destination}'.");
+            }
+        } catch (\Throwable $exception) {
             $zip->close();
+
+            throw $exception;
+        } finally {
+            if (is_string($stagingDirectory)) {
+                PathHelper::deleteDirectory($stagingDirectory);
+            }
+            $this->zipDestination = null;
         }
 
         if (!$useLocalDestination) {
@@ -536,6 +590,15 @@ class DirectoryOperations
         }
 
         return $this;
+    }
+
+    private function assertDestinationOutsideSource(string $destination, string $operation): void
+    {
+        if (FlysystemHelper::isSameOrDescendant($this->path, $destination)) {
+            throw new DirectoryOperationException(
+                "Cannot {$operation} directory '{$this->path}' into itself or one of its descendants.",
+            );
+        }
     }
 
     /**
@@ -561,5 +624,73 @@ class DirectoryOperations
                 'item' => $item,
             ];
         }
+    }
+
+    /** @param array<string, mixed> $criteria */
+    private function optionalIntegerFindCriterion(array $criteria, string $name): ?int
+    {
+        if (!array_key_exists($name, $criteria)) {
+            return null;
+        }
+        $value = $criteria[$name];
+        if (!is_int($value) || $value < 0) {
+            throw new InvalidArgumentException("Find criterion '{$name}' must be a non-negative integer.");
+        }
+
+        return $value;
+    }
+
+    /** @param array<string, mixed> $criteria */
+    private function optionalStringFindCriterion(array $criteria, string $name): ?string
+    {
+        if (!array_key_exists($name, $criteria)) {
+            return null;
+        }
+        $value = $criteria[$name];
+        if (!is_string($value)) {
+            throw new InvalidArgumentException("Find criterion '{$name}' must be a string.");
+        }
+
+        return $value;
+    }
+
+    /**
+     * @param array<string, mixed> $criteria
+     * @return FindCriteria
+     */
+    private function validateFindCriteria(array $criteria, bool $isWindows): array
+    {
+        foreach (array_keys($criteria) as $name) {
+            if (!in_array($name, ['name', 'extension', 'permissions', 'minSize', 'maxSize'], true)) {
+                throw new InvalidArgumentException("Unknown find criterion: {$name}.");
+            }
+        }
+        if ($isWindows && array_key_exists('permissions', $criteria)) {
+            throw new UnsupportedStorageOperationException('Permission criteria are unsupported on Windows.');
+        }
+
+        $validated = [];
+        $name = $this->optionalStringFindCriterion($criteria, 'name');
+        $extension = $this->optionalStringFindCriterion($criteria, 'extension');
+        $permissions = $this->optionalIntegerFindCriterion($criteria, 'permissions');
+        $minSize = $this->optionalIntegerFindCriterion($criteria, 'minSize');
+        $maxSize = $this->optionalIntegerFindCriterion($criteria, 'maxSize');
+        if ($name !== null) {
+            $validated['name'] = $name;
+        }
+        if ($extension !== null) {
+            $validated['extension'] = $extension;
+        }
+        if ($permissions !== null) {
+            $validated['permissions'] = $permissions;
+        }
+        if ($minSize !== null) {
+            $validated['minSize'] = $minSize;
+        }
+        if ($maxSize !== null) {
+            $validated['maxSize'] = $maxSize;
+        }
+
+        return $validated;
     }
 }

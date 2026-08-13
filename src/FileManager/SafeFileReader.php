@@ -8,8 +8,8 @@ use Countable;
 use Generator;
 use Infocyph\Pathwise\Exceptions\FileAccessException;
 use Infocyph\Pathwise\Exceptions\MissingExtensionException;
-use Infocyph\Pathwise\Utils\FlysystemHelper;
-use Infocyph\Pathwise\Utils\PathHelper;
+use Infocyph\Pathwise\Utils\ReadablePathLocalizer;
+use Infocyph\Pathwise\Utils\SerializedValueValidator;
 use SimpleXMLElement;
 use SplFileObject;
 use XMLReader;
@@ -38,14 +38,18 @@ final class SafeFileReader implements Countable
      *
      * @param string $filename The path to the file to read.
      * @param string $mode The file mode to open the file with. Defaults to 'r'.
-     * @param bool $exclusiveLock When true, a lock is acquired on the file before
-     *                            reading. The type of lock is determined by the $mode parameter.
+     * @param int|null $lockType Optional LOCK_SH or LOCK_EX. Adapter-backed files are
+     *                           locked only on their localized working copy.
      */
     public function __construct(
         private readonly string $filename,
         private readonly string $mode = 'r',
-        private readonly bool $exclusiveLock = false,
-    ) {}
+        private readonly ?int $lockType = null,
+    ) {
+        if ($lockType !== null && !in_array($lockType, [LOCK_SH, LOCK_EX], true)) {
+            throw new \InvalidArgumentException('Reader lock type must be LOCK_SH, LOCK_EX, or null.');
+        }
+    }
 
     /**
      * Destructor for the SafeFileReader class.
@@ -71,7 +75,7 @@ final class SafeFileReader implements Countable
     }
 
     /** @return Generator<int, string> */
-    public function chunks(int $bytes = 1024): Generator
+    public function chunks(int $bytes = 65_536): Generator
     {
         if ($bytes < 1) {
             throw new \InvalidArgumentException('Chunk size must be positive.');
@@ -131,12 +135,26 @@ final class SafeFileReader implements Countable
         return $this->lineIterator();
     }
 
-    /** @return Generator<int, list<string>> */
+    /** @return Generator<int, string> */
     public function matchingLines(string $pattern): Generator
     {
         if ($pattern === '') {
             throw new \InvalidArgumentException('A regular-expression pattern is required.');
         }
+        $this->prepareRead();
+
+        $this->validatePattern($pattern);
+
+        return $this->matchingLineIterator($pattern);
+    }
+
+    /** @return Generator<int, list<string>> */
+    public function regexMatches(string $pattern): Generator
+    {
+        if ($pattern === '') {
+            throw new \InvalidArgumentException('A regular-expression pattern is required.');
+        }
+        $this->validatePattern($pattern);
         $this->prepareRead();
 
         return $this->regexIterator($pattern);
@@ -195,8 +213,11 @@ final class SafeFileReader implements Countable
         if ($this->isLocked) {
             $this->releaseLock();
         }
-        $lockType = $this->exclusiveLock ? LOCK_EX : LOCK_SH;
-        if (!$this->file->flock($lockType)) {
+        if ($this->lockType === null) {
+            return;
+        }
+        $operation = $this->lockType === LOCK_EX ? LOCK_EX : LOCK_SH;
+        if (!$this->file->flock($operation)) {
             throw new FileAccessException("Unable to lock file at path: {$this->filename}");
         }
         $this->isLocked = true;
@@ -212,10 +233,14 @@ final class SafeFileReader implements Countable
      * @param int $bytes The number of bytes to read in each chunk. Defaults to 1024.
      * @return Generator Yields binary data chunks from the file.
      */
-    private function binaryIterator(int $bytes = 1024): Generator
+    private function binaryIterator(int $bytes = 65_536): Generator
     {
-        while (!$this->file->eof()) {
-            yield $this->file->fread($bytes);
+        while (true) {
+            $chunk = $this->file->fread($bytes);
+            if ($chunk === '') {
+                break;
+            }
+            yield $chunk;
             $this->position++;
             $this->count++;
         }
@@ -232,28 +257,11 @@ final class SafeFileReader implements Countable
      */
     private function characterIterator(): Generator
     {
-        while (!$this->file->eof()) {
-            yield $this->file->fgetc();
+        while (($character = $this->file->fgetc()) !== false) {
+            yield $character;
             $this->position++;
             $this->count++;
         }
-    }
-
-    private function containsObjectValue(mixed $value, int $depth = 0): bool
-    {
-        if ($depth > 256) {
-            return true;
-        }
-
-        if (is_object($value)) {
-            return true;
-        }
-
-        if (!is_array($value)) {
-            return false;
-        }
-
-        return array_any($value, fn($item) => $this->containsObjectValue($item, $depth + 1));
     }
 
     /**
@@ -287,8 +295,10 @@ final class SafeFileReader implements Countable
             throw new FileAccessException('Failed to unserialize data.');
         }
 
-        if ($this->containsObjectValue($result)) {
-            throw new FileAccessException('Serialized objects are not allowed.');
+        if (SerializedValueValidator::containsUnsupportedValue($result)) {
+            throw new FileAccessException(
+                'Serialized objects are not allowed; serialized values must use safe scalar/array types.',
+            );
         }
 
         return $result;
@@ -305,21 +315,28 @@ final class SafeFileReader implements Countable
      */
     private function fixedWidthIterator(array $widths): Generator
     {
-        while (!$this->file->eof()) {
-            $line = $this->file->fgets();
+        while (true) {
+            try {
+                $line = $this->file->fgets();
+            } catch (\RuntimeException $exception) {
+                if ($this->file->eof()) {
+                    break;
+                }
+
+                throw new FileAccessException('Unable to read fixed-width input.', 0, $exception);
+            }
             $fields = [];
             $offset = 0;
             foreach ($widths as $width) {
-                if ($width < 1) {
-                    continue;
-                }
-
                 $fields[] = substr($line, $offset, $width);
                 $offset += $width;
             }
             yield $fields;
             $this->position++;
             $this->count++;
+            if ($this->file->eof()) {
+                break;
+            }
         }
     }
 
@@ -366,9 +383,13 @@ final class SafeFileReader implements Countable
             throw new FileAccessException('JSON array decoding error: failed to read file content.');
         }
 
-        $jsonArray = json_decode($jsonContent, true);
-        if (json_last_error() !== JSON_ERROR_NONE || !is_array($jsonArray)) {
-            throw new FileAccessException('JSON array decoding error: ' . json_last_error_msg());
+        try {
+            $jsonArray = json_decode($jsonContent, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException $exception) {
+            throw new FileAccessException('JSON array decoding error: ' . $exception->getMessage(), 0, $exception);
+        }
+        if (!is_array($jsonArray)) {
+            throw new FileAccessException('JSON array decoding error: top-level value must be an array.');
         }
         foreach ($jsonArray as $element) {
             yield $element;
@@ -393,9 +414,10 @@ final class SafeFileReader implements Countable
         while (!$this->file->eof()) {
             $line = trim($this->file->fgets());
             if ($line) {
-                $decoded = json_decode($line, true);
-                if (json_last_error() !== JSON_ERROR_NONE) {
-                    throw new FileAccessException('JSON decoding error: ' . json_last_error_msg());
+                try {
+                    $decoded = json_decode($line, true, 512, JSON_THROW_ON_ERROR);
+                } catch (\JsonException $exception) {
+                    throw new FileAccessException('JSON decoding error: ' . $exception->getMessage(), 0, $exception);
                 }
                 yield $decoded;
                 $this->position++;
@@ -424,6 +446,22 @@ final class SafeFileReader implements Countable
             yield $line;
             $this->position++;
             $this->count++;
+        }
+    }
+
+    /** @return Generator<int, string> */
+    private function matchingLineIterator(string $pattern): Generator
+    {
+        while (!$this->file->eof()) {
+            $line = $this->file->fgets();
+            if ($this->file->eof() && $line === '') {
+                break;
+            }
+            if (preg_match($pattern, $line) === 1) {
+                yield $line;
+                $this->position++;
+                $this->count++;
+            }
         }
     }
 
@@ -472,46 +510,9 @@ final class SafeFileReader implements Countable
 
     private function resolveReadablePath(): string
     {
-        $normalized = PathHelper::normalize($this->filename);
-        $preferFlysystem = FlysystemHelper::hasDefaultFilesystem() && !PathHelper::isAbsolute($normalized);
-        if (!$preferFlysystem && !PathHelper::hasScheme($normalized) && is_file($normalized)) {
-            return $normalized;
-        }
-
-        if (!FlysystemHelper::fileExists($normalized)) {
-            throw new FileAccessException("Cannot access file at path: {$this->filename}");
-        }
-
-        if ($this->localWorkingPath !== null && is_file($this->localWorkingPath)) {
-            return $this->localWorkingPath;
-        }
-
-        $stream = FlysystemHelper::readStream($normalized);
-        if (!is_resource($stream)) {
-            throw new FileAccessException("Cannot access file at path: {$this->filename}");
-        }
-
-        $tempFile = tempnam(sys_get_temp_dir(), 'pathwise_reader_');
-        if ($tempFile === false) {
-            fclose($stream);
-
-            throw new FileAccessException("Cannot access file at path: {$this->filename}");
-        }
-
-        $target = fopen($tempFile, 'wb');
-        if (!is_resource($target)) {
-            fclose($stream);
-            $this->unlinkPathSilently($tempFile);
-
-            throw new FileAccessException("Cannot access file at path: {$this->filename}");
-        }
-
-        stream_copy_to_stream($stream, $target);
-        fclose($stream);
-        fclose($target);
-
-        $this->localWorkingPath = PathHelper::normalize($tempFile);
-        $this->cleanupLocalWorkingPath = true;
+        $resolved = ReadablePathLocalizer::resolve($this->filename, $this->localWorkingPath);
+        $this->localWorkingPath = $resolved['path'];
+        $this->cleanupLocalWorkingPath = $resolved['cleanup'];
 
         return $this->localWorkingPath;
     }
@@ -550,6 +551,20 @@ final class SafeFileReader implements Countable
             unlink($path);
         } finally {
             restore_error_handler();
+        }
+    }
+
+    private function validatePattern(string $pattern): void
+    {
+        set_error_handler(static fn(): bool => true);
+
+        try {
+            $valid = preg_match($pattern, '') !== false;
+        } finally {
+            restore_error_handler();
+        }
+        if (!$valid) {
+            throw new \InvalidArgumentException('Invalid regular-expression pattern.');
         }
     }
 

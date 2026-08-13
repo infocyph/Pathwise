@@ -116,3 +116,23 @@ test('it throws for unsupported url generation on local adapter', function () {
     expect(fn () => FlysystemHelper::publicUrl($filePath))->toThrow(RuntimeException::class)
         ->and(fn () => FlysystemHelper::temporaryUrl($filePath, new DateTimeImmutable('+1 hour')))->toThrow(RuntimeException::class);
 });
+
+test('it rejects duplicate and invalid mount names', function () {
+    $filesystem = new Filesystem(new LocalFilesystemAdapter($this->helperDir));
+    FlysystemHelper::mount('valid-name', $filesystem);
+
+    expect(fn () => FlysystemHelper::mount('valid-name', $filesystem))->toThrow(InvalidArgumentException::class)
+        ->and(fn () => FlysystemHelper::mount('../invalid', $filesystem))->toThrow(InvalidArgumentException::class)
+        ->and(fn () => FlysystemHelper::mount('', $filesystem))->toThrow(InvalidArgumentException::class);
+});
+
+test('it rejects directory copies and moves into their own subtree', function () {
+    $source = $this->helperDir . DIRECTORY_SEPARATOR . 'source';
+    FlysystemHelper::createDirectory($source);
+    FlysystemHelper::write($source . DIRECTORY_SEPARATOR . 'a.txt', 'A');
+
+    expect(fn () => FlysystemHelper::copyDirectory($source, $source . DIRECTORY_SEPARATOR . 'copy'))
+        ->toThrow(InvalidArgumentException::class)
+        ->and(fn () => FlysystemHelper::moveDirectory($source, $source . DIRECTORY_SEPARATOR . 'move'))
+        ->toThrow(InvalidArgumentException::class);
+});

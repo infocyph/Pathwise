@@ -254,3 +254,31 @@ test('it supports relative download paths with a default filesystem', function (
         FlysystemHelper::deleteDirectory($defaultRoot);
     }
 });
+
+test('it models and streams an empty file without a fake byte range', function () {
+    $path = $this->workingDir . DIRECTORY_SEPARATOR . 'empty.txt';
+    touch($path);
+
+    $manifest = $this->downloadProcessor->prepareDownload($path);
+    $output = fopen('php://temp', 'rb+');
+    $result = $this->downloadProcessor->streamDownload($path, $output);
+    fclose($output);
+
+    expect($manifest->status)->toBe(200)
+        ->and($manifest->range->start)->toBeNull()
+        ->and($manifest->range->end)->toBeNull()
+        ->and($manifest->range->contentLength)->toBe(0)
+        ->and($result->bytesSent)->toBe(0)
+        ->and(fn () => $this->downloadProcessor->prepareDownload($path, null, 'bytes=0-0'))
+        ->toThrow(DownloadException::class, 'unsatisfiable');
+});
+
+test('it blocks files below a hidden parent directory', function () {
+    $hiddenDirectory = $this->workingDir . DIRECTORY_SEPARATOR . '.private';
+    mkdir($hiddenDirectory);
+    $path = $hiddenDirectory . DIRECTORY_SEPARATOR . 'report.txt';
+    file_put_contents($path, 'hidden-parent');
+
+    expect(fn () => $this->downloadProcessor->prepareDownload($path))
+        ->toThrow(DownloadException::class, 'Hidden file downloads are blocked');
+});

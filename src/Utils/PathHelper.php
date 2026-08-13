@@ -225,7 +225,20 @@ class PathHelper
      */
     public static function isValidPath(string $path): bool
     {
-        return !preg_match('/[<>:"|?*]/', $path);
+        if ($path === '' || preg_match('/[\x00-\x1F\x7F]/', $path) === 1) {
+            return false;
+        }
+        if (str_contains($path, '://') && preg_match('/^[A-Za-z][A-Za-z0-9._-]*:\/\/.+$/', $path) !== 1) {
+            return false;
+        }
+        if (preg_match('/[<>"|?*]/', $path) === 1) {
+            return false;
+        }
+        if (preg_match('/^[A-Za-z]:/', $path) === 1 && preg_match('~^[A-Za-z]:[\\\\/]~', $path) !== 1) {
+            return false;
+        }
+
+        return true;
     }
 
     /**
@@ -299,11 +312,7 @@ class PathHelper
             return true;
         }
 
-        try {
-            return FlysystemHelper::has($path);
-        } catch (\Throwable) {
-            return false;
-        }
+        return FlysystemHelper::has($path);
     }
 
     /**
@@ -323,6 +332,7 @@ class PathHelper
      */
     public static function relativePath(string $from, string $to): string
     {
+        self::assertCompatibleRelativePathRoots($from, $to);
         $from = explode(DIRECTORY_SEPARATOR, self::normalize($from));
         $to = explode(DIRECTORY_SEPARATOR, self::normalize($to));
 
@@ -334,15 +344,21 @@ class PathHelper
         return str_repeat('..' . DIRECTORY_SEPARATOR, count($from)) . implode(DIRECTORY_SEPARATOR, $to);
     }
 
-    /**
-     * Sanitizes a given path by removing all non-alphanumeric characters except for dash, underscore, slash, and dot.
-     *
-     * @param string $path The path to sanitize.
-     * @return string The sanitized path.
-     */
-    public static function sanitize(string $path): string
+    public static function sanitizeFilename(string $filename): string
     {
-        return preg_replace('/[^A-Za-z0-9\-_\/\.]/', '', $path) ?? '';
+        return self::sanitizeSegment($filename);
+    }
+
+    /** Sanitize one filename or path segment without rewriting a full path. */
+    public static function sanitizeSegment(string $segment): string
+    {
+        if (str_contains($segment, '/') || str_contains($segment, '\\')) {
+            throw new \InvalidArgumentException('A path segment cannot contain directory separators.');
+        }
+
+        $sanitized = preg_replace('/[\x00-\x1F\x7F<>:"|?*]/', '', trim($segment)) ?? '';
+
+        return trim($sanitized, " .\t\n\r\0\x0B");
     }
 
     /**
@@ -363,6 +379,29 @@ class PathHelper
         $base ??= getcwd() ?: '.';
 
         return self::normalize(self::join($base, $path));
+    }
+
+    private static function assertCompatibleRelativePathRoots(string $from, string $to): void
+    {
+        $fromScheme = preg_match('/^([A-Za-z][A-Za-z0-9._-]*):\/\//', $from, $fromMatch) === 1
+            ? strtolower($fromMatch[1])
+            : null;
+        $toScheme = preg_match('/^([A-Za-z][A-Za-z0-9._-]*):\/\//', $to, $toMatch) === 1
+            ? strtolower($toMatch[1])
+            : null;
+        if ($fromScheme !== $toScheme) {
+            throw new \InvalidArgumentException('Cannot calculate a relative path across different filesystems.');
+        }
+
+        $fromDrive = preg_match('~^([A-Za-z]):[\\\\/]~', $from, $fromDriveMatch) === 1
+            ? strtolower($fromDriveMatch[1])
+            : null;
+        $toDrive = preg_match('~^([A-Za-z]):[\\\\/]~', $to, $toDriveMatch) === 1
+            ? strtolower($toDriveMatch[1])
+            : null;
+        if ($fromDrive !== $toDrive) {
+            throw new \InvalidArgumentException('Cannot calculate a relative path across different drive roots.');
+        }
     }
 
     /**

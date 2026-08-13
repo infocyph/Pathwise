@@ -94,7 +94,11 @@ ZIP Extraction
 the entire archive before extraction and rejects absolute/drive paths, null
 bytes, traversal, root escape, ZIP symbolic links, and existing destination
 symlink chains. Remote archives and destinations are localized/streamed only
-after applying the same validation.
+after applying the same validation. Entry-count, per-entry uncompressed-size,
+total uncompressed-size, and compression-ratio limits are enforced before any
+destination mutation. Remote compression stages each entry to bounded temporary
+disk and registers the staged file with ``ZipArchive``; it does not load an
+entire remote entry into one PHP string.
 
 Synchronization
 ---------------

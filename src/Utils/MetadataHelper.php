@@ -41,7 +41,6 @@ class MetadataHelper
             'mime_type' => self::getMimeType($path),
             'type' => $type,
             'ownership' => self::getOwnershipDetails($path),
-            'last_modified_by' => self::getLastModifiedBy($path),
             'extension' => self::getFileExtension($path),
             'is_hidden' => self::isHidden($path),
             'symlink_target' => self::getSymlinkTarget($path),
@@ -175,7 +174,7 @@ class MetadataHelper
      * 'Y-m-d H:i:s'. If the file does not exist, returns null.
      *
      * @param string $path The path to the file to retrieve timestamps for.
-     * @return array{created: string, modified: string, accessed: string}|null The human-readable timestamps, or null if the file does not exist.
+     * @return array{created: string|null, modified: string, accessed: string|null}|null
      */
     public static function getHumanReadableTimestamps(string $path): ?array
     {
@@ -185,9 +184,9 @@ class MetadataHelper
         }
 
         return [
-            'created' => date('Y-m-d H:i:s', $timestamps['created']),
+            'created' => is_int($timestamps['created']) ? date('Y-m-d H:i:s', $timestamps['created']) : null,
             'modified' => date('Y-m-d H:i:s', $timestamps['modified']),
-            'accessed' => date('Y-m-d H:i:s', $timestamps['accessed']),
+            'accessed' => is_int($timestamps['accessed']) ? date('Y-m-d H:i:s', $timestamps['accessed']) : null,
         ];
     }
 
@@ -314,8 +313,8 @@ class MetadataHelper
      *
      * @param string $path The path to the file or directory to retrieve
      *                     timestamps for.
-     * @return array{created: int, modified: int, accessed: int}|null The timestamps, or null if the file or directory does
-     *                                                                not exist.
+     * @return array{created: int|null, modified: int, accessed: int|null}|null The timestamps, or null if the file or directory does
+     *                                                                          not exist.
      */
     public static function getTimestamps(string $path): ?array
     {
@@ -344,7 +343,7 @@ class MetadataHelper
             return null;
         }
 
-        return ['created' => $modified, 'modified' => $modified, 'accessed' => $modified];
+        return ['created' => null, 'modified' => $modified, 'accessed' => null];
     }
 
     /**

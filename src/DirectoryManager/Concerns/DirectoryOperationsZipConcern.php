@@ -59,35 +59,65 @@ trait DirectoryOperationsZipConcern
         return true;
     }
 
-    private function addContentsToZip(ZipArchive $zip, string $zipPath): void
+    private function addContentsToZip(ZipArchive $zip, string $zipPath): ?string
     {
         if ($this->isLocalPath($this->path) && is_dir($this->path)) {
             $this->addLocalContentsToZip($zip, $zipPath);
 
-            return;
+            return null;
         }
 
-        $this->addFlysystemContentsToZip($zip);
+        return $this->addFlysystemContentsToZip($zip);
     }
 
-    private function addFlysystemContentsToZip(ZipArchive $zip): void
+    private function addFlysystemContentsToZip(ZipArchive $zip): string
     {
-        $sourceLocation = $this->storageLocation($this->path);
-        foreach ($this->listStorageEntries($this->path, true) as $item) {
-            $relative = $this->relativeStoragePath($sourceLocation, $this->entryPath($item));
-            if ($relative === '') {
-                continue;
-            }
-
-            $zipPathName = str_replace('\\', '/', $relative);
-            if ($this->entryType($item) === 'dir') {
-                $zip->addEmptyDir(rtrim($zipPathName, '/'));
-
-                continue;
-            }
-
-            $zip->addFromString($zipPathName, FlysystemHelper::read($this->buildPath($this->path, $relative)));
+        $stagingDirectory = PathHelper::createTempDirectory('pathwise_zip_stage_');
+        if (!is_string($stagingDirectory)) {
+            throw new DirectoryOperationException('Unable to create ZIP staging directory.');
         }
+
+        $sourceLocation = $this->storageLocation($this->path);
+
+        try {
+            foreach ($this->listStorageEntries($this->path, true) as $item) {
+                $relative = $this->relativeStoragePath($sourceLocation, $this->entryPath($item));
+                if ($relative === '') {
+                    continue;
+                }
+
+                if ($this->zipDestination === $this->buildPath($this->path, $relative)) {
+                    continue;
+                }
+
+                $zipPathName = str_replace('\\', '/', $relative);
+                if ($this->entryType($item) === 'dir') {
+                    $this->assertDirectoryZipMutation(
+                        $zip->addEmptyDir(rtrim($zipPathName, '/')),
+                        "add ZIP directory: {$zipPathName}",
+                    );
+
+                    continue;
+                }
+
+                $stagedPath = PathHelper::join($stagingDirectory, $relative);
+                $parent = dirname($stagedPath);
+                if (!is_dir($parent) && !mkdir($parent, 0700, true) && !is_dir($parent)) {
+                    throw new DirectoryOperationException("Unable to create ZIP staging directory: {$parent}");
+                }
+                FlysystemHelper::copy($this->buildPath($this->path, $relative), $stagedPath);
+                $this->assertDirectoryZipMutation(
+                    $zip->addFile($stagedPath, $zipPathName),
+                    "add ZIP entry: {$zipPathName}",
+                );
+            }
+        } catch (\Throwable $exception) {
+            PathHelper::deleteDirectory($stagingDirectory);
+
+            throw $exception;
+        }
+
+        return $stagingDirectory;
     }
 
     private function addLocalContentsToZip(ZipArchive $zip, string $zipPath): void
@@ -109,12 +139,22 @@ trait DirectoryOperationsZipConcern
 
             $subPathName = ltrim(str_replace('\\', '/', substr($currentPath, strlen($normalizedSourcePath))), '/');
             if ($file->isDir()) {
-                $zip->addEmptyDir($subPathName);
+                $this->assertDirectoryZipMutation($zip->addEmptyDir($subPathName), "add ZIP directory: {$subPathName}");
 
                 continue;
             }
 
-            $zip->addFile($file->getPathname(), $subPathName);
+            $this->assertDirectoryZipMutation(
+                $zip->addFile($file->getPathname(), $subPathName),
+                "add ZIP entry: {$subPathName}",
+            );
+        }
+    }
+
+    private function assertDirectoryZipMutation(bool $succeeded, string $operation): void
+    {
+        if (!$succeeded) {
+            throw new DirectoryOperationException("Unable to {$operation}.");
         }
     }
 
@@ -174,7 +214,7 @@ trait DirectoryOperationsZipConcern
     private function openZipArchive(string $zipPath, string $destination, bool $useLocalDestination): ZipArchive
     {
         $zip = new ZipArchive();
-        if ($zip->open($zipPath, ZipArchive::CREATE) === true) {
+        if ($zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) === true) {
             return $zip;
         }
 
@@ -258,14 +298,15 @@ trait DirectoryOperationsZipConcern
             if (!$this->isLocalPath($source) || !$this->isLocalPath($this->path)) {
                 throw new UnsupportedStorageOperationException('Native unzip requires local source and destination paths.');
             }
-            if (!NativeOperationsAdapter::canUseNativeCompression()) {
+            if (!NativeOperationsAdapter::canUseNativeZipDecompression()) {
                 throw new NativeExecutionException('Native ZIP decompression executables are unavailable.');
             }
         }
 
         if (
             $this->executionStrategy === ExecutionStrategy::PHP
-            || !NativeOperationsAdapter::canUseNativeCompression()
+            || !NativeOperationsAdapter::canUseNativeZipDecompression()
+            || !$this->isLocalPath($source)
             || !$this->isLocalPath($this->path)
         ) {
             return false;
@@ -279,6 +320,7 @@ trait DirectoryOperationsZipConcern
         if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
             throw new NativeExecutionException(
                 "Native unzip failed with exit code {$native->exitCode}: " . implode("\n", $native->output),
+                $native,
             );
         }
 
@@ -288,19 +330,24 @@ trait DirectoryOperationsZipConcern
     private function tryNativeZip(string $destination, bool $useLocalDestination): bool
     {
         if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
-            if (!$this->isLocalPath($this->path) || !$useLocalDestination) {
+            if (
+                !$this->isLocalPath($this->path)
+                || !$useLocalDestination
+                || FlysystemHelper::isSameOrDescendant($this->path, $destination)
+            ) {
                 throw new UnsupportedStorageOperationException('Native zip requires local source and destination paths.');
             }
-            if (!NativeOperationsAdapter::canUseNativeCompression()) {
+            if (!NativeOperationsAdapter::canUseNativeZipCompression()) {
                 throw new NativeExecutionException('Native ZIP compression executables are unavailable.');
             }
         }
 
         if (
             $this->executionStrategy === ExecutionStrategy::PHP
-            || !NativeOperationsAdapter::canUseNativeCompression()
+            || !NativeOperationsAdapter::canUseNativeZipCompression()
             || !$this->isLocalPath($this->path)
             || !$useLocalDestination
+            || FlysystemHelper::isSameOrDescendant($this->path, $destination)
         ) {
             return false;
         }
@@ -313,6 +360,7 @@ trait DirectoryOperationsZipConcern
         if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
             throw new NativeExecutionException(
                 "Native zip failed with exit code {$native->exitCode}: " . implode("\n", $native->output),
+                $native,
             );
         }
 
@@ -330,7 +378,14 @@ trait DirectoryOperationsZipConcern
         }
 
         try {
-            return ZipEntryValidator::validateArchive($zip, $this->path);
+            return ZipEntryValidator::validateArchive(
+                $zip,
+                $this->path,
+                $this->maxEntries,
+                $this->maxEntryUncompressedBytes,
+                $this->maxTotalUncompressedBytes,
+                $this->maxCompressionRatio,
+            );
         } finally {
             $zip->close();
         }

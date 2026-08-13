@@ -53,9 +53,13 @@ final class FlysystemPathResolver
             return null;
         }
 
-        $relative = $base !== '' && str_starts_with($itemPath, $base . '/')
-            ? substr($itemPath, strlen($base) + 1)
-            : ($itemPath === $base ? '' : $itemPath);
+        if ($base !== '' && $itemPath !== $base && !str_starts_with($itemPath, $base . '/')) {
+            return null;
+        }
+
+        $relative = $base !== ''
+            ? ($itemPath === $base ? '' : substr($itemPath, strlen($base) + 1))
+            : $itemPath;
 
         return $relative === '' ? null : $relative;
     }

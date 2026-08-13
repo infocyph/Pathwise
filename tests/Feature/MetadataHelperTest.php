@@ -208,7 +208,6 @@ test('it retrieves all metadata for file', function () {
         'mime_type',
         'type',
         'ownership',
-        'last_modified_by',
         'extension',
         'is_hidden',
         'symlink_target',

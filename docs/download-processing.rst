@@ -53,7 +53,7 @@ Prepare secure metadata:
        rangeHeader: null,
    );
 
-   // Use $manifest['status'] and $manifest['headers'] in your framework response.
+   // Use $manifest->status, $manifest->headers, and $manifest->range.
 
 Stream output with range support:
 
@@ -61,14 +61,15 @@ Stream output with range support:
 
    $output = fopen('php://output', 'wb');
 
-   $manifest = $downloads->streamDownload(
+   $result = $downloads->streamDownload(
        path: '/srv/app/downloads/video.mp4',
        outputStream: $output,
        downloadName: 'video.mp4',
        rangeHeader: $_SERVER['HTTP_RANGE'] ?? null,
    );
 
-   // $manifest includes status, headers, rangeStart/rangeEnd and bytesSent.
+   // $result->preparation contains status, headers, and range metadata.
+   // $result->bytesSent is the number of bytes written to the output stream.
 
 Mounted storage example:
 

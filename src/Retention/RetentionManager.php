@@ -31,6 +31,9 @@ final class RetentionManager
         self::validateOptions($keepLast, $maxAgeDays, $sortBy);
 
         $directory = PathHelper::normalize($directory);
+        if ($sortBy === 'ctime' && !FlysystemHelper::isLocalPath($directory)) {
+            throw new InvalidArgumentException('ctime retention is unavailable for adapter-backed storage.');
+        }
         if (!FlysystemHelper::directoryExists($directory)) {
             return new RetentionResult([], []);
         }
@@ -59,7 +62,7 @@ final class RetentionManager
     }
 
     /**
-     * @return array<int, array{path: string, mtime: int, ctime: int}>
+     * @return array<int, array{path: string, mtime: int, ctime: int|null}>
      */
     private static function collectFiles(string $directory): array
     {
@@ -71,7 +74,7 @@ final class RetentionManager
     }
 
     /**
-     * @return array<int, array{path: string, mtime: int, ctime: int}>
+     * @return array<int, array{path: string, mtime: int, ctime: int|null}>
      */
     private static function collectFilesLocal(string $directory): array
     {
@@ -88,7 +91,7 @@ final class RetentionManager
     }
 
     /**
-     * @return array<int, array{path: string, mtime: int, ctime: int}>
+     * @return array<int, array{path: string, mtime: int, ctime: int|null}>
      */
     private static function collectFilesViaFlysystem(string $directory): array
     {
@@ -108,7 +111,7 @@ final class RetentionManager
     }
 
     /**
-     * @return array{path: string, mtime: int, ctime: int}|null
+     * @return array{path: string, mtime: int, ctime: int|null}|null
      */
     private static function normalizeFlysystemEntry(string $directory, string $base, \League\Flysystem\StorageAttributes $item): ?array
     {
@@ -122,7 +125,7 @@ final class RetentionManager
         return [
             'path' => PathHelper::join($directory, $relative),
             'mtime' => $mtime,
-            'ctime' => $mtime,
+            'ctime' => null,
         ];
     }
 

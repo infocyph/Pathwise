@@ -25,15 +25,22 @@ trait FileCompressionArchiveConcern
 {
     private function addArchiveEntry(ZipArchive $zip, string $sourcePath, string $relativePath): void
     {
+        $this->triggerHook('beforeAdd', $sourcePath, $relativePath);
         if ($this->password !== null) {
-            $zip->setPassword($this->password);
-            $zip->addFile($sourcePath, $relativePath);
-            $zip->setEncryptionName($relativePath, $this->encryptionAlgorithm);
+            $this->assertZipMutation($zip->setPassword($this->password), 'set the ZIP password');
+            $this->assertZipMutation($zip->addFile($sourcePath, $relativePath), "add ZIP entry: {$relativePath}");
+            $this->assertZipMutation(
+                $zip->setEncryptionName($relativePath, $this->encryptionAlgorithm),
+                "encrypt ZIP entry: {$relativePath}",
+            );
+
+            $this->triggerHook('afterAdd', $sourcePath, $relativePath);
 
             return;
         }
 
-        $zip->addFile($sourcePath, $relativePath);
+        $this->assertZipMutation($zip->addFile($sourcePath, $relativePath), "add ZIP entry: {$relativePath}");
+        $this->triggerHook('afterAdd', $sourcePath, $relativePath);
     }
 
     private function addDirectoryEntriesToZip(string $path, ZipArchive $zip, string $baseDir): void
@@ -44,7 +51,7 @@ trait FileCompressionArchiveConcern
         }
 
         if ($relativePath !== '') {
-            $zip->addEmptyDir($relativePath);
+            $this->assertZipMutation($zip->addEmptyDir($relativePath), "add ZIP directory: {$relativePath}");
         }
 
         $entries = scandir($path);
@@ -107,7 +114,7 @@ trait FileCompressionArchiveConcern
             if ($relativePath !== '' && !$this->shouldTraverseDirectory($relativePath)) {
                 return;
             }
-            $zip->addEmptyDir($relativePath);
+            $this->assertZipMutation($zip->addEmptyDir($relativePath), "add ZIP directory: {$relativePath}");
             $entries = scandir($path);
             if ($entries === false) {
                 throw new CompressionException("Failed to read directory: {$path}");
@@ -126,21 +133,29 @@ trait FileCompressionArchiveConcern
 
     private function addFileToArchive(string $filePath, string $zipPath): void
     {
+        $this->triggerHook('beforeAdd', $filePath, $zipPath);
         if ($this->password !== null) {
-            $this->zip->setPassword($this->password);
+            $this->assertZipMutation($this->zip->setPassword($this->password), 'set the ZIP password');
         }
 
-        $added = $this->isLocalFilesystemPath($filePath)
-            ? $this->zip->addFile($filePath, $zipPath)
-            : $this->zip->addFromString($zipPath, FlysystemHelper::read($filePath));
+        $cleanupPath = null;
+        $localFilePath = $this->isLocalFilesystemPath($filePath)
+            ? $filePath
+            : $this->localizeCompressionSource($filePath, $cleanupPath);
+        $this->deferLocalizedCleanupPath($cleanupPath);
+        $added = $this->zip->addFile($localFilePath, $zipPath);
 
         if (!$added) {
             throw new CompressionException("Failed to add file to ZIP: $filePath");
         }
 
         if ($this->password !== null) {
-            $this->zip->setEncryptionName($zipPath, $this->encryptionAlgorithm);
+            $this->assertZipMutation(
+                $this->zip->setEncryptionName($zipPath, $this->encryptionAlgorithm),
+                "encrypt ZIP entry: {$zipPath}",
+            );
         }
+        $this->triggerHook('afterAdd', $filePath, $zipPath);
     }
 
     private function addSinglePathToZip(string $path, ZipArchive $zip, string $baseDir): void
@@ -176,7 +191,14 @@ trait FileCompressionArchiveConcern
     private function applyArchivePassword(): void
     {
         if ($this->password !== null) {
-            $this->zip->setPassword($this->password);
+            $this->assertZipMutation($this->zip->setPassword($this->password), 'set the ZIP password');
+        }
+    }
+
+    private function assertZipMutation(bool $succeeded, string $operation): void
+    {
+        if (!$succeeded) {
+            throw new CompressionException("Unable to {$operation}.");
         }
     }
 
@@ -191,7 +213,7 @@ trait FileCompressionArchiveConcern
             if ($this->password !== null) {
                 throw new NativeExecutionException('Native decompression is unavailable for password-protected archives.');
             }
-            if (!NativeOperationsAdapter::canUseNativeCompression()) {
+            if (!NativeOperationsAdapter::canUseNativeZipDecompression()) {
                 throw new NativeExecutionException('Native ZIP decompression executables are unavailable.');
             }
         }
@@ -200,7 +222,9 @@ trait FileCompressionArchiveConcern
             $this->executionStrategy === ExecutionStrategy::PHP
             || $this->password !== null
             || $isRemoteDestination
-            || !NativeOperationsAdapter::canUseNativeCompression()
+            || !FlysystemHelper::isLocalPath($this->zipFilePath)
+            || !FlysystemHelper::isLocalPath($destination)
+            || !NativeOperationsAdapter::canUseNativeZipDecompression()
         ) {
             return false;
         }
@@ -224,6 +248,7 @@ trait FileCompressionArchiveConcern
         if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
             throw new NativeExecutionException(
                 "Native decompression failed with exit code {$native->exitCode}: " . implode("\n", $native->output),
+                $native,
             );
         }
 
@@ -359,9 +384,13 @@ trait FileCompressionArchiveConcern
         }
     }
 
-    private function extractArchive(string $extractDestination, string $destination, bool $isRemoteDestination): void
-    {
-        $entries = ZipEntryValidator::validateArchive($this->zip, $extractDestination);
+    /** @param array<int, string> $entries */
+    private function extractArchive(
+        array $entries,
+        string $extractDestination,
+        string $destination,
+        bool $isRemoteDestination,
+    ): void {
         foreach ($entries as $index => $entry) {
             $this->extractArchiveEntry($index, $entry, $extractDestination);
         }
@@ -429,7 +458,7 @@ trait FileCompressionArchiveConcern
 
     private function isLocalFilesystemPath(string $path): bool
     {
-        return !PathHelper::hasScheme($path) && is_file($path);
+        return FlysystemHelper::isLocalPath($path) && is_file($path);
     }
 
     private function isRemotePath(string $path): bool
@@ -510,5 +539,18 @@ trait FileCompressionArchiveConcern
             && $this->excludePatterns === []
             && $this->ignorePatterns === []
             && $this->hooks === [];
+    }
+
+    /** @return array<int, string> */
+    private function validateArchiveForExtraction(string $destination): array
+    {
+        return ZipEntryValidator::validateArchive(
+            $this->zip,
+            $destination,
+            $this->maxEntries,
+            $this->maxEntryUncompressedBytes,
+            $this->maxTotalUncompressedBytes,
+            $this->maxCompressionRatio,
+        );
     }
 }

@@ -28,7 +28,10 @@ Goal:
    $audit->log('upload.processed', ['path' => $finalPath]);
 
    $retention = RetentionManager::apply('/tmp/uploads', keepLast: 50, maxAgeDays: 30);
-   $audit->log('retention.applied', $retention);
+   $audit->log('retention.applied', [
+       'deleted' => $retention->deleted,
+       'kept' => $retention->kept,
+   ]);
 
 Recipe 2: Mirror + Zip + Checksum
 ---------------------------------

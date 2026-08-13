@@ -201,3 +201,49 @@ test('it supports in-memory driver when adapter package exists', function () {
 
     expect($filesystem->read('memory.txt'))->toBe('memory-data');
 });
+
+test('it rejects conflicting configuration modes and malformed options', function () {
+    $root = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('storage_conflict_', true);
+    mkdir($root);
+    $adapter = new LocalFilesystemAdapter($root);
+
+    try {
+        expect(fn () => StorageFactory::createFilesystem(['adapter' => $adapter, 'driver' => 'local', 'root' => $root]))
+            ->toThrow(InvalidArgumentException::class, 'exactly one')
+            ->and(fn () => StorageFactory::createFilesystem(['adapter' => $adapter, 'options' => ['bad']]))
+            ->toThrow(InvalidArgumentException::class, 'keys must be strings');
+    } finally {
+        rmdir($root);
+    }
+});
+
+test('it rejects duplicate and official custom driver names', function () {
+    $root = sys_get_temp_dir();
+    $factory = static fn (array $config): Filesystem => new Filesystem(new LocalFilesystemAdapter(
+        is_string($config['root'] ?? null) ? $config['root'] : $root,
+    ));
+    StorageFactory::registerDriver('custom-driver', $factory);
+
+    expect(fn () => StorageFactory::registerDriver('custom-driver', $factory))
+        ->toThrow(InvalidArgumentException::class, 'already registered')
+        ->and(fn () => StorageFactory::registerDriver('s3', $factory))
+        ->toThrow(InvalidArgumentException::class, 'reserved');
+});
+
+test('mountMany rolls back earlier mounts when a later mount fails', function () {
+    $root = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('storage_rollback_', true);
+    mkdir($root);
+    FlysystemHelper::mount('occupied', new Filesystem(new LocalFilesystemAdapter($root)));
+
+    try {
+        expect(fn () => StorageFactory::mountMany([
+            'prepared' => ['driver' => 'local', 'root' => $root],
+            'occupied' => ['driver' => 'local', 'root' => $root],
+        ]))->toThrow(InvalidArgumentException::class)
+            ->and(FlysystemHelper::hasMount('prepared'))->toBeFalse()
+            ->and(FlysystemHelper::hasMount('occupied'))->toBeTrue();
+    } finally {
+        FlysystemHelper::reset();
+        rmdir($root);
+    }
+});

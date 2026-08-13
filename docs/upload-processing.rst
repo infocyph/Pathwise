@@ -10,7 +10,9 @@ Where it fits:
 
 ``UploadProcessor`` supports:
 
-* Standard upload handling with configurable destination strategy.
+* HTTP upload handling through ``processUpload()`` (requires PHP's verified
+  ``is_uploaded_file()`` provenance).
+* Explicit trusted CLI/application ingestion through ``ingestFile()``.
 * Validation profiles: ``image``, ``video``, ``document``.
 * MIME and size validation with optional image dimension validation.
 * Extension allowlist/blocklist policy.
@@ -80,9 +82,25 @@ Resumable chunk flow:
        originalFilename: 'video.mp4',
    );
 
-   if ($state['isComplete']) {
+   if ($state->complete) {
        $finalPath = $uploader->finalizeChunkUpload('session-42');
    }
+
+``processChunkUpload()`` stores one chunk and returns ``ChunkUploadState``; it
+never publishes the final file implicitly. Call ``finalizeChunkUpload()`` only
+after ``$state->complete`` is true. Hash naming is calculated from the fully
+assembled object, so identical uploads reuse the same deterministic target.
+
+Trusted non-HTTP ingestion:
+
+.. code-block:: php
+
+   $finalPath = $uploader->ingestFile([
+       'error' => UPLOAD_ERR_OK,
+       'size' => filesize('/srv/import/report.pdf'),
+       'tmp_name' => '/srv/import/report.pdf',
+       'name' => 'report.pdf',
+   ]);
 
 Hardened chunk upload:
 

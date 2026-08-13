@@ -68,9 +68,13 @@ trait FileCompressionRuntimeConcern
     private function closeZip(): void
     {
         if ($this->isOpen) {
-            $this->zip->close();
+            $this->triggerHook('beforeSave', $this->zipFilePath);
+            if (!$this->zip->close()) {
+                throw new CompressionException("Failed to save ZIP archive at {$this->zipFilePath}.");
+            }
             $this->isOpen = false;
             $this->syncWorkingZipIfNeeded();
+            $this->triggerHook('afterSave', $this->zipFilePath);
         }
 
         $this->cleanupDeferredLocalizedPaths();

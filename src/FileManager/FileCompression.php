@@ -64,6 +64,14 @@ class FileCompression
 
     private mixed $logger = null;
 
+    private float $maxCompressionRatio = ZipEntryValidator::DEFAULT_MAX_COMPRESSION_RATIO;
+
+    private int $maxEntries = ZipEntryValidator::DEFAULT_MAX_ENTRIES;
+
+    private int $maxEntryUncompressedBytes = ZipEntryValidator::DEFAULT_MAX_ENTRY_UNCOMPRESSED_BYTES;
+
+    private int $maxTotalUncompressedBytes = ZipEntryValidator::DEFAULT_MAX_TOTAL_UNCOMPRESSED_BYTES;
+
     private ?string $password = null;
 
     private mixed $progressCallback = null;
@@ -92,11 +100,9 @@ class FileCompression
         $this->zip = new ZipArchive();
         $this->workingZipPath = $this->resolveWorkingZipPath($create);
 
-        // Set encryption algorithm if supported
-        $this->encryptionAlgorithm = defined('ZipArchive::EM_AES_256') ? ZipArchive::EM_AES_256 : 0;
+        $this->encryptionAlgorithm = ZipArchive::EM_AES_256;
 
-        // Open the archive with CREATE flag if specified
-        $flags = $create ? ZipArchive::CREATE : 0;
+        $flags = $create ? ZipArchive::CREATE | ZipArchive::OVERWRITE : 0;
         $this->openZip($flags);
     }
 
@@ -131,16 +137,13 @@ class FileCompression
         if (!FlysystemHelper::fileExists($filePath)) {
             throw new CompressionException("File does not exist: $filePath");
         }
-        $this->triggerHook('beforeAdd', $filePath);
-        $this->log("Adding file: $filePath");
         $zipPath ??= basename($filePath);
         $zipPath = $this->normalizeZipPath($zipPath);
+        $this->log("Adding file: $filePath");
         $this->addFileToArchive($filePath, $zipPath);
 
         $this->progressTotal = max(1, $this->progressTotal);
         $this->advanceProgress('compress', $zipPath);
-
-        $this->triggerHook('afterAdd', $filePath);
 
         return $this;
     }
@@ -236,6 +239,13 @@ class FileCompression
      */
     public function compress(string $source): self
     {
+        if (
+            FlysystemHelper::directoryExists($source)
+            && FlysystemHelper::isSameOrDescendant($source, $this->zipFilePath)
+        ) {
+            throw new CompressionException('The destination archive must be outside the source directory.');
+        }
+
         $this->reopenIfNeeded();
         $resolvedSource = $this->prepareCompressionSource($source);
 
@@ -243,7 +253,7 @@ class FileCompression
             $this->assertNativeCompressionSupported($source);
         }
 
-        if ($this->shouldAttemptNativeCompression() && NativeOperationsAdapter::canUseNativeCompression()) {
+        if ($this->shouldAttemptNativeCompression() && NativeOperationsAdapter::canUseNativeZipCompression()) {
             $this->closeZip();
             $native = NativeOperationsAdapter::compressToZip($resolvedSource, $this->workingZipPath);
             if ($native->success) {
@@ -263,6 +273,7 @@ class FileCompression
             if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
                 throw new NativeExecutionException(
                     "Native compression failed with exit code {$native->exitCode}: " . implode("\n", $native->output),
+                    $native,
                 );
             }
 
@@ -314,6 +325,7 @@ class FileCompression
     {
         $this->reopenIfNeeded();
         $destination = $this->resolveDecompressionDestination($destination);
+        $validatedEntries = $this->validateArchiveForExtraction($destination);
         ['extractDestination' => $extractDestination, 'extractTempDir' => $extractTempDir, 'isRemote' => $isRemoteDestination] = $this->prepareExtractionDestination($destination);
 
         if ($this->attemptNativeDecompression($destination, $isRemoteDestination)) {
@@ -323,7 +335,7 @@ class FileCompression
         $this->applyArchivePassword();
 
         try {
-            $this->extractArchive($extractDestination, $destination, $isRemoteDestination);
+            $this->extractArchive($validatedEntries, $extractDestination, $destination, $isRemoteDestination);
             $this->emitDecompressionProgress();
         } finally {
             if ($extractTempDir !== null) {
@@ -412,20 +424,16 @@ class FileCompression
      * Supported events are:
      *
      * - `beforeAdd`: Called before a file or directory is added to the ZIP archive.
-     *   The callback will receive the path to the file or directory as its first
-     *   argument, and the ZipArchive object as its second argument.
+     *   The callback receives the source path and archive entry path.
      *
      * - `afterAdd`: Called after a file or directory has been added to the ZIP archive.
-     *   The callback will receive the path to the file or directory as its first
-     *   argument, and the ZipArchive object as its second argument.
+     *   The callback receives the source path and archive entry path.
      *
      * - `beforeSave`: Called before the ZIP archive is saved to disk.
-     *   The callback will receive the path to the file to be saved as its first
-     *   argument, and the ZipArchive object as its second argument.
+     *   The callback receives the archive path.
      *
      * - `afterSave`: Called after the ZIP archive has been saved to disk.
-     *   The callback will receive the path to the file that was saved as its first
-     *   argument, and the ZipArchive object as its second argument.
+     *   The callback receives the archive path.
      *
      * @param string $event The name of the event to register the callback for.
      * @param callable $callback The callback to register.
@@ -499,6 +507,29 @@ class FileCompression
     }
 
     /**
+     * Configure extraction resource limits. A value of zero disables that limit.
+     */
+    public function setExtractionLimits(
+        int $maxEntries = ZipEntryValidator::DEFAULT_MAX_ENTRIES,
+        int $maxEntryUncompressedBytes = ZipEntryValidator::DEFAULT_MAX_ENTRY_UNCOMPRESSED_BYTES,
+        int $maxTotalUncompressedBytes = ZipEntryValidator::DEFAULT_MAX_TOTAL_UNCOMPRESSED_BYTES,
+        float $maxCompressionRatio = ZipEntryValidator::DEFAULT_MAX_COMPRESSION_RATIO,
+    ): self {
+        ZipEntryValidator::validateArchiveLimits(
+            $maxEntries,
+            $maxEntryUncompressedBytes,
+            $maxTotalUncompressedBytes,
+            $maxCompressionRatio,
+        );
+        $this->maxEntries = $maxEntries;
+        $this->maxEntryUncompressedBytes = $maxEntryUncompressedBytes;
+        $this->maxTotalUncompressedBytes = $maxTotalUncompressedBytes;
+        $this->maxCompressionRatio = $maxCompressionRatio;
+
+        return $this;
+    }
+
+    /**
      * Configure include/exclude glob patterns used during compression.
      *
      * @param list<string> $includePatterns Patterns to include in compression.
@@ -552,6 +583,13 @@ class FileCompression
      */
     public function setPassword(string $password): self
     {
+        if ($password === '') {
+            throw new CompressionException('ZIP passwords must not be empty.');
+        }
+        if (!defined('ZipArchive::EM_AES_256')) {
+            throw new CompressionException('AES ZIP encryption is unavailable in the installed ZIP extension.');
+        }
+
         $this->password = $password;
 
         return $this;
@@ -580,7 +618,7 @@ class FileCompression
         if (!$this->shouldAttemptNativeCompression()) {
             throw new NativeExecutionException('Native compression does not support the selected archive options.');
         }
-        if (!NativeOperationsAdapter::canUseNativeCompression()) {
+        if (!NativeOperationsAdapter::canUseNativeZipCompression()) {
             throw new NativeExecutionException('Native ZIP compression executables are unavailable.');
         }
     }

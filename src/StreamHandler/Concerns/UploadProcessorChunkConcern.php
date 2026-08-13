@@ -20,7 +20,6 @@ use Infocyph\Pathwise\Utils\PathHelper;
  *     uploadId: string,
  *     originalFilename: string,
  *     totalChunks: int,
- *     received: array<int|string, string>,
  *     createdAt: int
  * }
  */
@@ -44,18 +43,26 @@ trait UploadProcessorChunkConcern
         }
     }
 
-    /**
-     * @param array<int|string, string> $received
-     */
-    private function cleanupChunkUploadArtifacts(string $uploadId, string $chunkDirectory, array $received): void
-    {
-        foreach ($received as $chunkName) {
-            $chunkPath = PathHelper::join($chunkDirectory, $chunkName);
-            if (FlysystemHelper::fileExists($chunkPath)) {
-                FlysystemHelper::delete($chunkPath);
-            }
+    /** @param ChunkManifest $manifest */
+    private function assertChunkManifestIdentity(
+        array $manifest,
+        string $uploadId,
+        string $originalFilename,
+        int $totalChunks,
+    ): void {
+        if (
+            $manifest['uploadId'] !== $uploadId
+            || $manifest['originalFilename'] !== $originalFilename
+            || $manifest['totalChunks'] !== $totalChunks
+        ) {
+            throw new UploadException('Chunk upload metadata does not match the existing session.');
         }
+    }
 
+    /**
+     */
+    private function cleanupChunkUploadArtifacts(string $uploadId, string $chunkDirectory): void
+    {
         $manifestPath = $this->getChunkManifestPath($uploadId);
         if (FlysystemHelper::fileExists($manifestPath)) {
             FlysystemHelper::delete($manifestPath);
@@ -95,50 +102,34 @@ trait UploadProcessorChunkConcern
             throw new UploadException('Invalid chunk manifest.');
         }
 
-        $receivedRaw = $manifest['received'] ?? null;
-        if (!is_array($receivedRaw)) {
-            throw new UploadException('Invalid chunk manifest.');
-        }
-
-        $received = [];
-        foreach ($receivedRaw as $chunkIndex => $chunkName) {
-            if (!is_string($chunkName)) {
-                throw new UploadException('Invalid chunk manifest.');
-            }
-
-            $received[$chunkIndex] = $chunkName;
-        }
-
         $originalFilename = $manifest['originalFilename'] ?? null;
-        $storedUploadId = $manifest['uploadId'] ?? $uploadId;
-        $createdAt = $manifest['createdAt'] ?? time();
+        $storedUploadId = $manifest['uploadId'] ?? null;
+        $createdAt = $manifest['createdAt'] ?? null;
         $totalChunks = $manifest['totalChunks'] ?? null;
 
-        if (!is_string($originalFilename) || !is_string($storedUploadId)) {
+        if (!is_string($originalFilename) || !is_string($storedUploadId) || $storedUploadId !== $uploadId) {
             throw new UploadException('Invalid chunk manifest.');
         }
 
-        if (!is_int($createdAt) && !is_numeric($createdAt)) {
+        if (!is_int($createdAt) || $createdAt < 0) {
             throw new UploadException('Invalid chunk manifest.');
         }
 
-        if (!is_int($totalChunks) && !is_numeric($totalChunks)) {
+        if (!is_int($totalChunks) || $totalChunks < 1) {
             throw new UploadException('Invalid chunk manifest.');
         }
 
         return [
             'uploadId' => $storedUploadId,
             'originalFilename' => $originalFilename,
-            'totalChunks' => (int) $totalChunks,
-            'received' => $received,
-            'createdAt' => (int) $createdAt,
+            'totalChunks' => $totalChunks,
+            'createdAt' => $createdAt,
         ];
     }
 
     /**
-     * @param array<int|string, string> $received
      */
-    private function mergeChunksToDestination(string $chunkDirectory, array $received, int $totalChunks, string $destination): void
+    private function mergeChunksToDestination(string $chunkDirectory, int $totalChunks, string $destination): void
     {
         $output = fopen('php://temp', 'rb+');
         if ($output === false) {
@@ -149,7 +140,7 @@ trait UploadProcessorChunkConcern
 
         try {
             for ($i = 0; $i < $totalChunks; $i++) {
-                $chunkPath = $this->resolveChunkPath($chunkDirectory, $received, $i);
+                $chunkPath = $this->resolveChunkPath($chunkDirectory, $i);
                 $this->appendChunkToStream($chunkPath, $output, $i);
             }
 
@@ -160,17 +151,25 @@ trait UploadProcessorChunkConcern
         }
     }
 
-    /**
-     * @param array<int|string, string> $received
-     */
-    private function resolveChunkPath(string $chunkDirectory, array $received, int $index): string
+    /** @return array<int|string, string> */
+    private function receivedChunkMap(string $chunkDirectory, int $totalChunks): array
     {
-        $chunkName = $received[(string) $index] ?? null;
-        if (!is_string($chunkName)) {
-            throw new UploadException("Missing chunk index {$index}.");
+        $received = [];
+        for ($index = 0; $index < $totalChunks; $index++) {
+            $name = sprintf('chunk_%06d.part', $index);
+            if (FlysystemHelper::fileExists(PathHelper::join($chunkDirectory, $name))) {
+                $received[(string) $index] = $name;
+            }
         }
 
-        $chunkPath = PathHelper::join($chunkDirectory, $chunkName);
+        return $received;
+    }
+
+    /**
+     */
+    private function resolveChunkPath(string $chunkDirectory, int $index): string
+    {
+        $chunkPath = PathHelper::join($chunkDirectory, sprintf('chunk_%06d.part', $index));
         if (!FlysystemHelper::fileExists($chunkPath)) {
             throw new UploadException("Missing chunk file for index {$index}.");
         }
@@ -179,7 +178,7 @@ trait UploadProcessorChunkConcern
     }
 
     /**
-     * @return array{0: ChunkManifest, 1: int, 2: array<int|string, string>}
+     * @return array{0: ChunkManifest, 1: int}
      */
     private function resolveCompleteChunkState(string $uploadId): array
     {
@@ -189,7 +188,8 @@ trait UploadProcessorChunkConcern
         }
 
         $totalChunks = $manifest['totalChunks'];
-        $received = $manifest['received'];
+        $chunkDirectory = $this->getChunkDirectory($uploadId);
+        $received = $this->receivedChunkMap($chunkDirectory, $totalChunks);
         if ($totalChunks < 1 || count($received) !== $totalChunks) {
             throw new UploadException('Upload is not complete.');
         }
@@ -197,9 +197,7 @@ trait UploadProcessorChunkConcern
             throw new UploadException('Total chunks exceed configured limit.');
         }
 
-        ksort($received);
-
-        return [$manifest, $totalChunks, $received];
+        return [$manifest, $totalChunks];
     }
 
     /**
@@ -208,8 +206,10 @@ trait UploadProcessorChunkConcern
     private function saveChunkManifest(string $uploadId, array $manifest): void
     {
         $path = $this->getChunkManifestPath($uploadId);
-        $json = json_encode($manifest, JSON_PRETTY_PRINT);
-        if ($json === false) {
+
+        try {
+            $json = json_encode($manifest, JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
             throw new UploadException('Failed to persist chunk manifest.');
         }
 
@@ -250,6 +250,39 @@ trait UploadProcessorChunkConcern
     {
         if ($uploadId === '' || strlen($uploadId) > 128 || preg_match('/^[A-Za-z0-9_-]+$/', $uploadId) !== 1) {
             throw new UploadException('Invalid upload session id.');
+        }
+    }
+
+    /**
+     * @template T
+     * @param callable(): T $operation
+     * @return T
+     */
+    private function withChunkSessionLock(string $uploadId, callable $operation): mixed
+    {
+        $chunkDirectory = $this->getChunkDirectory($uploadId);
+        if (!FlysystemHelper::isLocalPath($chunkDirectory)) {
+            return $operation();
+        }
+
+        $lockDirectory = dirname($chunkDirectory);
+        if (!is_dir($lockDirectory) && !mkdir($lockDirectory, 0700, true) && !is_dir($lockDirectory)) {
+            throw new UploadException('Unable to create chunk lock directory.');
+        }
+        $lock = fopen(PathHelper::join($lockDirectory, ".{$uploadId}.lock"), 'c+b');
+        if (!is_resource($lock) || !flock($lock, LOCK_EX)) {
+            if (is_resource($lock)) {
+                fclose($lock);
+            }
+
+            throw new UploadException('Unable to lock chunk upload session.');
+        }
+
+        try {
+            return $operation();
+        } finally {
+            flock($lock, LOCK_UN);
+            fclose($lock);
         }
     }
 }

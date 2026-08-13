@@ -11,6 +11,11 @@ Brief capabilities:
 * Support conditional callbacks for context-aware checks.
 * Enforce policy with explicit violations via ``PolicyViolationException``.
 
+Rules are evaluated in registration order and the **last matching rule wins**.
+This makes it possible to establish a broad default and then add narrower
+exceptions. Direct-local Windows paths are matched case-insensitively, while
+mounted and object-storage paths retain their adapter's case semantics.
+
 Typical use:
 
 * Restrict write/delete to approved roots.

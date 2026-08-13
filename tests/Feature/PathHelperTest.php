@@ -76,9 +76,9 @@ test('it calculates relative path', function () {
     expect(PathHelper::relativePath('/var/www/html', '/var/www/assets/css/style.css'))->toBe('..' . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'css' . DIRECTORY_SEPARATOR . 'style.css');
 });
 
-// Test PathHelper::sanitize
-test('it sanitizes a path', function () {
-    expect(PathHelper::sanitize('invalid/path*with|characters'))->toBe('invalid/pathwithcharacters');
+test('it sanitizes a single path segment', function () {
+    expect(PathHelper::sanitizeSegment('path*with|characters'))->toBe('pathwithcharacters')
+        ->and(fn() => PathHelper::sanitizeSegment('invalid/path'))->toThrow(InvalidArgumentException::class);
 });
 
 // Test PathHelper::createDirectory and PathHelper::deleteDirectory

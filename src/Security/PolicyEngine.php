@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Infocyph\Pathwise\Security;
 
 use Infocyph\Pathwise\Exceptions\PolicyViolationException;
+use Infocyph\Pathwise\Utils\PathHelper;
 
 final class PolicyEngine
 {
@@ -79,17 +80,26 @@ final class PolicyEngine
      * @param string $operation The operation to check.
      * @param string $path The path to check.
      * @param array<string, mixed> $context Additional context for condition evaluation.
-     * @return bool True if allowed, false otherwise.
+     *                                      Rules use last-match-wins precedence. Returns true when allowed.
      */
     public function isAllowed(string $operation, string $path, array $context = []): bool
     {
         $decision = true;
+        $normalizedPath = str_replace('\\', '/', $path);
+        $caseInsensitive = PHP_OS_FAMILY === 'Windows' && !PathHelper::hasScheme($path);
+        if ($caseInsensitive) {
+            $normalizedPath = strtolower($normalizedPath);
+        }
 
         foreach ($this->rules as $rule) {
             if ($rule['operation'] !== '*' && $rule['operation'] !== $operation) {
                 continue;
             }
-            if (!fnmatch($rule['pattern'], str_replace('\\', '/', $path))) {
+            $pattern = str_replace('\\', '/', $rule['pattern']);
+            if ($caseInsensitive) {
+                $pattern = strtolower($pattern);
+            }
+            if (!fnmatch($pattern, $normalizedPath)) {
                 continue;
             }
             if ($rule['condition'] !== null && !($rule['condition'])($operation, $path, $context)) {

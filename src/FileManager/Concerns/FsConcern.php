@@ -165,7 +165,7 @@ trait FsConcern
         $this->syncWorkingZipOnClose = true;
         $normalizedTemp = PathHelper::normalize($tempFile);
 
-        if (FlysystemHelper::fileExists($this->zipFilePath)) {
+        if (!$create && FlysystemHelper::fileExists($this->zipFilePath)) {
             try {
                 $this->doCopyFlysystemFileToLocal($this->zipFilePath, $normalizedTemp);
             } catch (\Throwable) {

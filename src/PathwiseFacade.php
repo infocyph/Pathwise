@@ -123,17 +123,6 @@ final class PathwiseFacade
     }
 
     /**
-     * Alias for at() - create a new instance at the given path.
-     *
-     * @param string $path The path to the file or directory.
-     * @return self A new facade instance.
-     */
-    public static function from(string $path): self
-    {
-        return self::at($path);
-    }
-
-    /**
      * Build a checksum index for all files in a directory.
      *
      * @param string $directory The directory to index.
@@ -322,12 +311,11 @@ final class PathwiseFacade
      * Get a safe file reader for this path.
      *
      * @param string $mode The file mode to open with. Defaults to 'r'.
-     * @param bool $exclusiveLock If true, acquire an exclusive lock.
      * @return SafeFileReader The file reader instance.
      */
-    public function reader(string $mode = 'r', bool $exclusiveLock = false): SafeFileReader
+    public function reader(string $mode = 'r', ?int $lockType = null): SafeFileReader
     {
-        return new SafeFileReader($this->path, $mode, $exclusiveLock);
+        return new SafeFileReader($this->path, $mode, $lockType);
     }
 
     /**

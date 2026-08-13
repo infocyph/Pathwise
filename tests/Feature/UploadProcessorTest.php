@@ -91,7 +91,7 @@ test('it throws for disallowed mime type before moving upload', function () {
             'name' => 'plain.txt',
         ];
 
-        expect(fn() => $this->uploadProcessor->processUpload($file))
+        expect(fn() => $this->uploadProcessor->ingestFile($file))
             ->toThrow(UploadException::class, 'Invalid file format');
     } finally {
         if (file_exists($tmpFile)) {
@@ -185,7 +185,7 @@ test('it blocks upload when extension is blocked', function () {
             'name' => 'payload.php',
         ];
 
-        expect(fn() => $this->uploadProcessor->processUpload($file))
+        expect(fn() => $this->uploadProcessor->ingestFile($file))
             ->toThrow(UploadException::class, 'Blocked file extension');
     } finally {
         if (file_exists($tmpFile)) {
@@ -209,7 +209,7 @@ test('it requires malware scanner when configured', function () {
             'name' => 'sample.txt',
         ];
 
-        expect(fn() => $this->uploadProcessor->processUpload($file))
+        expect(fn() => $this->uploadProcessor->ingestFile($file))
             ->toThrow(UploadException::class, 'Malware scanner is required but not configured');
     } finally {
         if (file_exists($tmpFile)) {
@@ -233,7 +233,7 @@ test('it enforces strict content validation for extension and mime agreement', f
             'name' => 'avatar.png',
         ];
 
-        expect(fn() => $this->uploadProcessor->processUpload($file))
+        expect(fn() => $this->uploadProcessor->ingestFile($file))
             ->toThrow(UploadException::class, 'File content type does not match extension');
     } finally {
         if (file_exists($tmpFile)) {
@@ -319,7 +319,7 @@ test('it processes upload to a mounted filesystem path', function () {
     file_put_contents($tmpFile, 'mounted-upload-content');
 
     try {
-        $destination = $this->uploadProcessor->processUpload([
+        $destination = $this->uploadProcessor->ingestFile([
             'error' => UPLOAD_ERR_OK,
             'size' => filesize($tmpFile),
             'tmp_name' => $tmpFile,
@@ -395,7 +395,7 @@ test('it processes upload with default filesystem using relative paths', functio
     file_put_contents($tmpFile, 'default-filesystem-content');
 
     try {
-        $destination = $this->uploadProcessor->processUpload([
+        $destination = $this->uploadProcessor->ingestFile([
             'error' => UPLOAD_ERR_OK,
             'size' => filesize($tmpFile),
             'tmp_name' => $tmpFile,
@@ -413,4 +413,60 @@ test('it processes upload with default filesystem using relative paths', functio
         FlysystemHelper::clearDefaultFilesystem();
         FlysystemHelper::deleteDirectory($defaultRoot);
     }
+});
+
+test('HTTP upload API rejects an ordinary local temporary file', function () {
+    $this->uploadProcessor->setDirectorySettings($this->uploadDir);
+    $tmpFile = tempnam(sys_get_temp_dir(), 'pathwise_not_http_');
+    file_put_contents($tmpFile, 'ordinary-file');
+
+    try {
+        expect(fn () => $this->uploadProcessor->processUpload([
+            'error' => UPLOAD_ERR_OK,
+            'size' => filesize($tmpFile),
+            'tmp_name' => $tmpFile,
+            'name' => 'ordinary.txt',
+        ]))->toThrow(UploadException::class, 'not a valid HTTP upload');
+    } finally {
+        if (is_file($tmpFile)) {
+            unlink($tmpFile);
+        }
+    }
+});
+
+test('chunk finalization uses the assembled content hash deterministically', function () {
+    $this->uploadProcessor->setDirectorySettings($this->uploadDir, false, $this->uploadDir);
+    $this->uploadProcessor->setValidationSettings(['text/plain'], 1024);
+    $uploadId = 'deterministic_hash';
+    foreach (['assembled-', 'content'] as $index => $contents) {
+        $part = $this->uploadDir . DIRECTORY_SEPARATOR . "hash_{$index}.part";
+        file_put_contents($part, $contents);
+        $this->uploadProcessor->processChunkUpload([
+            'error' => UPLOAD_ERR_OK,
+            'size' => filesize($part),
+            'tmp_name' => $part,
+            'name' => basename($part),
+        ], $uploadId, $index, 2, 'payload.txt');
+    }
+
+    $destination = $this->uploadProcessor->finalizeChunkUpload($uploadId);
+    expect(basename($destination))->toBe('upload_' . hash('sha256', 'assembled-content') . '.txt');
+});
+
+test('failed finalization preserves chunks for a retry and removes assembly output', function () {
+    $this->uploadProcessor->setDirectorySettings($this->uploadDir, false, $this->uploadDir);
+    $part = $this->uploadDir . DIRECTORY_SEPARATOR . 'retry.part';
+    file_put_contents($part, 'not-a-png');
+    $this->uploadProcessor->processChunkUpload([
+        'error' => UPLOAD_ERR_OK,
+        'size' => filesize($part),
+        'tmp_name' => $part,
+        'name' => 'retry.part',
+    ], 'retry_session', 0, 1, 'image.png');
+
+    expect(fn () => $this->uploadProcessor->finalizeChunkUpload('retry_session'))
+        ->toThrow(UploadException::class)
+        ->and(is_file($this->uploadDir . DIRECTORY_SEPARATOR . 'pathwise_chunks'
+            . DIRECTORY_SEPARATOR . 'retry_session' . DIRECTORY_SEPARATOR . 'chunk_000000.part'))->toBeTrue()
+        ->and(glob($this->uploadDir . DIRECTORY_SEPARATOR . 'upload_*.png'))->toBe([]);
 });

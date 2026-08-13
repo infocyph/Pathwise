@@ -15,9 +15,12 @@ Brief capabilities:
 
 Queue job IDs use cryptographically secure random values. Invalid queue JSON is
 reported as an error instead of being silently replaced, and ``maxJobs`` limits
-all attempted jobs, including failures. Flysystem-backed queues retain portable
-read/write behavior, but their storage adapter must provide any cross-process
-coordination required by the application.
+all attempted jobs, including failures. Queue files must be direct-local paths;
+mounted and default-Flysystem paths are rejected.
+
+``FileJobQueue`` is intended for lightweight single-host workloads. It uses
+local file locks and bounded payload/job/file sizes; it is not a remote or
+distributed broker.
 
 Good fit:
 

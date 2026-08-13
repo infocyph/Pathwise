@@ -28,7 +28,7 @@ class DownloadProcessor
 
     private bool $blockHiddenFiles = true;
 
-    private int $chunkSize = 8192;
+    private int $chunkSize = 65_536;
 
     private string $defaultDownloadName = 'download.bin';
 
@@ -67,7 +67,9 @@ class DownloadProcessor
         $mimeType = MetadataHelper::getMimeType($normalizedPath) ?? 'application/octet-stream';
         $lastModified = FlysystemHelper::lastModified($normalizedPath);
         [$rangeStart, $rangeEnd, $isPartial] = $this->resolveRange($rangeHeader, $size);
-        $contentLength = ($rangeEnd - $rangeStart) + 1;
+        $contentLength = $rangeStart === null || $rangeEnd === null
+            ? 0
+            : ($rangeEnd - $rangeStart) + 1;
 
         $resolvedFileName = $this->resolveDownloadName($downloadName, $normalizedPath);
         $disposition = $this->forceAttachment ? 'attachment' : 'inline';
@@ -84,7 +86,7 @@ class DownloadProcessor
             'X-Content-Type-Options' => 'nosniff',
         ];
 
-        if ($isPartial) {
+        if ($isPartial && is_int($rangeStart) && is_int($rangeEnd)) {
             $headers['Content-Range'] = sprintf('bytes %d-%d/%d', $rangeStart, $rangeEnd, $size);
         }
 
@@ -134,7 +136,10 @@ class DownloadProcessor
      */
     public function setChunkSize(int $chunkSize): void
     {
-        $this->chunkSize = max(1024, $chunkSize);
+        if ($chunkSize < 1) {
+            throw new DownloadException('Download chunk size must be positive.');
+        }
+        $this->chunkSize = $chunkSize;
     }
 
     /**
@@ -181,7 +186,10 @@ class DownloadProcessor
      */
     public function setMaxDownloadSize(int $maxDownloadSize = 0): void
     {
-        $this->maxDownloadSize = max(0, $maxDownloadSize);
+        if ($maxDownloadSize < 0) {
+            throw new DownloadException('Maximum download size must be non-negative.');
+        }
+        $this->maxDownloadSize = $maxDownloadSize;
     }
 
     /**
@@ -221,7 +229,7 @@ class DownloadProcessor
         }
 
         try {
-            $this->seekStreamToOffset($inputStream, $manifest->range->start);
+            $this->seekStreamToOffset($inputStream, $manifest->range->start ?? 0);
 
             $remaining = $manifest->range->contentLength;
             $bytesSent = 0;
@@ -293,9 +301,15 @@ class DownloadProcessor
 
     private function isHiddenFile(string $path): bool
     {
-        $basename = basename($path);
+        $location = preg_replace('/^[a-zA-Z0-9._-]+:\/\//', '', str_replace('\\', '/', $path)) ?? $path;
+        $segments = preg_split('/\/+/', trim($location, '/')) ?: [];
 
-        return $basename !== '' && str_starts_with($basename, '.');
+        return array_any(
+            $segments,
+            static fn(string $segment): bool => $segment !== '.'
+                && $segment !== '..'
+                && str_starts_with($segment, '.'),
+        );
     }
 
     private function normalizeExtension(string $extension): string
@@ -322,69 +336,13 @@ class DownloadProcessor
         return array_values(array_unique($normalized));
     }
 
-    private function pathStartsWith(string $path, string $prefix): bool
-    {
-        $pathNormalized = rtrim($path, '/\\');
-        $prefixNormalized = rtrim($prefix, '/\\');
-        if (PHP_OS_FAMILY === 'Windows') {
-            $pathNormalized = strtolower($pathNormalized);
-            $prefixNormalized = strtolower($prefixNormalized);
-        }
-
-        return $pathNormalized === $prefixNormalized
-            || str_starts_with($pathNormalized, $prefixNormalized . DIRECTORY_SEPARATOR);
-    }
-
     private function pathWithinAllowedRoot(string $path): bool
     {
         if ($this->allowedRoots === []) {
             return true;
         }
 
-        $pathIsScheme = PathHelper::hasScheme($path);
-        foreach ($this->allowedRoots as $root) {
-            $rootIsScheme = PathHelper::hasScheme($root);
-            if ($pathIsScheme || $rootIsScheme) {
-                if ($this->pathWithinSchemeRoot($path, $root, $pathIsScheme, $rootIsScheme)) {
-                    return true;
-                }
-
-                continue;
-            }
-
-            if ($this->pathWithinLocalRoot($path, $root)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private function pathWithinLocalRoot(string $path, string $root): bool
-    {
-        $pathAbsolute = PathHelper::isAbsolute($path)
-            ? $path
-            : PathHelper::toAbsolutePath($path);
-        $rootAbsolute = PathHelper::isAbsolute($root)
-            ? $root
-            : PathHelper::toAbsolutePath($root);
-
-        $resolvedPath = realpath($pathAbsolute) ?: PathHelper::normalize($pathAbsolute);
-        $resolvedRoot = realpath($rootAbsolute) ?: PathHelper::normalize($rootAbsolute);
-
-        return $this->pathStartsWith($resolvedPath, $resolvedRoot);
-    }
-
-    private function pathWithinSchemeRoot(string $path, string $root, bool $pathIsScheme, bool $rootIsScheme): bool
-    {
-        if (!$pathIsScheme || !$rootIsScheme) {
-            return false;
-        }
-
-        $normalizedPath = rtrim(str_replace('\\', '/', $path), '/');
-        $normalizedRoot = rtrim(str_replace('\\', '/', $root), '/');
-
-        return $normalizedPath === $normalizedRoot || str_starts_with($normalizedPath, $normalizedRoot . '/');
+        return array_any($this->allowedRoots, fn($root) => FlysystemHelper::isSameOrDescendant($root, $path));
     }
 
     /**
@@ -407,13 +365,38 @@ class DownloadProcessor
         return $safe !== '' ? $safe : $this->defaultDownloadName;
     }
 
+    /** @return array{int, int, true} */
+    private function resolveExplicitRange(string $startRaw, string $endRaw, int $size): array
+    {
+
+        $start = (int) $startRaw;
+        if ($start < 0 || $start >= $size) {
+            throw new DownloadException('Invalid range header.');
+        }
+
+        if ($endRaw === '') {
+            return [$start, $size - 1, true];
+        }
+
+        $end = (int) $endRaw;
+        if ($end < $start) {
+            throw new DownloadException('Invalid range header.');
+        }
+
+        return [$start, min($end, $size - 1), true];
+    }
+
     /**
-     * @return array{int, int, bool}
+     * @return array{int|null, int|null, bool}
      */
     private function resolveRange(?string $rangeHeader, int $size): array
     {
-        if ($size < 1) {
-            throw new DownloadException('Cannot prepare download for empty file.');
+        if ($size === 0) {
+            if ($rangeHeader !== null && trim($rangeHeader) !== '' && $this->rangeRequestsEnabled) {
+                throw new DownloadException('Byte range is unsatisfiable for an empty file.');
+            }
+
+            return [null, null, false];
         }
 
         if (!$this->rangeRequestsEnabled || $rangeHeader === null || trim($rangeHeader) === '') {
@@ -432,32 +415,21 @@ class DownloadProcessor
         }
 
         if ($startRaw === '') {
-            $suffixLength = (int) $endRaw;
-            if ($suffixLength <= 0) {
-                throw new DownloadException('Invalid range header.');
-            }
-
-            $start = max(0, $size - $suffixLength);
-            $end = $size - 1;
-
-            return [$start, $end, true];
+            return $this->resolveSuffixRange($endRaw, $size);
         }
 
-        $start = (int) $startRaw;
-        if ($start < 0 || $start >= $size) {
+        return $this->resolveExplicitRange($startRaw, $endRaw, $size);
+    }
+
+    /** @return array{int, int, true} */
+    private function resolveSuffixRange(string $endRaw, int $size): array
+    {
+        $suffixLength = (int) $endRaw;
+        if ($suffixLength <= 0) {
             throw new DownloadException('Invalid range header.');
         }
 
-        if ($endRaw === '') {
-            return [$start, $size - 1, true];
-        }
-
-        $end = (int) $endRaw;
-        if ($end < $start) {
-            throw new DownloadException('Invalid range header.');
-        }
-
-        return [$start, min($end, $size - 1), true];
+        return [max(0, $size - $suffixLength), $size - 1, true];
     }
 
     private function sanitizeFilename(string $name): string
