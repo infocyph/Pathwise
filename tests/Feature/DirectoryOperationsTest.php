@@ -182,16 +182,16 @@ test('finds files based on criteria', function () {
     file_put_contents($file1, 'file one');
     file_put_contents($file2, 'file two');
 
-    // Set permissions compatible across platforms
-    if (strtoupper(substr(PHP_OS, 0, 3)) !== 'WIN') {
-        chmod($file1, 0644);
-    }
-
-    $foundFiles = $this->directoryOperations->find([
+    $criteria = [
         'name' => basename($file1),
         'extension' => 'txt',
-        'permissions' => 0644,
-    ]);
+    ];
+    if (PHP_OS_FAMILY !== 'Windows') {
+        chmod($file1, 0644);
+        $criteria['permissions'] = 0644;
+    }
+
+    $foundFiles = $this->directoryOperations->find($criteria);
 
     $foundFiles = array_map(fn($path) => realpath($path), $foundFiles);
 
