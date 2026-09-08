@@ -169,9 +169,7 @@ trait SafeFileWriterWriteConcern
     private function trackWriteType(string $type): void
     {
         $type = strtolower($type);
-        if (!isset($this->writeTypesCount[$type])) {
-            $this->writeTypesCount[$type] = 0;
-        }
+        $this->writeTypesCount[$type] ??= 0;
         $this->writeTypesCount[$type]++;
     }
 
