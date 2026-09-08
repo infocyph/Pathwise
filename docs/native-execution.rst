@@ -3,34 +3,55 @@ Native Execution
 
 Namespaces: ``Infocyph\Pathwise\Core`` and ``Infocyph\Pathwise\Native``
 
-Pathwise can use OS-native commands for selected workflows via ``ExecutionStrategy``:
+Pathwise can use OS-native commands for selected direct-local workflows through
+``ExecutionStrategy``:
 
-* ``PHP``: force pure PHP implementation.
-* ``NATIVE``: require a local path and available executable; throw on failure.
-* ``AUTO``: attempt native first when supported, then fall back to PHP.
+* ``PHP`` — force the portable PHP implementation and never start a native tool;
+* ``AUTO`` — use a supported native capability when available, otherwise fall
+  back to PHP;
+* ``NATIVE`` — require the native capability and fail explicitly when it is not
+  available or execution fails.
 
-``NativeOperationsAdapter`` covers:
+``NativeOperationsAdapter`` provides native acceleration for selected file,
+directory, and archive operations. The actual tool is capability/platform
+dependent: Unix-like systems may use tools such as ``cp``, ``rsync``, ``zip``
+and ``unzip``; Windows may use ``cmd``, ``robocopy`` or PowerShell capabilities.
+Do not depend on one executable being present merely because the OS family is
+known.
 
-* file copy acceleration
-* directory copy acceleration
-* zip/unzip acceleration
+Safety Limits
+-------------
 
-Platform behavior:
+Native execution is bounded by ``NativeExecutionLimits``. Defaults are finite:
 
-* Windows: ``robocopy``, ``cmd copy``, PowerShell archive commands.
-* Unix-like: ``rsync``, ``cp``, ``zip``/``unzip``.
+* timeout: 300 seconds;
+* stdout cap: 4 MiB;
+* stderr cap: 4 MiB;
+* termination grace: 1 second;
+* polling interval: 10,000 microseconds.
 
-Native mode is local-filesystem-only. Mounted and default-Flysystem paths are
-rejected even when their backing adapter happens to use a local directory.
-Failures retain the exit code and output in ``NativeExecutionResult`` or the
-resulting ``NativeExecutionException``. Caller paths are passed as escaped
-arguments; caller-provided shell fragments are not accepted.
+Applications may provide stricter limits for their workload. Invalid limits are
+rejected at configuration time. Runtime timeout, output-limit, startup, exit and
+unsupported-capability failures are represented through the typed native
+execution failure/exception surface.
 
-Where to use
-------------
+The command runner uses non-blocking pipe handling, bounded termination and
+deterministic cleanup. Pathwise starts argument-vector commands; caller-provided
+shell fragments are not accepted as an execution API.
 
-Enable native mode when you are operating on large local trees/archives and OS
-tools are available in the runtime environment.
+Storage Boundary
+----------------
+
+Native mode is direct-local-filesystem-only. ``StorageContext`` logical paths,
+low-level mounted/default Flysystem paths and object-storage paths are rejected
+for native execution even when a particular adapter happens to use a local
+directory internally. Pathwise does not unwrap adapters to manufacture a native
+filesystem guarantee.
+
+In ``AUTO`` mode, an unavailable native capability is a reason to use the PHP
+implementation. In forced ``NATIVE`` mode, it is an explicit typed failure.
+Once a native command has started and fails, Pathwise does not silently mask the
+failure by rerunning the operation through a different implementation.
 
 Example
 -------
@@ -43,3 +64,7 @@ Example
    $ops = new DirectoryOperations('/tmp/source');
    $ops->setExecutionStrategy(ExecutionStrategy::AUTO)
        ->copy('/tmp/target');
+
+Use native acceleration for large local workloads only after measuring it on
+the deployment platform. See :doc:`performance-portability` and
+:doc:`storage-contracts` for the capability and release-workload guidance.
