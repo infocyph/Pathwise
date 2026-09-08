@@ -284,8 +284,8 @@ trait UploadProcessorValidationConcern
 
         try {
             $result = ($this->malwareScanner)($filePath, $fileType);
-        } catch (\Throwable $e) {
-            throw new UploadException('Malware scanner failed: ' . $e->getMessage(), 0, $e);
+        } catch (\Throwable $exception) {
+            throw new UploadException('Malware scanner failed.', 0, $exception);
         }
 
         if ($result === false) {

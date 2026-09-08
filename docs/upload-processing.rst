@@ -28,7 +28,7 @@ Where it fits:
 * Strict content checks:
   * extension <> MIME agreement
   * lightweight file signature verification for common formats
-* Malware scanner callback hook (optional or required).
+* First-class ``MalwareScannerInterface`` support plus callback compatibility.
 
 Storage notes:
 
@@ -92,6 +92,34 @@ Typed chunk example:
 
 Non-success upload error codes are rejected before a mover callback is invoked,
 so an invalid framework upload is not materialized unnecessarily.
+
+Malware Scanning
+----------------
+
+Prefer ``MalwareScannerInterface`` for production scanner integrations. It is an
+invokable contract so existing ``setMalwareScanner(callable $scanner)`` callers
+remain compatible without an adapter layer.
+
+.. code-block:: php
+
+   use Infocyph\Pathwise\StreamHandler\MalwareScannerInterface;
+
+   final class ClamScanner implements MalwareScannerInterface
+   {
+       public function __invoke(string $filePath, string $mimeType): bool
+       {
+           // Return true when clean, false when the payload must be rejected.
+           return true;
+       }
+   }
+
+   $uploader->setMalwareScanner(new ClamScanner());
+   $uploader->setRequireMalwareScan(true);
+
+A scanner returning ``false`` rejects the upload. A scanner/backend exception
+also fails closed. Pathwise exposes only the stable ``Malware scanner failed.``
+message for backend failures and keeps the original throwable as the previous
+exception, so infrastructure details are not leaked through upload errors.
 
 Security Hardening Controls
 ---------------------------
