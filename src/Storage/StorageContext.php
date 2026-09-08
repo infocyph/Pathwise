@@ -159,14 +159,13 @@ final class StorageContext
         if (is_string($driver)) {
             $normalizedDriver = self::normalizeName($driver);
             if (isset($this->drivers[$normalizedDriver])) {
-                $filesystem = ($this->drivers[$normalizedDriver])($configuration);
-                if (!$filesystem instanceof FilesystemOperator) {
-                    throw new \UnexpectedValueException(
-                        "Storage driver '{$normalizedDriver}' must return a FilesystemOperator.",
-                    );
-                }
+                return ($this->drivers[$normalizedDriver])($configuration);
+            }
 
-                return $filesystem;
+            if (!StorageFactory::isOfficialDriver($normalizedDriver)) {
+                throw new \InvalidArgumentException(
+                    "Unsupported context storage driver '{$normalizedDriver}'. Supply it to StorageContext explicitly.",
+                );
             }
         }
 
