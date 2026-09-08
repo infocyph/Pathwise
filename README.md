@@ -138,18 +138,6 @@ Pathwise 4 includes explicit controls for:
 
 Security-sensitive behavior is fail-closed where a configured capability is required. Adapter/native/metadata capabilities remain explicit rather than silently emulated.
 
-## Documentation
-
-The Sphinx documentation is the canonical user guide and is built in CI with warnings treated as errors. Start with:
-
-- `docs/quickstart.rst`
-- `docs/storage-context.rst`
-- `docs/upload-processing.rst`
-- `docs/download-processing.rst`
-- `docs/security.rst`
-- `docs/migration-4.0.rst`
-- `docs/api-reference.rst`
-- `docs/performance-portability.rst`
 
 ## Security
 
