@@ -10,13 +10,14 @@ use Infocyph\Pathwise\Exceptions\FileSizeExceededException;
 use Infocyph\Pathwise\Results\DownloadPreparation;
 use Infocyph\Pathwise\Results\DownloadStreamResult;
 use Infocyph\Pathwise\Results\RangeDownloadMetadata;
+use Infocyph\Pathwise\StreamHandler\Concerns\StorageContextRoutingConcern;
 use Infocyph\Pathwise\Utils\ExtensionPolicy;
-use Infocyph\Pathwise\Utils\FlysystemHelper;
-use Infocyph\Pathwise\Utils\MetadataHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 
 class DownloadProcessor
 {
+    use StorageContextRoutingConcern;
+
     /** @var list<string> */
     private array $allowedExtensions = [];
 
@@ -56,7 +57,7 @@ class DownloadProcessor
         $normalizedPath = PathHelper::normalize($path);
         $this->validateDownloadPath($normalizedPath);
 
-        $size = FlysystemHelper::size($normalizedPath);
+        $size = $this->storageSize($normalizedPath);
         if ($this->maxDownloadSize > 0 && $size > $this->maxDownloadSize) {
             throw new FileSizeExceededException('Download exceeds configured size limit.');
         }
@@ -64,8 +65,8 @@ class DownloadProcessor
         $extension = pathinfo($normalizedPath, PATHINFO_EXTENSION);
         $this->validateExtension($extension);
 
-        $mimeType = MetadataHelper::getMimeType($normalizedPath) ?? 'application/octet-stream';
-        $lastModified = FlysystemHelper::lastModified($normalizedPath);
+        $mimeType = $this->storageMimeType($normalizedPath) ?? 'application/octet-stream';
+        $lastModified = $this->storageLastModified($normalizedPath);
         [$rangeStart, $rangeEnd, $isPartial] = $this->resolveRange($rangeHeader, $size);
         $contentLength = $rangeStart === null || $rangeEnd === null
             ? 0
@@ -219,7 +220,7 @@ class DownloadProcessor
             return;
         }
 
-        $inputStream = FlysystemHelper::readStream($path);
+        $inputStream = $this->storageReadStream($path);
         if (!is_resource($inputStream)) {
             throw new DownloadException('Unable to open input stream for download.');
         }
@@ -358,7 +359,7 @@ class DownloadProcessor
             return true;
         }
 
-        return array_any($this->allowedRoots, fn($root) => FlysystemHelper::isSameOrDescendant($root, $path));
+        return array_any($this->allowedRoots, fn($root) => $this->storageIsSameOrDescendant($root, $path));
     }
 
     /**
@@ -511,7 +512,7 @@ class DownloadProcessor
 
     private function validateDownloadPath(string $path): void
     {
-        if (!FlysystemHelper::fileExists($path)) {
+        if (!$this->storageFileExists($path)) {
             throw new FileNotFoundException("File not found at {$path}.");
         }
 
@@ -547,12 +548,12 @@ class DownloadProcessor
         $this->validateDownloadPath($path);
         $this->validateExtension(pathinfo($path, PATHINFO_EXTENSION));
 
-        $size = FlysystemHelper::size($path);
+        $size = $this->storageSize($path);
         if ($this->maxDownloadSize > 0 && $size > $this->maxDownloadSize) {
             throw new FileSizeExceededException('Download exceeds configured size limit.');
         }
 
-        $lastModified = FlysystemHelper::lastModified($path);
+        $lastModified = $this->storageLastModified($path);
         if ($size !== $preparation->size || $lastModified !== $preparation->lastModified) {
             throw new DownloadException('Prepared download metadata is stale.');
         }
