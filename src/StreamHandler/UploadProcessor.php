@@ -39,7 +39,9 @@ use Psr\Log\LoggerInterface;
  *     namingStrategy: string,
  *     validationProfile: string|null,
  *     hasMalwareScanner: bool,
- *     requireMalwareScan: bool,
+ *     malwareScannerClass: string|null,
+ *     malwareScanMode: string,
+ *     malwareScanStatus: string,
  *     strictContentTypeValidation: bool
  * }
  */
@@ -86,6 +88,8 @@ class UploadProcessor
 
     private LoggerInterface $logger;
 
+    private MalwareScanMode $malwareScanMode = MalwareScanMode::WHEN_CONFIGURED;
+
     private ?MalwareScannerInterface $malwareScanner = null;
 
     private int $maxChunkCount = 0;
@@ -99,8 +103,6 @@ class UploadProcessor
     private int $maxImageWidth = 0;
 
     private string $namingStrategy = 'hash';
-
-    private bool $requireMalwareScan = false;
 
     private bool $strictContentTypeValidation = true;
 
@@ -177,7 +179,9 @@ class UploadProcessor
             'namingStrategy' => $this->namingStrategy,
             'validationProfile' => $this->validationProfile,
             'hasMalwareScanner' => $this->malwareScanner !== null,
-            'requireMalwareScan' => $this->requireMalwareScan,
+            'malwareScannerClass' => $this->malwareScanner !== null ? $this->malwareScanner::class : null,
+            'malwareScanMode' => $this->malwareScanMode->value,
+            'malwareScanStatus' => $this->malwareScanStatus(),
             'strictContentTypeValidation' => $this->strictContentTypeValidation,
         ];
     }
@@ -391,11 +395,19 @@ class UploadProcessor
     }
 
     /**
-     * Configure the malware scanner used before content parsing.
+     * Configure or clear the malware scanner used before content parsing.
      */
-    public function setMalwareScanner(MalwareScannerInterface $scanner): void
+    public function setMalwareScanner(?MalwareScannerInterface $scanner): void
     {
         $this->malwareScanner = $scanner;
+    }
+
+    /**
+     * Configure malware scan policy.
+     */
+    public function setMalwareScanMode(MalwareScanMode $mode): void
+    {
+        $this->malwareScanMode = $mode;
     }
 
     /**
@@ -410,16 +422,6 @@ class UploadProcessor
             throw new UploadException("Invalid naming strategy: $namingStrategy.");
         }
         $this->namingStrategy = $namingStrategy;
-    }
-
-    /**
-     * Require malware scanning before upload acceptance.
-     *
-     * @param bool $required If true, require malware scanning.
-     */
-    public function setRequireMalwareScan(bool $required = true): void
-    {
-        $this->requireMalwareScan = $required;
     }
 
     /**
@@ -505,6 +507,15 @@ class UploadProcessor
         return $extension !== ''
             ? sprintf('upload_%s.%s', $identifier, $extension)
             : sprintf('upload_%s', $identifier);
+    }
+
+    private function malwareScanStatus(): string
+    {
+        return match ($this->malwareScanMode) {
+            MalwareScanMode::OFF => 'disabled',
+            MalwareScanMode::REQUIRED => $this->malwareScanner === null ? 'required_unconfigured' : 'required_ready',
+            MalwareScanMode::WHEN_CONFIGURED => $this->malwareScanner === null ? 'unconfigured' : 'configured',
+        };
     }
 
     /**
