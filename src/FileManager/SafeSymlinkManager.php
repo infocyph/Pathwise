@@ -131,6 +131,19 @@ final readonly class SafeSymlinkManager
         throw new PolicyViolationException(sprintf('%s must remain inside "%s".', $label, $root));
     }
 
+    private function canonicalExistingTarget(string $target): string
+    {
+        $resolved = realpath($target);
+        if ($resolved === false) {
+            throw new PolicyViolationException(sprintf('Symlink target does not resolve: %s', $target));
+        }
+
+        $resolved = PathHelper::normalize($resolved);
+        $this->assertInside($resolved, $this->targetRoot, 'Symlink target');
+
+        return $resolved;
+    }
+
     private function canonicalRoot(string $root, string $label): string
     {
         $root = trim($root);
@@ -213,19 +226,6 @@ final readonly class SafeSymlinkManager
         }
 
         return $this->canonicalExistingTarget($target);
-    }
-
-    private function canonicalExistingTarget(string $target): string
-    {
-        $resolved = realpath($target);
-        if ($resolved === false) {
-            throw new PolicyViolationException(sprintf('Symlink target does not resolve: %s', $target));
-        }
-
-        $resolved = PathHelper::normalize($resolved);
-        $this->assertInside($resolved, $this->targetRoot, 'Symlink target');
-
-        return $resolved;
     }
 
     private function resolveCandidate(string $path, string $root, string $label, bool $allowRoot): string
