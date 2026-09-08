@@ -171,7 +171,7 @@ final readonly class SafeSymlinkManager
 
     private function createNativeSymlink(string $target, string $link): bool
     {
-        return $this->runSilently(static fn(): bool => symlink($target, $link));
+        return $this->runSilently(static fn(): bool => symlink($target, $link)) === true;
     }
 
     private function linkMatchesTarget(string $link, string $target): bool
