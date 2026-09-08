@@ -21,15 +21,15 @@ final class StorageContext
 
     private readonly string $defaultFilesystem;
 
-    /** @var array<string, callable(array<string, mixed>): FilesystemOperator> */
+    /** @var array<string, callable(array<string, mixed>): mixed> */
     private readonly array $drivers;
 
     /** @var array<string, FilesystemOperator> */
     private array $filesystems = [];
 
     /**
-     * @param array<string, array<string, mixed>> $configurations
-     * @param array<string, callable(array<string, mixed>): FilesystemOperator> $drivers
+     * @param array<array-key, mixed> $configurations
+     * @param array<array-key, mixed> $drivers Custom driver factories returning FilesystemOperator instances.
      */
     public function __construct(array $configurations, string $defaultFilesystem, array $drivers = [])
     {
@@ -39,7 +39,7 @@ final class StorageContext
 
         $normalizedConfigurations = [];
         foreach ($configurations as $name => $configuration) {
-            if (!is_string($name) || !is_array($configuration)) {
+            if (!is_string($name)) {
                 throw new \InvalidArgumentException(
                     'Filesystem configurations must map valid names to configuration arrays.',
                 );
@@ -52,7 +52,7 @@ final class StorageContext
                 );
             }
 
-            $normalizedConfigurations[$normalizedName] = $configuration;
+            $normalizedConfigurations[$normalizedName] = self::normalizeConfiguration($configuration);
         }
 
         $defaultFilesystem = self::normalizeName($defaultFilesystem);
@@ -152,6 +152,27 @@ final class StorageContext
         return [$this->filesystem($resolvedName), $location];
     }
 
+    /** @return array<string, mixed> */
+    private static function normalizeConfiguration(mixed $configuration): array
+    {
+        if (!is_array($configuration)) {
+            throw new \InvalidArgumentException(
+                'Filesystem configurations must map valid names to configuration arrays.',
+            );
+        }
+
+        $normalized = [];
+        foreach ($configuration as $key => $value) {
+            if (!is_string($key)) {
+                throw new \InvalidArgumentException('Filesystem configuration keys must be strings.');
+            }
+
+            $normalized[$key] = $value;
+        }
+
+        return $normalized;
+    }
+
     private static function normalizeLocation(string $location): string
     {
         $normalized = str_replace('\\', '/', trim($location));
@@ -187,7 +208,14 @@ final class StorageContext
         if (is_string($driver)) {
             $normalizedDriver = self::normalizeName($driver);
             if (isset($this->drivers[$normalizedDriver])) {
-                return ($this->drivers[$normalizedDriver])($configuration);
+                $filesystem = ($this->drivers[$normalizedDriver])($configuration);
+                if (!$filesystem instanceof FilesystemOperator) {
+                    throw new \UnexpectedValueException(
+                        "Storage driver '{$normalizedDriver}' must return a FilesystemOperator.",
+                    );
+                }
+
+                return $filesystem;
             }
 
             if (!StorageFactory::isOfficialDriver($normalizedDriver)) {
@@ -201,8 +229,8 @@ final class StorageContext
     }
 
     /**
-     * @param array<string, callable(array<string, mixed>): FilesystemOperator> $drivers
-     * @return array<string, callable(array<string, mixed>): FilesystemOperator>
+     * @param array<array-key, mixed> $drivers
+     * @return array<string, callable(array<string, mixed>): mixed>
      */
     private function normalizeDrivers(array $drivers): array
     {

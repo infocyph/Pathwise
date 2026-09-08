@@ -144,6 +144,17 @@ test('a context cannot fall through to globally registered custom drivers', func
     }
 });
 
+test('context drivers must return filesystem operators', function (): void {
+    $context = new StorageContext(
+        ['tenant' => ['driver' => 'broken']],
+        'tenant',
+        ['broken' => static fn (array $configuration): object => new stdClass()],
+    );
+
+    expect(fn () => $context->filesystem())
+        ->toThrow(UnexpectedValueException::class, 'must return a FilesystemOperator');
+});
+
 test('it resolves explicit schemes and rejects conflicting selection', function (): void {
     $rootA = storageContextTempDirectory('pathwise_scheme_a_');
     $rootB = storageContextTempDirectory('pathwise_scheme_b_');
@@ -180,6 +191,8 @@ test('it rejects invalid topology and unsafe logical paths', function (): void {
             ->toThrow(InvalidArgumentException::class, 'At least one filesystem')
             ->and(fn () => new StorageContext(['local' => ['driver' => 'local', 'root' => $root]], 'missing'))
             ->toThrow(InvalidArgumentException::class, 'Default filesystem')
+            ->and(fn () => new StorageContext(['local' => [0 => 'invalid']], 'local'))
+            ->toThrow(InvalidArgumentException::class, 'configuration keys must be strings')
             ->and(fn () => new StorageContext(
                 ['local' => ['driver' => 'local', 'root' => $root]],
                 'local',
