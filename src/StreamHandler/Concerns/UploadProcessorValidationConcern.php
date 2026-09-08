@@ -6,6 +6,7 @@ namespace Infocyph\Pathwise\StreamHandler\Concerns;
 
 use Infocyph\Pathwise\Exceptions\FileSizeExceededException;
 use Infocyph\Pathwise\Exceptions\UploadException;
+use Infocyph\Pathwise\StreamHandler\MalwareScanMode;
 use Infocyph\Pathwise\StreamHandler\MalwareScanRequest;
 use Infocyph\Pathwise\StreamHandler\MalwareScanVerdict;
 use Infocyph\Pathwise\Utils\ExtensionPolicy;
@@ -198,7 +199,6 @@ trait UploadProcessorValidationConcern
             $candidate = PathHelper::join($root, 'pathwise-scan-' . bin2hex(random_bytes(16)));
             if ($this->runSilently(static fn(): bool => mkdir($candidate, 0700))) {
                 $directory = $candidate;
-
                 break;
             }
         }
@@ -208,7 +208,6 @@ trait UploadProcessorValidationConcern
         }
 
         $target = PathHelper::join($directory, 'payload');
-
         try {
             $this->copyToMalwareScanInput($filePath, $target);
         } catch (\Throwable $exception) {
@@ -359,8 +358,12 @@ trait UploadProcessorValidationConcern
 
     private function scanForMalware(string $filePath, string $extension, int $expectedSize): void
     {
+        if ($this->malwareScanMode === MalwareScanMode::OFF) {
+            return;
+        }
+
         if ($this->malwareScanner === null) {
-            if ($this->requireMalwareScan) {
+            if ($this->malwareScanMode === MalwareScanMode::REQUIRED) {
                 throw new UploadException('Malware scanner is required but not configured.');
             }
 
