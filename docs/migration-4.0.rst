@@ -14,7 +14,7 @@ including ``psr/log ^3``. Optional Flysystem adapters and optional PHP
 extensions remain capability-specific.
 
 Storage: Global Topology -> StorageContext
------------------------------------------
+------------------------------------------
 
 The most important architecture change is storage topology ownership.
 
@@ -131,7 +131,7 @@ Rules use last-match-wins precedence. If an intentionally permissive policy is
 required, construct ``new PolicyEngine(defaultAllow: true)`` explicitly.
 
 Queue API: Raw Jobs -> Typed Leases
-----------------------------------
+-----------------------------------
 
 File queue reservations are ownership capabilities in 4.0. ``reserve()``
 returns ``?QueueReservation``. Pass that reservation to ``renew()``,
