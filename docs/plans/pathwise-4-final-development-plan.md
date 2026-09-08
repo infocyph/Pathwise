@@ -32,7 +32,7 @@ Legend:
 - `[ ]` pending;
 - `[!]` blocked by an external prerequisite or release dependency.
 
-Current active batch: **Batch 10 — file queue lease correctness and durability**.
+Current active batch: **Batch 11 — archive, compression, metadata, and parser hardening**.
 
 | Area | Status | Tracking note |
 | --- | --- | --- |
@@ -53,13 +53,13 @@ Current active batch: **Batch 10 — file queue lease correctness and durability
 | Batch 8.3 — private Pathwise-owned local state | [X] | Scanner/upload staging, queue state, local JSONL audit state, and partitioned audit objects use private defaults where Pathwise owns creation; POSIX permission acceptance and cross-platform semantics are CI-green. |
 | Batch 8 — security defaults / atomic guarantees / permissions | [X] | All three sub-batches are complete; acceptance passed Windows PHP 8.4/8.5, optional adapters, stable+lowest QA, PHPStan/Psalm, and clean install. |
 | Batch 9 — bounded native execution | [X] | Bounded non-blocking native execution, timeout/output caps, typed failures, deterministic termination/cleanup, argv-only invocation, adapter-wide limits, and capability-based Windows fallback are CI-green. |
-| Batch 10 — file queue lease correctness/durability | [~] | Active: replace reservation timestamps as ownership with unique lease tokens and harden persistence/recovery. |
-| Batch 11 — archive/parser hardening | [ ] | Pending. |
+| Batch 10 — file queue lease correctness/durability | [X] | Typed unique leases, expiry/renewal ownership checks, stale-worker rejection, versioned strict state, stable private lock file, crash-safe fsync+rename persistence, corruption handling, and recovery tests are CI-green on Linux and Windows. |
+| Batch 11 — archive/parser hardening | [~] | Active: unify ZIP validation/extraction safety, reject canonical collisions and unsafe entry types, enforce actual extracted bytes, clean partial output, then re-audit metadata/image/serialization boundaries. |
 | Batch 12 — static/global-state cleanup | [ ] | Pending major-version cleanup. |
 | Batch 13 — observability/retention/indexing/watcher review | [ ] | Pending whole-library subsystem audit. |
 | Batch 14 — complete Pathwise 4 documentation | [ ] | Release blocker; starts after public APIs are stable, with feature docs added earlier when useful. |
 | Batch 15 — performance/stress/release gates | [ ] | Final acceptance only after functional/security batches stabilize. |
-| Pathwise 4.0 release | [!] | Blocked until Batches 10–15 and all release gates pass. |
+| Pathwise 4.0 release | [!] | Blocked until Batches 11–15 and all release gates pass. |
 | Foundation 3 / Point 26.5 consumption | [!] | Blocked until Pathwise 4.0 is released; Foundation then raises its floor and removes duplicated generic filesystem mechanics. |
 
 Tracker maintenance rule: update this table whenever a batch starts, closes, is split, or gains a release-blocking finding. A batch is marked `[X]` only after its implementation and relevant acceptance checks are complete; writing code alone is not enough.
@@ -317,67 +317,105 @@ Acceptance passed:
 
 ---
 
-## Batch 10 — file queue lease correctness and durability
+## Batch 10 — file queue lease correctness and durability — complete
 
-Current reservation ownership must be upgraded from `reservedAt`-only semantics to unique leases.
+The file queue now uses explicit, unique lease ownership rather than treating a reservation timestamp or job ID as sufficient authority.
 
-Introduce a unique reservation/lease token per successful reservation.
+Implemented:
 
-Requirements:
+- typed `QueueReservation` carrying opaque job ID, unique lease token, payload metadata, reservation time, and expiry;
+- explicit `reserve()`, `renew()`, `acknowledge()`, `release()`, and `fail()` lifecycle;
+- `process()` is a convenience layer over the same lease contract, and acknowledgement failures are not reclassified as handler failures;
+- lease expiry itself invalidates ownership, even before another worker performs reclamation;
+- reclaimed jobs receive a new lease token, so stale worker A cannot acknowledge/release/fail/renew worker B's reservation;
+- queue state is versioned and semantically validated on construction and every read/mutation;
+- pending, processing, and failed buckets enforce distinct state invariants and duplicate job IDs are rejected;
+- corrupt, empty, truncated, unsupported-version, and malformed committed state fail explicitly;
+- a stable private `.lock` file protects state mutations while the JSON state inode is replaced;
+- queue state persistence uses same-directory private temp files, complete writes, `fflush()` + `fsync()`, then `rename()` replacement;
+- orphan temp files from interrupted pre-commit writes are cleaned without replacing the last committed state;
+- queue, lock, and temporary state use private local permissions where the platform exposes POSIX modes;
+- persistence mechanics are isolated in `FileQueueStateStore`; `FileJobQueue` owns queue/lease semantics.
 
-- acknowledgement/removal must require the current lease token, not job ID alone;
-- retry/release must verify lease ownership;
-- an expired lease reclaimed by worker B cannot be acknowledged by stale worker A;
-- queue persistence uses crash-safe replacement;
-- queue/lock files use private permissions;
-- corrupt/truncated queue state fails explicitly rather than silently losing jobs;
-- lock ownership and state-file replacement work on Linux and Windows;
-- recovery behavior after interrupted writes is tested.
-
-Acceptance includes deterministic tests for:
+Acceptance passed:
 
 1. worker A reserves;
-2. A lease expires;
-3. worker B reclaims;
-4. A attempts stale ack/release -> rejected;
-5. B can complete safely.
+2. A's lease expires;
+3. A cannot acknowledge, release, renew, or fail that expired lease;
+4. worker B reclaims the same job under a new token;
+5. A remains stale and cannot mutate B's reservation;
+6. B completes safely;
+7. interrupted temporary-state recovery preserves the committed queue;
+8. corruption/version/duplicate-state tests fail closed;
+9. Windows PHP 8.4/8.5, PHP 8.4/8.5 stable+lowest QA, PHPStan/Psalm, clean install, and optional-adapter contracts are green.
 
 ---
 
-## Batch 11 — archive, compression, metadata, and parser hardening
+## Batch 11 — archive, compression, metadata, and parser hardening — active
 
 Full audit of all parser-like boundaries.
 
 ### Archives
 
-Revalidate:
+Existing protections confirmed by the opening audit:
 
-- traversal;
-- absolute paths;
-- Windows drive paths;
-- UNC paths;
-- symlink/hardlink archive entries;
-- duplicate/conflicting entries;
+- traversal and null-byte rejection;
+- Unix absolute path rejection;
+- Windows drive-relative/absolute and UNC rejection;
+- archive symlink-entry rejection;
+- existing destination-symlink rejection;
 - entry-count limit;
 - per-entry uncompressed-size limit;
 - total expanded-size limit;
 - compression-ratio / zip-bomb defense;
-- destination containment after filesystem normalization;
-- cleanup on partial extraction failure.
+- validation occurs before native unzip as well as PHP extraction.
+
+Remaining archive work:
+
+- reject duplicate and canonically conflicting entry names before writing anything;
+- define portable collision semantics, including file/directory conflicts and Windows case-insensitive destination collisions;
+- reject unsupported Unix special-file entry types, not only symbolic links; ZIP extraction should materialize only regular files/directories;
+- carry validated expected uncompressed sizes into extraction and enforce actual streamed byte counts rather than trusting metadata alone;
+- revalidate containment/symlink state immediately before each filesystem write to narrow validation-to-write races;
+- ensure both `FileCompression` and `DirectoryOperations::unzip()` consume the same security-critical validation/extraction rules rather than maintaining divergent loops;
+- make local extraction failure cleanup deterministic so a partially extracted tree is not silently left as a successful-looking result;
+- keep remote extraction staging private and clean it on every exit path;
+- review native extraction so it preserves the same manifest/cleanup guarantees as the PHP path; if those guarantees cannot be enforced around an external unzip tool, native extraction must not claim equivalent hardened semantics;
+- audit compression input traversal so local source symlinks cannot cause out-of-root content inclusion or recursive loops unless an explicit safe policy exists.
 
 ### Metadata / image / format inspection
 
-- keep malware scan before deeper parsing where scanning is active;
-- bound bytes read for signature inspection;
-- avoid parsing more data than required;
-- ensure parser exceptions become stable Pathwise exceptions;
-- temporary inspection copies use private permissions and guaranteed cleanup.
+Audit and enforce:
+
+- malware scan remains before deeper parsing where scanning is active;
+- signature inspection reads only the bytes required by configured signatures;
+- MIME/image/format probes avoid reading or parsing more data than required;
+- parser warnings/exceptions become stable Pathwise exceptions rather than leaking backend details or warnings;
+- temporary inspection copies are private and deterministically cleaned;
+- mounted/remote localization does not create an unbounded in-memory parsing path.
 
 ### Serialization
 
-- Pathwise must never unserialize attacker-controlled input as part of validation;
-- serialization helpers must continue rejecting unsafe object/resource values where appropriate;
-- documentation must clearly distinguish serialization convenience from a safe untrusted-data format.
+Audit and enforce:
+
+- Pathwise never unserializes attacker-controlled data as part of upload/archive/metadata validation;
+- serialization convenience helpers reject unsafe object/resource values where appropriate;
+- deserialization must keep classes disabled and return stable errors for malformed/unsafe payloads;
+- documentation must state that PHP serialization is a trusted-data convenience, not an untrusted-data interchange/validation format.
+
+### Batch 11 acceptance
+
+Must include deterministic regression coverage for:
+
+- duplicate/canonical/case-fold/file-directory ZIP collisions;
+- special Unix archive entry types;
+- actual extracted bytes exceeding or differing from validated metadata where a deterministic fixture can express it;
+- destination symlink/containment recheck at write time;
+- partial extraction failure cleanup;
+- source symlink behavior during archive creation;
+- native/PHP extraction security equivalence or explicit capability rejection;
+- serialization object rejection / classes-disabled deserialization;
+- bounded signature/image/metadata inspection and stable parser errors.
 
 ---
 
@@ -570,13 +608,12 @@ Foundation should then:
 
 # Work order from this point
 
-1. **Batch 10** — queue lease/durability repair.
-2. **Batch 11** — archive/parser hardening.
-3. **Batch 12** — global/static API cleanup.
-4. **Batch 13** — remaining subsystem audit/hardening.
-5. **Batch 14** — complete documentation rebuild and migration guide.
-6. **Batch 15** — benchmarks/stress/final release gates.
-7. Release Pathwise 4.0, then complete Foundation Point 26.5 against the released floor.
+1. **Batch 11** — archive/parser hardening.
+2. **Batch 12** — global/static API cleanup.
+3. **Batch 13** — remaining subsystem audit/hardening.
+4. **Batch 14** — complete documentation rebuild and migration guide.
+5. **Batch 15** — benchmarks/stress/final release gates.
+6. Release Pathwise 4.0, then complete Foundation Point 26.5 against the released floor.
 
 ## Push discipline
 
