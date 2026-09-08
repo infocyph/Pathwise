@@ -19,10 +19,18 @@ final readonly class PartitionedAuditSink implements AuditSink
         $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
         $partition = $now->format('Y/m/d/H');
         $name = sprintf('%s-%s.json', $now->format('Ymd\THis.u\Z'), bin2hex(random_bytes(12)));
-        $path = PathHelper::join($this->directory, $partition, $name);
+        $partitionPath = PathHelper::join($this->directory, $partition);
+        $path = PathHelper::join($partitionPath, $name);
 
         try {
-            FlysystemHelper::write($path, json_encode($record, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
+            if (!FlysystemHelper::directoryExists($partitionPath)) {
+                FlysystemHelper::createDirectory($partitionPath, ['visibility' => 'private']);
+            }
+            FlysystemHelper::write(
+                $path,
+                json_encode($record, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
+                ['visibility' => 'private'],
+            );
         } catch (\Throwable $exception) {
             throw new AuditException("Unable to write partitioned audit record: {$path}", 0, $exception);
         }
