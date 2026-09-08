@@ -58,7 +58,33 @@ test('native adapters return typed execution results', function () {
         ->and($result->stderr)->toBeArray();
 });
 
+test('bounded native execution is capability based instead of emulated', function () {
+    if (PHP_OS_FAMILY === 'Windows') {
+        $result = NativeCommandRunner::run([PHP_BINARY, '-r', 'echo "unused";']);
+
+        expect(NativeCommandRunner::supportsBoundedExecution())->toBeFalse()
+            ->and($result->success)->toBeFalse()
+            ->and($result->failure)->toBe(NativeExecutionFailure::UNSUPPORTED)
+            ->and(NativeOperationsAdapter::canUseNativeFileCopy())->toBeFalse()
+            ->and(NativeOperationsAdapter::canUseNativeDirectoryCopy())->toBeFalse()
+            ->and(NativeOperationsAdapter::canUseNativeSearch())->toBeFalse()
+            ->and(NativeOperationsAdapter::canUseNativeZipCompression())->toBeFalse()
+            ->and(NativeOperationsAdapter::canUseNativeZipDecompression())->toBeFalse();
+
+        return;
+    }
+
+    expect(NativeCommandRunner::supportsBoundedExecution())->toBeTrue();
+});
+
 test('native command runner captures stdout and stderr without shell execution', function () {
+    if (!NativeCommandRunner::supportsBoundedExecution()) {
+        expect(NativeCommandRunner::run([PHP_BINARY, '-r', 'echo "unused";'])->failure)
+            ->toBe(NativeExecutionFailure::UNSUPPORTED);
+
+        return;
+    }
+
     $result = NativeCommandRunner::run([
         PHP_BINARY,
         '-r',
@@ -74,6 +100,13 @@ test('native command runner captures stdout and stderr without shell execution',
 });
 
 test('native command runner terminates commands that exceed the deadline', function () {
+    if (!NativeCommandRunner::supportsBoundedExecution()) {
+        expect(NativeCommandRunner::run([PHP_BINARY, '-r', 'echo "unused";'])->failure)
+            ->toBe(NativeExecutionFailure::UNSUPPORTED);
+
+        return;
+    }
+
     $started = microtime(true);
     $result = NativeCommandRunner::run(
         [PHP_BINARY, '-r', 'usleep(5000000);'],
@@ -92,6 +125,13 @@ test('native command runner terminates commands that exceed the deadline', funct
 });
 
 test('native command runner bounds stdout', function () {
+    if (!NativeCommandRunner::supportsBoundedExecution()) {
+        expect(NativeCommandRunner::run([PHP_BINARY, '-r', 'echo "unused";'])->failure)
+            ->toBe(NativeExecutionFailure::UNSUPPORTED);
+
+        return;
+    }
+
     $result = NativeCommandRunner::run(
         [PHP_BINARY, '-r', 'fwrite(STDOUT, str_repeat("x", 8192));'],
         limits: new NativeExecutionLimits(
@@ -109,6 +149,13 @@ test('native command runner bounds stdout', function () {
 });
 
 test('native command runner bounds stderr', function () {
+    if (!NativeCommandRunner::supportsBoundedExecution()) {
+        expect(NativeCommandRunner::run([PHP_BINARY, '-r', 'echo "unused";'])->failure)
+            ->toBe(NativeExecutionFailure::UNSUPPORTED);
+
+        return;
+    }
+
     $result = NativeCommandRunner::run(
         [PHP_BINARY, '-r', 'fwrite(STDERR, str_repeat("e", 8192));'],
         limits: new NativeExecutionLimits(
@@ -126,6 +173,13 @@ test('native command runner bounds stderr', function () {
 });
 
 test('native command runner drains stdout and stderr concurrently without deadlock', function () {
+    if (!NativeCommandRunner::supportsBoundedExecution()) {
+        expect(NativeCommandRunner::run([PHP_BINARY, '-r', 'echo "unused";'])->failure)
+            ->toBe(NativeExecutionFailure::UNSUPPORTED);
+
+        return;
+    }
+
     $script = <<<'PHP'
 for ($i = 0; $i < 32; $i++) {
     fwrite(STDOUT, str_repeat('o', 4096));
@@ -150,6 +204,13 @@ PHP;
 });
 
 test('native command runner exposes non-zero exit codes as typed failures', function () {
+    if (!NativeCommandRunner::supportsBoundedExecution()) {
+        expect(NativeCommandRunner::run([PHP_BINARY, '-r', 'echo "unused";'])->failure)
+            ->toBe(NativeExecutionFailure::UNSUPPORTED);
+
+        return;
+    }
+
     $result = NativeCommandRunner::run([PHP_BINARY, '-r', 'exit(7);']);
 
     expect($result->success)->toBeFalse()

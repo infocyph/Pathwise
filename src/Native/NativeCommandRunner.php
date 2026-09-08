@@ -23,6 +23,10 @@ final class NativeCommandRunner
 
     public static function commandExists(string $command): bool
     {
+        if (!self::supportsBoundedExecution()) {
+            return false;
+        }
+
         $cacheKey = PHP_OS_FAMILY . ':' . strtolower($command);
         if (array_key_exists($cacheKey, self::$executableCache)) {
             return self::$executableCache[$cacheKey];
@@ -39,16 +43,71 @@ final class NativeCommandRunner
         ?string $workingDirectory = null,
         ?NativeExecutionLimits $limits = null,
     ): NativeExecutionResult {
+        if (!self::supportsBoundedExecution()) {
+            return self::unsupportedResult();
+        }
+
         $limits ??= new NativeExecutionLimits();
         if (!self::isValidCommand($command)) {
             return self::startFailedResult('', 'No valid command was provided.');
         }
 
         $displayCommand = self::displayCommand($command);
+        $pipes = [];
+        $process = self::startProcess($command, $workingDirectory, $pipes);
+        if (!is_resource($process)) {
+            return self::startFailedResult($displayCommand, 'Unable to start native command.');
+        }
 
-        return PHP_OS_FAMILY === 'Windows'
-            ? self::runWithOutputFiles($command, $workingDirectory, $limits, $displayCommand)
-            : self::runWithPipes($command, $workingDirectory, $limits, $displayCommand);
+        self::closePipe($pipes[0] ?? null);
+        $stdout = $pipes[1] ?? null;
+        $stderr = $pipes[2] ?? null;
+        if (!is_resource($stdout) || !is_resource($stderr)) {
+            self::closePipe($stdout);
+            self::closePipe($stderr);
+            self::terminateImmediately($process);
+            proc_close($process);
+
+            return self::startFailedResult($displayCommand, 'Unable to initialize native command output pipes.');
+        }
+
+        if (!stream_set_blocking($stdout, false) || !stream_set_blocking($stderr, false)) {
+            self::closePipe($stdout);
+            self::closePipe($stderr);
+            self::terminateImmediately($process);
+            proc_close($process);
+
+            return self::startFailedResult($displayCommand, 'Unable to configure bounded native command output pipes.');
+        }
+
+        $stdoutBuffer = '';
+        $stderrBuffer = '';
+        [$failure, $statusExitCode] = self::monitorProcess(
+            $process,
+            $stdout,
+            $stderr,
+            $limits,
+            $stdoutBuffer,
+            $stderrBuffer,
+        );
+
+        self::closePipe($stdout);
+        self::closePipe($stderr);
+        $closeExitCode = proc_close($process);
+
+        return self::buildResult(
+            $displayCommand,
+            $failure,
+            $statusExitCode,
+            $closeExitCode,
+            $stdoutBuffer,
+            $stderrBuffer,
+        );
+    }
+
+    public static function supportsBoundedExecution(): bool
+    {
+        return PHP_OS_FAMILY !== 'Windows';
     }
 
     private static function buildResult(
@@ -78,19 +137,6 @@ final class NativeCommandRunner
         );
     }
 
-    /** @param array{directory: string, stdout: string, stderr: string} $paths */
-    private static function cleanupOutputDirectory(array $paths): void
-    {
-        foreach ([$paths['stdout'], $paths['stderr']] as $path) {
-            if (is_file($path)) {
-                self::runSilently(static fn(): bool => unlink($path));
-            }
-        }
-        if (is_dir($paths['directory'])) {
-            self::runSilently(static fn(): bool => rmdir($paths['directory']));
-        }
-    }
-
     private static function closePipe(mixed $pipe): void
     {
         if (is_resource($pipe)) {
@@ -107,7 +153,7 @@ final class NativeCommandRunner
     {
         while (is_resource($pipe) && !feof($pipe)) {
             $chunk = fread($pipe, self::READ_CHUNK_BYTES);
-            if ($chunk === false || $chunk === '') {
+            if (!is_string($chunk) || $chunk === '') {
                 return;
             }
         }
@@ -131,7 +177,8 @@ final class NativeCommandRunner
     ): ?NativeExecutionFailure {
         while (is_resource($pipe) && !feof($pipe)) {
             $remaining = $limit - $bytes;
-            $chunk = fread($pipe, min(self::READ_CHUNK_BYTES, max(1, $remaining + 1)));
+            $readLength = min(self::READ_CHUNK_BYTES, max(1, $remaining + 1));
+            $chunk = fread($pipe, $readLength);
             if ($chunk === false) {
                 return NativeExecutionFailure::IO_ERROR;
             }
@@ -159,36 +206,13 @@ final class NativeCommandRunner
     /** @return \Generator<int, string> */
     private static function executableCandidates(string $command, string $path): \Generator
     {
-        $extensions = PHP_OS_FAMILY === 'Windows' ? self::windowsExecutableExtensions() : [''];
         foreach (explode(PATH_SEPARATOR, $path) as $directory) {
             if ($directory === '') {
                 continue;
             }
-            foreach ($extensions as $extension) {
-                yield rtrim($directory, '/\\') . DIRECTORY_SEPARATOR . $command . $extension;
-            }
-        }
-    }
 
-    /** @param array{directory: string, stdout: string, stderr: string} $paths */
-    private static function fileCaptureFailure(array $paths, NativeExecutionLimits $limits): ?NativeExecutionFailure
-    {
-        clearstatcache(true, $paths['stdout']);
-        clearstatcache(true, $paths['stderr']);
-        $stdoutSize = self::runSilently(static fn(): int|false => filesize($paths['stdout']));
-        $stderrSize = self::runSilently(static fn(): int|false => filesize($paths['stderr']));
-
-        if (!is_int($stdoutSize) || !is_int($stderrSize)) {
-            return NativeExecutionFailure::IO_ERROR;
+            yield rtrim($directory, '/\\') . DIRECTORY_SEPARATOR . $command;
         }
-        if ($stdoutSize > $limits->stdoutBytes) {
-            return NativeExecutionFailure::STDOUT_LIMIT;
-        }
-        if ($stderrSize > $limits->stderrBytes) {
-            return NativeExecutionFailure::STDERR_LIMIT;
-        }
-
-        return null;
     }
 
     /** @param list<string> $command */
@@ -198,7 +222,13 @@ final class NativeCommandRunner
             return false;
         }
 
-        return !array_any($command, static fn(string $argument): bool => str_contains($argument, "\0"));
+        foreach ($command as $argument) {
+            if (str_contains($argument, "\0")) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /** @return list<string> */
@@ -211,7 +241,7 @@ final class NativeCommandRunner
 
         $lines = preg_split('/\R/', $normalized);
 
-        return $lines === false ? [] : $lines;
+        return $lines === false ? [] : array_values($lines);
     }
 
     private static function locateExecutable(string $command): bool
@@ -220,15 +250,16 @@ final class NativeCommandRunner
             return false;
         }
         if (str_contains($command, '/') || str_contains($command, '\\')) {
-            return is_file($command) && (PHP_OS_FAMILY === 'Windows' || is_executable($command));
+            return is_file($command) && is_executable($command);
         }
 
         $path = getenv('PATH');
         if (!is_string($path) || $path === '') {
             return false;
         }
+
         foreach (self::executableCandidates($command, $path) as $candidate) {
-            if (is_file($candidate) && (PHP_OS_FAMILY === 'Windows' || is_executable($candidate))) {
+            if (is_file($candidate) && is_executable($candidate)) {
                 return true;
             }
         }
@@ -238,40 +269,11 @@ final class NativeCommandRunner
 
     /**
      * @param resource $process
-     * @param array{directory: string, stdout: string, stderr: string} $paths
-     * @return array{NativeExecutionFailure|null, int}
-     */
-    private static function monitorFileProcess(
-        mixed $process,
-        array $paths,
-        NativeExecutionLimits $limits,
-    ): array {
-        $deadline = self::deadlineFromNow($limits->timeoutSeconds);
-
-        while (true) {
-            $failure = self::fileCaptureFailure($paths, $limits);
-            $status = proc_get_status($process);
-            if (!$status['running']) {
-                return [$failure ?? self::fileCaptureFailure($paths, $limits), $status['exitcode']];
-            }
-            if ($failure !== null) {
-                return [$failure, self::terminateFileProcess($process, $limits)];
-            }
-            if (hrtime(true) >= $deadline) {
-                return [NativeExecutionFailure::TIMEOUT, self::terminateFileProcess($process, $limits)];
-            }
-
-            usleep($limits->pollIntervalMicroseconds);
-        }
-    }
-
-    /**
-     * @param resource $process
      * @param resource $stdout
      * @param resource $stderr
      * @return array{NativeExecutionFailure|null, int}
      */
-    private static function monitorPipeProcess(
+    private static function monitorProcess(
         mixed $process,
         mixed $stdout,
         mixed $stderr,
@@ -298,61 +300,45 @@ final class NativeCommandRunner
                 NativeExecutionFailure::STDERR_LIMIT,
             );
             $status = proc_get_status($process);
-            if (!$status['running']) {
-                if ($failure === null) {
-                    $failure = self::drainPipe(
-                        $stdout,
-                        $stdoutBuffer,
-                        $stdoutBytes,
-                        $limits->stdoutBytes,
-                        NativeExecutionFailure::STDOUT_LIMIT,
-                    ) ?? self::drainPipe(
-                        $stderr,
-                        $stderrBuffer,
-                        $stderrBytes,
-                        $limits->stderrBytes,
-                        NativeExecutionFailure::STDERR_LIMIT,
-                    );
-                }
+            if (!is_array($status)) {
+                return [
+                    $failure ?? NativeExecutionFailure::IO_ERROR,
+                    self::terminateBounded($process, $stdout, $stderr, $limits),
+                ];
+            }
 
-                return [$failure, $status['exitcode']];
+            if (!$status['running']) {
+                $finalFailure = $failure ?? self::drainPipe(
+                    $stdout,
+                    $stdoutBuffer,
+                    $stdoutBytes,
+                    $limits->stdoutBytes,
+                    NativeExecutionFailure::STDOUT_LIMIT,
+                ) ?? self::drainPipe(
+                    $stderr,
+                    $stderrBuffer,
+                    $stderrBytes,
+                    $limits->stderrBytes,
+                    NativeExecutionFailure::STDERR_LIMIT,
+                );
+                $exitCode = is_int($status['exitcode']) ? $status['exitcode'] : -1;
+
+                return [$finalFailure, $exitCode];
             }
+
             if ($failure !== null) {
-                return [$failure, self::terminatePipeProcess($process, $stdout, $stderr, $limits)];
+                return [$failure, self::terminateBounded($process, $stdout, $stderr, $limits)];
             }
+
             if (hrtime(true) >= $deadline) {
-                return [NativeExecutionFailure::TIMEOUT, self::terminatePipeProcess($process, $stdout, $stderr, $limits)];
+                return [
+                    NativeExecutionFailure::TIMEOUT,
+                    self::terminateBounded($process, $stdout, $stderr, $limits),
+                ];
             }
 
             usleep($limits->pollIntervalMicroseconds);
         }
-    }
-
-    private static function outputFileContents(string $path, int $limit): string
-    {
-        $contents = file_get_contents($path, false, null, 0, $limit);
-
-        return is_string($contents) ? $contents : '';
-    }
-
-    /** @return array{directory: string, stdout: string, stderr: string}|null */
-    private static function prepareOutputFiles(): ?array
-    {
-        try {
-            $directory = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'pathwise-native-' . bin2hex(random_bytes(16));
-        } catch (\Throwable) {
-            return null;
-        }
-
-        if (!self::runSilently(static fn(): bool => mkdir($directory, 0700))) {
-            return null;
-        }
-
-        return [
-            'directory' => $directory,
-            'stdout' => $directory . DIRECTORY_SEPARATOR . 'stdout.log',
-            'stderr' => $directory . DIRECTORY_SEPARATOR . 'stderr.log',
-        ];
     }
 
     private static function resolveExitCode(
@@ -382,150 +368,16 @@ final class NativeCommandRunner
         }
     }
 
-    /** @param list<string> $command */
-    private static function runWithOutputFiles(
-        array $command,
-        ?string $workingDirectory,
-        NativeExecutionLimits $limits,
-        string $displayCommand,
-    ): NativeExecutionResult {
-        $paths = self::prepareOutputFiles();
-        if ($paths === null) {
-            return self::startFailedResult($displayCommand, 'Unable to allocate native command output files.');
-        }
+    /**
+     * @param list<string> $command
+     * @param array<int, resource> $pipes
+     * @return resource|false
+     */
+    private static function startProcess(array $command, ?string $workingDirectory, array &$pipes): mixed
+    {
+        set_error_handler(static fn(): bool => true);
 
         try {
-            $pipes = [];
-            $process = self::startFileProcess($command, $workingDirectory, $paths, $pipes);
-            if (!is_resource($process)) {
-                return self::startFailedResult($displayCommand, 'Unable to start native command.');
-            }
-
-            self::closePipe($pipes[0] ?? null);
-            [$failure, $statusExitCode] = self::monitorFileProcess($process, $paths, $limits);
-            $closeExitCode = proc_close($process);
-
-            return self::buildResult(
-                $displayCommand,
-                $failure,
-                $statusExitCode,
-                $closeExitCode,
-                self::outputFileContents($paths['stdout'], $limits->stdoutBytes),
-                self::outputFileContents($paths['stderr'], $limits->stderrBytes),
-            );
-        } finally {
-            self::cleanupOutputDirectory($paths);
-        }
-    }
-
-    /** @param list<string> $command */
-    private static function runWithPipes(
-        array $command,
-        ?string $workingDirectory,
-        NativeExecutionLimits $limits,
-        string $displayCommand,
-    ): NativeExecutionResult {
-        $pipes = [];
-        $process = self::startPipeProcess($command, $workingDirectory, $pipes);
-        if (!is_resource($process)) {
-            return self::startFailedResult($displayCommand, 'Unable to start native command.');
-        }
-
-        self::closePipe($pipes[0] ?? null);
-        $stdout = $pipes[1] ?? null;
-        $stderr = $pipes[2] ?? null;
-        if (!is_resource($stdout) || !is_resource($stderr)) {
-            self::closePipe($stdout);
-            self::closePipe($stderr);
-            self::terminateImmediately($process);
-            proc_close($process);
-
-            return self::startFailedResult($displayCommand, 'Unable to initialize native command output pipes.');
-        }
-        if (!stream_set_blocking($stdout, false) || !stream_set_blocking($stderr, false)) {
-            self::closePipe($stdout);
-            self::closePipe($stderr);
-            self::terminateImmediately($process);
-            proc_close($process);
-
-            return self::startFailedResult($displayCommand, 'Unable to configure native command output pipes.');
-        }
-
-        $stdoutBuffer = '';
-        $stderrBuffer = '';
-        [$failure, $statusExitCode] = self::monitorPipeProcess(
-            $process,
-            $stdout,
-            $stderr,
-            $limits,
-            $stdoutBuffer,
-            $stderrBuffer,
-        );
-        self::closePipe($stdout);
-        self::closePipe($stderr);
-        $closeExitCode = proc_close($process);
-
-        return self::buildResult(
-            $displayCommand,
-            $failure,
-            $statusExitCode,
-            $closeExitCode,
-            $stdoutBuffer,
-            $stderrBuffer,
-        );
-    }
-
-    private static function startFailedResult(string $displayCommand, string $message): NativeExecutionResult
-    {
-        return new NativeExecutionResult(
-            false,
-            $displayCommand,
-            self::EXIT_START_FAILED,
-            [$message],
-            NativeExecutionFailure::START_FAILED,
-        );
-    }
-
-    /**
-     * @param list<string> $command
-     * @param array{directory: string, stdout: string, stderr: string} $paths
-     * @param array<int, resource> $pipes
-     * @return resource|false
-     */
-    private static function startFileProcess(
-        array $command,
-        ?string $workingDirectory,
-        array $paths,
-        array &$pipes,
-    ): mixed {
-        return self::runSilently(static function () use ($command, $workingDirectory, $paths, &$pipes): mixed {
-            try {
-                return proc_open(
-                    $command,
-                    [
-                        0 => ['pipe', 'r'],
-                        1 => ['file', $paths['stdout'], 'wb'],
-                        2 => ['file', $paths['stderr'], 'wb'],
-                    ],
-                    $pipes,
-                    $workingDirectory,
-                    null,
-                    ['bypass_shell' => true],
-                );
-            } catch (\Throwable) {
-                return false;
-            }
-        });
-    }
-
-    /**
-     * @param list<string> $command
-     * @param array<int, resource> $pipes
-     * @return resource|false
-     */
-    private static function startPipeProcess(array $command, ?string $workingDirectory, array &$pipes): mixed
-    {
-        return self::runSilently(static function () use ($command, $workingDirectory, &$pipes): mixed {
             try {
                 return proc_open(
                     $command,
@@ -542,21 +394,38 @@ final class NativeCommandRunner
             } catch (\Throwable) {
                 return false;
             }
-        });
+        } finally {
+            restore_error_handler();
+        }
+    }
+
+    private static function startFailedResult(string $displayCommand, string $message): NativeExecutionResult
+    {
+        return new NativeExecutionResult(
+            false,
+            $displayCommand,
+            self::EXIT_START_FAILED,
+            [$message],
+            NativeExecutionFailure::START_FAILED,
+        );
     }
 
     /** @param resource $process */
-    private static function terminateFileProcess(mixed $process, NativeExecutionLimits $limits): int
-    {
+    private static function terminateBounded(
+        mixed $process,
+        mixed $stdout,
+        mixed $stderr,
+        NativeExecutionLimits $limits,
+    ): int {
         self::runSilently(static fn(): bool => proc_terminate($process));
-        $exitCode = self::waitForFileProcessExit($process, $limits);
-        if ($exitCode >= 0) {
+        $exitCode = self::waitForExit($process, $stdout, $stderr, $limits);
+        if ($exitCode !== null) {
             return $exitCode;
         }
 
         self::runSilently(static fn(): bool => proc_terminate($process, 9));
 
-        return self::waitForFileProcessExit($process, $limits);
+        return self::waitForExit($process, $stdout, $stderr, $limits) ?? -1;
     }
 
     /** @param resource $process */
@@ -564,92 +433,45 @@ final class NativeCommandRunner
     {
         self::runSilently(static fn(): bool => proc_terminate($process));
         $status = proc_get_status($process);
-        if ($status['running']) {
+        if (is_array($status) && $status['running']) {
             self::runSilently(static fn(): bool => proc_terminate($process, 9));
         }
     }
 
-    /**
-     * @param resource $process
-     * @param resource $stdout
-     * @param resource $stderr
-     */
-    private static function terminatePipeProcess(
-        mixed $process,
-        mixed $stdout,
-        mixed $stderr,
-        NativeExecutionLimits $limits,
-    ): int {
-        self::runSilently(static fn(): bool => proc_terminate($process));
-        $exitCode = self::waitForPipeProcessExit($process, $stdout, $stderr, $limits);
-        if ($exitCode >= 0) {
-            return $exitCode;
-        }
-
-        self::runSilently(static fn(): bool => proc_terminate($process, 9));
-
-        return self::waitForPipeProcessExit($process, $stdout, $stderr, $limits);
+    private static function unsupportedResult(): NativeExecutionResult
+    {
+        return new NativeExecutionResult(
+            false,
+            '',
+            self::EXIT_START_FAILED,
+            ['Bounded native execution is unavailable on this platform.'],
+            NativeExecutionFailure::UNSUPPORTED,
+        );
     }
 
     /** @param resource $process */
-    private static function waitForFileProcessExit(mixed $process, NativeExecutionLimits $limits): int
-    {
-        $deadline = self::deadlineFromNow($limits->terminationGraceSeconds);
-
-        do {
-            $status = proc_get_status($process);
-            if (!$status['running']) {
-                return $status['exitcode'];
-            }
-
-            usleep($limits->pollIntervalMicroseconds);
-        } while (hrtime(true) < $deadline);
-
-        return -1;
-    }
-
-    /**
-     * @param resource $process
-     * @param resource $stdout
-     * @param resource $stderr
-     */
-    private static function waitForPipeProcessExit(
+    private static function waitForExit(
         mixed $process,
         mixed $stdout,
         mixed $stderr,
         NativeExecutionLimits $limits,
-    ): int {
+    ): ?int {
         $deadline = self::deadlineFromNow($limits->terminationGraceSeconds);
 
         do {
             self::discardAvailable($stdout);
             self::discardAvailable($stderr);
             $status = proc_get_status($process);
+            if (!is_array($status)) {
+                return null;
+            }
             if (!$status['running']) {
-                return $status['exitcode'];
+                return is_int($status['exitcode']) ? $status['exitcode'] : null;
             }
 
             usleep($limits->pollIntervalMicroseconds);
         } while (hrtime(true) < $deadline);
 
-        return -1;
-    }
-
-    /** @return list<string> */
-    private static function windowsExecutableExtensions(): array
-    {
-        $pathExtensions = getenv('PATHEXT');
-        if (!is_string($pathExtensions) || $pathExtensions === '') {
-            return ['.exe', '.com', '.bat', '.cmd'];
-        }
-
-        $extensions = [];
-        foreach (explode(PATH_SEPARATOR, $pathExtensions) as $extension) {
-            if ($extension !== '') {
-                $extensions[] = strtolower($extension);
-            }
-        }
-
-        return $extensions === [] ? ['.exe', '.com', '.bat', '.cmd'] : $extensions;
+        return null;
     }
 }
