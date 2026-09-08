@@ -1,21 +1,26 @@
 Storage Capability Contract
 ===========================
 
-Pathwise distinguishes the path syntax from the capability behind it. A mounted
-``local`` adapter is still adapter-backed: Pathwise does not unwrap it and call
-native PHP functions against its internal root.
+Pathwise separates **path syntax**, **runtime topology**, and **storage
+capability**. ``StorageContext`` is the preferred instance-scoped topology for
+applications and persistent runtimes. Low-level ``FlysystemHelper``
+default/mount routing remains available for standalone utility use.
+
+A local Flysystem adapter is still adapter-backed when addressed through a
+context/default/mount. Pathwise does not unwrap the adapter and silently claim
+native filesystem guarantees that the logical storage surface cannot promise.
 
 Compatibility Matrix
 --------------------
 
 .. list-table::
    :header-rows: 1
-   :widths: 34 20 20 26
+   :widths: 34 20 23 23
 
    * - Capability
      - Direct local path
-     - Default Flysystem path
-     - Mounted scheme path
+     - StorageContext / adapter path
+     - Low-level default/mount path
    * - Read/write/stream/copy/visibility
      - Supported
      - Adapter-dependent
@@ -30,8 +35,8 @@ Compatibility Matrix
      - Adapter-dependent
    * - ZIP creation/extraction
      - Supported
-     - Streamed through local staging
-     - Streamed through local staging
+     - Streamed through bounded local staging where needed
+     - Streamed through bounded local staging where needed
    * - Native append
      - Supported
      - Rejected
@@ -46,14 +51,10 @@ Compatibility Matrix
      - Rejected
    * - POSIX modes, owner, and group
      - Platform-dependent
-     - Rejected
-     - Rejected
-   * - Direct locks/handles and shell search
+     - Rejected as a portable storage guarantee
+     - Rejected as a portable storage guarantee
+   * - Direct locks/handles and native tools
      - Platform-dependent
-     - Rejected
-     - Rejected
-   * - Native process execution
-     - Tool-dependent
      - Rejected
      - Rejected
 
@@ -61,55 +62,79 @@ Compatibility Matrix
 the requested metadata, checksum, visibility, URL, or write operation. A
 read-only adapter, for example, remains readable but rejects mutation.
 
+Runtime Topology
+----------------
+
+Use ``StorageContext`` when logical names belong to an application/runtime:
+
+.. code-block:: php
+
+   use Infocyph\Pathwise\Storage\StorageContext;
+
+   $storage = new StorageContext([
+       'files' => ['driver' => 'local', 'root' => '/srv/app/files'],
+   ], 'files');
+
+   [$filesystem, $location] = $storage->resolve('files://reports/a.csv');
+
+Contexts own their filesystem instances and custom driver factories. Two
+contexts may reuse the same logical name without process-global cross-talk.
+Inject the context into ``UploadProcessor`` or ``DownloadProcessor`` before
+configuring relative or ``name://`` paths.
+
 Atomicity and Transactions
 --------------------------
 
-``SafeFileWriter::enableAtomicWrite()`` stages a local file and replaces the
-destination at close time. Local same-filesystem rename is atomic on supported
-operating systems; a mounted destination requires a final adapter write and is
-not claimed to be atomic.
+``SafeFileWriter::enableAtomicWrite()`` is a **direct-local guarantee**. It
+stages in the destination directory and requires the final local rename to
+succeed. Adapter-backed destinations do not pretend that a final object write
+is an atomic rename; request normal staged writing instead.
 
-``FileOperations`` transactions are local-only. They use structured journal
-entries and disk-backed copies, restore file existence/content and permission
-bits, restore copy destinations, and reset the object's path after a rename
-rollback. Transactions are process-local, reject nesting, and do not provide
-database isolation. Commit and rollback outside an active transaction throw
-``TransactionStateException``.
+``FileOperations`` transactions are direct-local only. They use structured
+journal entries and disk-backed private rollback copies, restore file
+existence/content and permission bits, restore copy destinations, and reset the
+object path after rename rollback. Transactions are process-local, reject
+nesting, and do not provide database isolation. Invalid commit/rollback
+lifecycle raises ``TransactionStateException`` and rollback failure is explicit.
 
 Locking and Append
 ------------------
 
 Direct locks and ``append()`` operate only on local paths. Local append uses
-``FILE_APPEND`` and optional ``LOCK_EX`` without reading the existing file.
-Flysystem does not define portable append semantics, so mounted callers must
-choose ``appendEmulated()`` and accept a complete object read/replacement. Audit
-logging follows the same rule: local JSONL is locked append; remote sinks use
-separate event objects or application callbacks.
+native append semantics and optional exclusive locking without reading the
+existing file. Flysystem does not define portable append semantics, so
+adapter-backed callers must choose ``appendEmulated()`` and accept a complete
+object read/replacement.
+
+Audit logging follows the same capability rule: local JSONL uses locked append;
+remote/application pipelines should use ``PartitionedAuditSink`` or
+``CallbackAuditSink`` rather than hiding whole-object rewrites.
 
 ZIP Extraction
 --------------
 
-``FileCompression::decompress()``, ``batchExtractFiles()``, and
-``DirectoryOperations::unzip()`` share one validator. Validation completes for
-the entire archive before extraction and rejects absolute/drive paths, null
-bytes, traversal, root escape, ZIP symbolic links, and existing destination
-symlink chains. Remote archives and destinations are localized/streamed only
-after applying the same validation. Entry-count, per-entry uncompressed-size,
-total uncompressed-size, and compression-ratio limits are enforced before any
-destination mutation. Remote compression stages each entry to bounded temporary
-disk and registers the staged file with ``ZipArchive``; it does not load an
-entire remote entry into one PHP string.
+``FileCompression::decompress()``, selective extraction, and
+``DirectoryOperations::unzip()`` share the hardened archive validation path.
+The complete manifest is validated before publication and rejects traversal,
+absolute/drive/UNC paths, null bytes, canonical/case-fold collisions, symbolic
+links, unsupported special entries, and destination breakout.
+
+Entry-count, per-entry expanded-size, total expanded-size, compression-ratio,
+and actual streamed-byte bounds are enforced. Containment and destination
+symlink state are revalidated at publication time. Adapter-backed archives and
+destinations use Pathwise-owned local staging only where necessary and clean it
+deterministically.
 
 Synchronization
 ---------------
 
 ``syncTo()`` consumes source listings lazily and returns ``SyncReport``. Progress
-events report ``total: null`` when obtaining a total would require buffering or
-a second traversal. Comparison strategies are:
+events may report ``total: null`` when obtaining a total would require buffering
+or a second traversal. Comparison strategies are:
 
-* ``SIZE_AND_MODIFIED_TIME``: default for two direct local paths.
-* ``SIZE``: default when either side is adapter-backed.
-* ``CHECKSUM``: explicit integrity-first comparison with extra reads/requests.
+* ``SIZE_AND_MODIFIED_TIME``: default for two direct local paths;
+* ``SIZE``: default when either side is adapter-backed;
+* ``CHECKSUM``: explicit integrity-first comparison with extra reads/requests;
 * ``ALWAYS_COPY``: overwrite every source file.
 
 Orphan deletion necessarily buffers and reverse-sorts the destination listing
@@ -118,20 +143,24 @@ so children are deleted before parents.
 Native Execution
 ----------------
 
-``PHP`` never starts native tools. ``AUTO`` may attempt an available tool and
-fall back to PHP. ``NATIVE`` validates tool availability and local paths, then
-throws ``NativeExecutionException`` on any native failure without falling back.
-Command arguments are escaped, and ``NativeExecutionResult`` retains command,
-exit code, and output. Actual tools vary by platform (``cp``, ``rsync``,
-``zip``/``unzip`` on Unix-like systems; ``cmd``, ``robocopy``, and PowerShell on
-Windows).
+``PHP`` never starts native tools. ``AUTO`` may use a supported native
+capability and otherwise falls back to PHP. ``NATIVE`` requires the capability
+and fails explicitly with ``NativeExecutionException`` when it cannot be used.
+
+Native execution is direct-local only and is bounded by
+``NativeExecutionLimits``: finite timeout, stdout/stderr caps, termination grace,
+and polling interval. Pathwise invokes argument vectors rather than accepting
+caller shell fragments. See :doc:`native-execution`.
 
 Performance Characteristics
 ---------------------------
 
-Streams are used for cross-filesystem file copy, downloads, writes, checksums,
-and file-compression extraction. Directory listings remain lazy except where
-ordering is required. Transaction backups consume temporary disk proportional
-to the original local files. Remote emulated append consumes bandwidth and
-memory proportional to the complete object, so partitioned writes are preferred
-for logs and event workloads.
+Streams are used for cross-filesystem copy, upload/download transfer, checksums,
+and archive publication/extraction. Directory listings remain lazy except where
+ordering or orphan deletion requires materialization. Transaction rollback state
+consumes temporary disk proportional to the affected local files. Remote
+emulated append consumes bandwidth and memory proportional to the full object,
+so partitioned writes are preferred for logs and event workloads.
+
+See :doc:`performance-portability` for the release workload and scaling
+recommendations.
