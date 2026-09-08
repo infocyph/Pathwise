@@ -6,7 +6,6 @@ namespace Infocyph\Pathwise\Queue;
 
 use Infocyph\Pathwise\Exceptions\QueueException;
 use Infocyph\Pathwise\Results\QueueProcessResult;
-
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use InvalidArgumentException;
@@ -49,10 +48,8 @@ final readonly class FileJobQueue
         ) {
             throw new InvalidArgumentException('Queue limits and reservation timeout must be positive integers.');
         }
-        $directory = dirname($this->queueFilePath);
-        if (!FlysystemHelper::directoryExists($directory)) {
-            FlysystemHelper::createDirectory($directory);
-        }
+
+        $this->ensurePrivateQueueDirectory();
         $this->initializeLocalQueue();
     }
 
@@ -265,12 +262,24 @@ final readonly class FileJobQueue
         return $encoded;
     }
 
+    private function ensurePrivateQueueDirectory(): void
+    {
+        $directory = dirname($this->queueFilePath);
+        if (is_dir($directory)) {
+            return;
+        }
+
+        if (!mkdir($directory, 0700, true) && !is_dir($directory)) {
+            throw new QueueException("Unable to create queue directory: {$directory}");
+        }
+        if (!chmod($directory, 0700)) {
+            throw new QueueException("Unable to secure queue directory: {$directory}");
+        }
+    }
+
     private function initializeLocalQueue(): void
     {
-        $stream = fopen($this->queueFilePath, 'c+b');
-        if (!is_resource($stream)) {
-            throw new QueueException("Unable to initialize queue file: {$this->queueFilePath}");
-        }
+        $stream = $this->openQueueStream('c+b', 'initialize');
 
         try {
             if (!flock($stream, LOCK_EX)) {
@@ -283,7 +292,9 @@ final readonly class FileJobQueue
             }
 
             $this->writeFully($stream, $this->encodeQueueData($this->emptyQueueData()));
-            fflush($stream);
+            if (!fflush($stream)) {
+                throw new QueueException("Unable to flush queue file: {$this->queueFilePath}");
+            }
         } finally {
             flock($stream, LOCK_UN);
             fclose($stream);
@@ -309,10 +320,7 @@ final readonly class FileJobQueue
      */
     private function mutateQueueData(callable $mutation): mixed
     {
-        $stream = fopen($this->queueFilePath, 'c+b');
-        if (!is_resource($stream)) {
-            throw new QueueException("Unable to open queue file: {$this->queueFilePath}");
-        }
+        $stream = $this->openQueueStream('c+b', 'open');
 
         try {
             if (!flock($stream, LOCK_EX)) {
@@ -439,6 +447,22 @@ final readonly class FileJobQueue
         return $payload;
     }
 
+    /** @return resource */
+    private function openQueueStream(string $mode, string $operation): mixed
+    {
+        $stream = fopen($this->queueFilePath, $mode);
+        if (!is_resource($stream)) {
+            throw new QueueException("Unable to {$operation} queue file: {$this->queueFilePath}");
+        }
+        if (!chmod($this->queueFilePath, 0600)) {
+            fclose($stream);
+
+            throw new QueueException("Unable to secure queue file: {$this->queueFilePath}");
+        }
+
+        return $stream;
+    }
+
     /**
      * @return QueueState
      */
@@ -448,10 +472,7 @@ final readonly class FileJobQueue
             return $this->emptyQueueData();
         }
 
-        $stream = fopen($this->queueFilePath, 'rb');
-        if (!is_resource($stream)) {
-            throw new QueueException("Unable to open queue file: {$this->queueFilePath}");
-        }
+        $stream = $this->openQueueStream('rb', 'open');
 
         try {
             if (!flock($stream, LOCK_SH)) {
