@@ -203,6 +203,45 @@ class DownloadProcessor
     }
 
     /**
+     * Yield the exact prepared response range as chunks.
+     *
+     * The input stream is opened lazily when iteration starts and is closed in
+     * a finally block when iteration completes, fails, or the generator is
+     * disposed before exhaustion.
+     *
+     * @return \Generator<int, string, mixed, void>
+     */
+    public function streamChunks(DownloadPreparation $preparation): \Generator
+    {
+        $path = $this->validatePreparedDownload($preparation);
+        $remaining = $preparation->range->contentLength;
+        if ($remaining === 0) {
+            return;
+        }
+
+        $inputStream = FlysystemHelper::readStream($path);
+        if (!is_resource($inputStream)) {
+            throw new DownloadException('Unable to open input stream for download.');
+        }
+
+        try {
+            $this->seekStreamToOffset($inputStream, $preparation->range->start ?? 0);
+
+            while ($remaining > 0) {
+                $chunk = fread($inputStream, $this->readLength($remaining));
+                if (!is_string($chunk) || $chunk === '') {
+                    throw new DownloadException('Download stream ended before the prepared range was complete.');
+                }
+
+                $remaining -= strlen($chunk);
+                yield $chunk;
+            }
+        } finally {
+            fclose($inputStream);
+        }
+    }
+
+    /**
      * Stream a secure download to a writable resource and return the manifest.
      *
      * @param string $path The file path to download.
@@ -222,33 +261,10 @@ class DownloadProcessor
         }
 
         $manifest = $this->prepareDownload($path, $downloadName, $rangeHeader);
+        $bytesSent = 0;
 
-        $inputStream = FlysystemHelper::readStream($manifest->path);
-        if (!is_resource($inputStream)) {
-            throw new DownloadException('Unable to open input stream for download.');
-        }
-
-        try {
-            $this->seekStreamToOffset($inputStream, $manifest->range->start ?? 0);
-
-            $remaining = $manifest->range->contentLength;
-            $bytesSent = 0;
-            while ($remaining > 0) {
-                $chunk = fread($inputStream, $this->readLength($remaining));
-                if (!is_string($chunk) || $chunk === '') {
-                    break;
-                }
-
-                $written = $this->writeFully($outputStream, $chunk);
-                $bytesSent += $written;
-                $remaining -= $written;
-            }
-        } finally {
-            fclose($inputStream);
-        }
-
-        if ($bytesSent !== $manifest->range->contentLength) {
-            throw new DownloadException('Incomplete download stream copy.');
+        foreach ($this->streamChunks($manifest) as $chunk) {
+            $bytesSent += $this->writeFully($outputStream, $chunk);
         }
 
         return new DownloadStreamResult($manifest, $bytesSent);
@@ -368,7 +384,6 @@ class DownloadProcessor
     /** @return array{int, int, true} */
     private function resolveExplicitRange(string $startRaw, string $endRaw, int $size): array
     {
-
         $start = (int) $startRaw;
         if ($start < 0 || $start >= $size) {
             throw new DownloadException('Invalid range header.');
@@ -524,6 +539,43 @@ class DownloadProcessor
             'File extension is not allowed for download.',
             'Invalid file extension for download.',
         ));
+    }
+
+    private function validatePreparedDownload(DownloadPreparation $preparation): string
+    {
+        $path = PathHelper::normalize($preparation->path);
+        $this->validateDownloadPath($path);
+        $this->validateExtension(pathinfo($path, PATHINFO_EXTENSION));
+
+        $size = FlysystemHelper::size($path);
+        if ($this->maxDownloadSize > 0 && $size > $this->maxDownloadSize) {
+            throw new FileSizeExceededException('Download exceeds configured size limit.');
+        }
+
+        $lastModified = FlysystemHelper::lastModified($path);
+        if ($size !== $preparation->size || $lastModified !== $preparation->lastModified) {
+            throw new DownloadException('Prepared download metadata is stale.');
+        }
+
+        if ($size === 0) {
+            if (
+                $preparation->range->start !== null
+                || $preparation->range->end !== null
+                || $preparation->range->contentLength !== 0
+            ) {
+                throw new DownloadException('Prepared download range is no longer valid.');
+            }
+
+            return $path;
+        }
+
+        $start = $preparation->range->start;
+        $end = $preparation->range->end;
+        if (!is_int($start) || !is_int($end) || $start < 0 || $end >= $size) {
+            throw new DownloadException('Prepared download range is no longer valid.');
+        }
+
+        return $path;
     }
 
     private function writeFully(mixed $stream, string $payload): int

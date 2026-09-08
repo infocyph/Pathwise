@@ -17,7 +17,8 @@ Where it fits:
 * Hidden-file blocking.
 * Optional max download size enforcement.
 * Optional range requests with byte-range parsing and partial metadata.
-* Stream copy to caller-provided output resource.
+* Range-aware iterable chunk streaming for framework response adapters.
+* Stream copy to caller-provided output resources.
 * Mounted/default filesystem paths (e.g. ``s3://...``) via Flysystem routing.
 
 Security controls
@@ -33,6 +34,40 @@ Security controls
 * ``setForceAttachment(bool $enabled = true)``
 * ``setDefaultDownloadName(string $name)``
 * ``setChunkSize(int $chunkSize)``
+
+Prepared Chunk Streaming
+------------------------
+
+Frameworks that own their HTTP response lifecycle can prepare headers/status
+first and then hand the exact prepared range back to Pathwise for body delivery:
+
+.. code-block:: php
+
+   $manifest = $downloads->prepareDownload(
+       path: 's3://downloads/video.mp4',
+       downloadName: 'video.mp4',
+       rangeHeader: $rangeHeader,
+   );
+
+   foreach ($downloads->streamChunks($manifest) as $chunk) {
+       yield $chunk;
+   }
+
+``streamChunks()`` opens the source lazily, positions seekable or non-seekable
+streams at the prepared range start, limits reads to the prepared content
+length, and closes the input stream in a ``finally`` block. Disposing a
+partially-consumed generator therefore releases its input resource.
+
+A ``DownloadPreparation`` is metadata, not an authorization capability. Before
+opening its body, Pathwise re-applies current path/hidden-file/allowed-root and
+extension policy, checks the current maximum-size policy, and verifies that the
+source size and last-modified metadata still match the preparation. Stale or
+manually constructed preparations cannot use ``streamChunks()`` to bypass the
+current download policy.
+
+``streamDownload()`` uses this same chunk-streaming core, so direct output-stream
+copies and framework iterable responses share range, incomplete-read, and
+resource-cleanup behavior.
 
 Examples
 --------
