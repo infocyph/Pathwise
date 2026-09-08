@@ -78,7 +78,7 @@ final readonly class SafeSymlinkManager
                 $link,
             ));
         }
-        if (!$this->runSilently(static fn(): bool => unlink($link))) {
+        if (!$this->removeNativeSymlink($link)) {
             throw new \RuntimeException(sprintf('Unable to remove symbolic link "%s".', $link));
         }
 
@@ -94,7 +94,8 @@ final readonly class SafeSymlinkManager
         $expectedTarget = $this->resolveExpectedTarget($expectedTarget);
         $linked = is_link($link);
         $exists = $linked || file_exists($link);
-        $broken = $linked && realpath($link) === false;
+        $resolved = $linked ? realpath($link) : false;
+        $broken = $linked && ($resolved === false || !file_exists($resolved));
 
         return new SymlinkStatus(
             link: $link,
@@ -226,6 +227,15 @@ final readonly class SafeSymlinkManager
         }
 
         return $this->canonicalExistingTarget($target);
+    }
+
+    private function removeNativeSymlink(string $link): bool
+    {
+        if ($this->runSilently(static fn(): bool => unlink($link)) === true) {
+            return true;
+        }
+
+        return $this->runSilently(static fn(): bool => rmdir($link)) === true;
     }
 
     private function resolveCandidate(string $path, string $root, string $label, bool $allowRoot): string

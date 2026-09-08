@@ -6,6 +6,25 @@ use Infocyph\Pathwise\Exceptions\PolicyViolationException;
 use Infocyph\Pathwise\FileManager\SafeSymlinkManager;
 use Infocyph\Pathwise\Utils\PathHelper;
 
+function removeTestSymlink(string $link): bool
+{
+    if (!is_link($link)) {
+        return false;
+    }
+
+    set_error_handler(static fn(): bool => true);
+
+    try {
+        if (unlink($link)) {
+            return true;
+        }
+
+        return rmdir($link);
+    } finally {
+        restore_error_handler();
+    }
+}
+
 function symlinkTestDirectory(string $prefix): string
 {
     $directory = PathHelper::join(sys_get_temp_dir(), $prefix . bin2hex(random_bytes(8)));
@@ -30,7 +49,7 @@ function supportsSymlinkCreation(string $directory): bool
     }
 
     if ($created) {
-        unlink($link);
+        removeTestSymlink($link);
     }
     rmdir($target);
 
@@ -62,7 +81,12 @@ afterEach(function (): void {
     );
 
     foreach ($iterator as $item) {
-        if ($item->isLink() || $item->isFile()) {
+        if ($item->isLink()) {
+            removeTestSymlink($item->getPathname());
+
+            continue;
+        }
+        if ($item->isFile()) {
             unlink($item->getPathname());
 
             continue;
