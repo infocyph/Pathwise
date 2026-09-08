@@ -17,8 +17,6 @@ use Infocyph\Pathwise\Utils\PathHelper;
  */
 final readonly class UploadSource
 {
-    private \Closure $materializer;
-
     /**
      * @param \Closure(string): void $materializer
      */
@@ -27,7 +25,7 @@ final readonly class UploadSource
         public ?int $size,
         public ?string $clientMediaType,
         public int $error,
-        \Closure $materializer,
+        private \Closure $materializer,
     ) {
         if ($clientFilename === '' || str_contains($clientFilename, "\0")) {
             throw new UploadException('Invalid upload client filename.');
@@ -35,8 +33,6 @@ final readonly class UploadSource
         if ($size !== null && $size < 0) {
             throw new UploadException('Invalid upload size metadata.');
         }
-
-        $this->materializer = $materializer;
     }
 
     /**
@@ -54,16 +50,12 @@ final readonly class UploadSource
         ?string $clientMediaType = null,
         int $error = UPLOAD_ERR_OK,
     ): self {
-        $materializer = \Closure::fromCallable($mover);
-
         return new self(
             $clientFilename,
             $size,
             $clientMediaType,
             $error,
-            static function (string $target) use ($materializer): void {
-                $materializer($target);
-            },
+            $mover(...),
         );
     }
 
@@ -130,22 +122,7 @@ final readonly class UploadSource
             $clientMediaType,
             $error,
             static function (string $target) use ($stream): void {
-                if (!is_resource($stream)) {
-                    throw new UploadException('Upload source stream is no longer readable.');
-                }
-
-                $output = fopen($target, 'xb');
-                if (!is_resource($output)) {
-                    throw new UploadException('Unable to create upload staging file.');
-                }
-
-                try {
-                    if (stream_copy_to_stream($stream, $output) === false) {
-                        throw new UploadException('Unable to copy upload source stream.');
-                    }
-                } finally {
-                    fclose($output);
-                }
+                self::copyStreamToTarget($stream, $target);
             },
         );
     }
@@ -200,6 +177,37 @@ final readonly class UploadSource
         throw new UploadException('Unable to allocate upload staging directory.');
     }
 
+    private static function copyStreamToTarget(mixed $stream, string $target): void
+    {
+        if (!is_resource($stream)) {
+            throw new UploadException('Upload source stream is no longer readable.');
+        }
+
+        $output = fopen($target, 'xb');
+        if (!is_resource($output)) {
+            throw new UploadException('Unable to create upload staging file.');
+        }
+
+        try {
+            if (stream_copy_to_stream($stream, $output) === false) {
+                throw new UploadException('Unable to copy upload source stream.');
+            }
+        } finally {
+            fclose($output);
+        }
+    }
+
+    private static function ensureDirectory(string $directory): void
+    {
+        if (is_dir($directory)) {
+            return;
+        }
+
+        if (!mkdir($directory, 0700, true) && !is_dir($directory)) {
+            throw new UploadException('Unable to create upload staging directory.');
+        }
+    }
+
     private static function materializationRoot(?string $preferred): string
     {
         if ($preferred === null || trim($preferred) === '') {
@@ -218,17 +226,6 @@ final readonly class UploadSource
         self::ensureDirectory($directory);
 
         return $directory;
-    }
-
-    private static function ensureDirectory(string $directory): void
-    {
-        if (is_dir($directory)) {
-            return;
-        }
-
-        if (!mkdir($directory, 0700, true) && !is_dir($directory)) {
-            throw new UploadException('Unable to create upload staging directory.');
-        }
     }
 
     private static function removeDirectorySilently(string $directory): void

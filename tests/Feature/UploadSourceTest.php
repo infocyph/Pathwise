@@ -154,6 +154,22 @@ test('caller owned streams stay open and are read from their current position', 
     fclose($stream);
 });
 
+test('it fails cleanly when a caller closes a stream before materialization', function (): void {
+    $stream = tmpfile();
+    if (!is_resource($stream)) {
+        throw new RuntimeException('Unable to create test stream.');
+    }
+
+    $source = UploadSource::fromStream($stream, 'closed.txt');
+    fclose($stream);
+
+    expect(fn () => $this->processor->ingestSource($source))
+        ->toThrow(UploadException::class, 'no longer readable');
+
+    $remaining = glob($this->stagingDir . DIRECTORY_SEPARATOR . 'pathwise-upload-*');
+    expect($remaining === false ? [] : $remaining)->toBe([]);
+});
+
 test('typed sources work for resumable chunks and staging is cleaned', function (): void {
     $stagedPath = null;
     $source = UploadSource::fromMover(
@@ -195,4 +211,7 @@ test('materialization failure removes a partially written staging file', functio
         ->toThrow(UploadException::class, 'Unable to materialize upload source')
         ->and(is_string($stagedPath))->toBeTrue()
         ->and(uploadSourcePathExists($stagedPath))->toBeFalse();
+
+    $remaining = glob($this->stagingDir . DIRECTORY_SEPARATOR . 'pathwise-upload-*');
+    expect($remaining === false ? [] : $remaining)->toBe([]);
 });
