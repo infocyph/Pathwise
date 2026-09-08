@@ -30,6 +30,34 @@ test('it rejects malformed jobs instead of dropping them', function () {
         ->toThrow(RuntimeException::class, 'malformed job');
 });
 
+test('queue-created local state uses private permissions', function () {
+    if (PHP_OS_FAMILY === 'Windows') {
+        expect(true)->toBeTrue();
+
+        return;
+    }
+
+    $root = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('pathwise_private_queue_', true);
+    $queueFile = $root . DIRECTORY_SEPARATOR . 'state' . DIRECTORY_SEPARATOR . 'jobs.json';
+
+    try {
+        $queue = new FileJobQueue($queueFile);
+        $queue->enqueue('private');
+
+        $directoryMode = fileperms(dirname($queueFile));
+        $fileMode = fileperms($queueFile);
+
+        expect($directoryMode)->toBeInt()
+            ->and($directoryMode & 0777)->toBe(0700)
+            ->and($fileMode)->toBeInt()
+            ->and($fileMode & 0777)->toBe(0600);
+    } finally {
+        if (is_dir($root)) {
+            (new Infocyph\Pathwise\DirectoryManager\DirectoryOperations($root))->delete(true);
+        }
+    }
+});
+
 test('it enforces payload and total job bounds', function () {
     $queue = new FileJobQueue($this->queueFile, maxJobs: 1, maxPayloadBytes: 8);
 
