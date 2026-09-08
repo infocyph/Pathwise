@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Infocyph\Pathwise\Exceptions\FileSizeExceededException;
 use Infocyph\Pathwise\Exceptions\UploadException;
 use Infocyph\Pathwise\StreamHandler\MalwareScannerInterface;
+use Infocyph\Pathwise\StreamHandler\MalwareScanMode;
 use Infocyph\Pathwise\StreamHandler\MalwareScanRequest;
 use Infocyph\Pathwise\StreamHandler\MalwareScanVerdict;
 use Infocyph\Pathwise\StreamHandler\UploadProcessor;
@@ -203,9 +204,9 @@ test('it blocks upload when extension is blocked', function () {
     }
 });
 
-test('it requires malware scanner when configured', function () {
+test('it requires malware scanner in required mode', function () {
     $this->uploadProcessor->setDirectorySettings($this->uploadDir);
-    $this->uploadProcessor->setRequireMalwareScan(true);
+    $this->uploadProcessor->setMalwareScanMode(MalwareScanMode::REQUIRED);
 
     $tmpFile = $this->uploadDir . DIRECTORY_SEPARATOR . uniqid('upload_scan_', true) . '.txt';
     file_put_contents($tmpFile, 'plain text');
