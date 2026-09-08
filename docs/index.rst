@@ -1,9 +1,10 @@
 Pathwise Documentation
 ======================
 
-Pathwise is a PHP 8.4+ toolkit built as **Flysystem + higher-level workflows**.
-It provides safe file IO, directory automation, upload pipelines, policy checks,
-queue/audit tooling, and operational helpers.
+Pathwise is a framework-neutral PHP filesystem toolkit built on Flysystem 3,
+with secure upload/download workflows, local filesystem operations, archive
+hardening, queueing, observability, retention, indexing, and bounded native
+execution.
 
 .. toctree::
    :maxdepth: 2
@@ -13,6 +14,7 @@ queue/audit tooling, and operational helpers.
    installation
    capabilities
    storage-contracts
+   storage-context
    storage-adapters
    file-facade
    quickstart
