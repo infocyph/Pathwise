@@ -18,6 +18,7 @@ queue/audit tooling, and operational helpers.
    quickstart
    recipes
    file-manager
+   symlink-management
    directory-manager
    upload-processing
    download-processing
