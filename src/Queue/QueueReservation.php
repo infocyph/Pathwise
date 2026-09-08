@@ -21,6 +21,5 @@ final readonly class QueueReservation
         public int $createdAt,
         public int $reservedAt,
         public int $expiresAt,
-    ) {
-    }
+    ) {}
 }
