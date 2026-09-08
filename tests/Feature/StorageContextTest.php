@@ -10,7 +10,6 @@ use League\Flysystem\Filesystem;
 use League\Flysystem\FilesystemOperator;
 use League\Flysystem\Local\LocalFilesystemAdapter;
 
-/** @return string */
 function storageContextTempDirectory(string $prefix): string
 {
     $directory = sys_get_temp_dir()
@@ -123,6 +122,28 @@ test('custom drivers are isolated per context and do not mutate StorageFactory',
     }
 });
 
+test('a context cannot fall through to globally registered custom drivers', function (): void {
+    $root = storageContextTempDirectory('pathwise_global_driver_');
+
+    StorageFactory::registerDriver(
+        'global-only',
+        static fn (array $configuration): FilesystemOperator => new Filesystem(
+            new LocalFilesystemAdapter(is_string($configuration['root'] ?? null) ? $configuration['root'] : $root),
+        ),
+    );
+
+    try {
+        $context = new StorageContext([
+            'tenant' => ['driver' => 'global-only', 'root' => $root],
+        ], 'tenant');
+
+        expect(fn () => $context->filesystem())
+            ->toThrow(InvalidArgumentException::class, 'Supply it to StorageContext explicitly');
+    } finally {
+        FlysystemHelper::deleteDirectory($root);
+    }
+});
+
 test('it resolves explicit schemes and rejects conflicting selection', function (): void {
     $rootA = storageContextTempDirectory('pathwise_scheme_a_');
     $rootB = storageContextTempDirectory('pathwise_scheme_b_');
@@ -147,10 +168,14 @@ test('it resolves explicit schemes and rejects conflicting selection', function 
     }
 });
 
-test('it rejects invalid topology and unsafe absolute logical paths', function (): void {
+test('it rejects invalid topology and unsafe logical paths', function (): void {
     $root = storageContextTempDirectory('pathwise_context_invalid_');
 
     try {
+        $context = new StorageContext([
+            'local' => ['driver' => 'local', 'root' => $root],
+        ], 'local');
+
         expect(fn () => new StorageContext([], 'local'))
             ->toThrow(InvalidArgumentException::class, 'At least one filesystem')
             ->and(fn () => new StorageContext(['local' => ['driver' => 'local', 'root' => $root]], 'missing'))
@@ -161,11 +186,12 @@ test('it rejects invalid topology and unsafe absolute logical paths', function (
                 ['s3' => static fn (array $config): FilesystemOperator => StorageFactory::createFilesystem($config)],
             ))
             ->toThrow(InvalidArgumentException::class, 'reserved')
-            ->and(fn () => (new StorageContext(
-                ['local' => ['driver' => 'local', 'root' => $root]],
-                'local',
-            ))->resolve(DIRECTORY_SEPARATOR . 'outside.txt'))
-            ->toThrow(InvalidArgumentException::class, 'must be relative');
+            ->and(fn () => $context->resolve(DIRECTORY_SEPARATOR . 'outside.txt'))
+            ->toThrow(InvalidArgumentException::class, 'must be relative')
+            ->and(fn () => $context->resolve('../outside.txt'))
+            ->toThrow(InvalidArgumentException::class, 'parent-directory traversal')
+            ->and(fn () => $context->localPath('local://safe/../../outside.txt'))
+            ->toThrow(InvalidArgumentException::class, 'parent-directory traversal');
     } finally {
         FlysystemHelper::deleteDirectory($root);
     }
