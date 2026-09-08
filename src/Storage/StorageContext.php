@@ -91,14 +91,14 @@ final class StorageContext
         return array_keys($this->configurations);
     }
 
-    public function hasFilesystem(string $name): bool
-    {
-        return isset($this->configurations[self::normalizeName($name)]);
-    }
-
     public function hasDriver(string $name): bool
     {
         return isset($this->drivers[self::normalizeName($name)]);
+    }
+
+    public function hasFilesystem(string $name): bool
+    {
+        return isset($this->configurations[self::normalizeName($name)]);
     }
 
     public function isLocal(?string $name = null): bool
@@ -131,6 +131,16 @@ final class StorageContext
     }
 
     /**
+     * Return a canonical context path without registering a process-global mount.
+     */
+    public function path(string $path = '', ?string $name = null): string
+    {
+        [$resolvedName, $location] = $this->resolveIdentity($path, $name);
+
+        return $location === '' ? $resolvedName . '://' : $resolvedName . '://' . $location;
+    }
+
+    /**
      * Resolve a logical path to its filesystem operator and adapter-relative location.
      *
      * @return array{FilesystemOperator, string}
@@ -142,14 +152,32 @@ final class StorageContext
         return [$this->filesystem($resolvedName), $location];
     }
 
-    /**
-     * Return a canonical context path without registering a process-global mount.
-     */
-    public function path(string $path = '', ?string $name = null): string
+    private static function normalizeLocation(string $location): string
     {
-        [$resolvedName, $location] = $this->resolveIdentity($path, $name);
+        $normalized = str_replace('\\', '/', trim($location));
+        if (str_contains($normalized, "\0")) {
+            throw new \InvalidArgumentException('Storage path cannot contain a null byte.');
+        }
+        if (preg_match('~(?:^|/)\.\.(?:/|$)~', $normalized) === 1) {
+            throw new \InvalidArgumentException('Storage path cannot contain parent-directory traversal.');
+        }
 
-        return $location === '' ? $resolvedName . '://' : $resolvedName . '://' . $location;
+        $segments = array_values(array_filter(
+            explode('/', trim($normalized, '/')),
+            static fn(string $segment): bool => $segment !== '' && $segment !== '.',
+        ));
+
+        return implode('/', $segments);
+    }
+
+    private static function normalizeName(string $name): string
+    {
+        $normalized = strtolower(trim($name));
+        if (preg_match('/^[a-z][a-z0-9._-]*$/D', $normalized) !== 1) {
+            throw new \InvalidArgumentException("Invalid storage name '{$name}'.");
+        }
+
+        return $normalized;
     }
 
     /** @param array<string, mixed> $configuration */
@@ -199,34 +227,6 @@ final class StorageContext
             }
 
             $normalized[$driver] = $factory;
-        }
-
-        return $normalized;
-    }
-
-    private static function normalizeLocation(string $location): string
-    {
-        $normalized = str_replace('\\', '/', trim($location));
-        if (str_contains($normalized, "\0")) {
-            throw new \InvalidArgumentException('Storage path cannot contain a null byte.');
-        }
-        if (preg_match('~(?:^|/)\.\.(?:/|$)~', $normalized) === 1) {
-            throw new \InvalidArgumentException('Storage path cannot contain parent-directory traversal.');
-        }
-
-        $segments = array_values(array_filter(
-            explode('/', trim($normalized, '/')),
-            static fn(string $segment): bool => $segment !== '' && $segment !== '.',
-        ));
-
-        return implode('/', $segments);
-    }
-
-    private static function normalizeName(string $name): string
-    {
-        $normalized = strtolower(trim($name));
-        if (preg_match('/^[a-z][a-z0-9._-]*$/D', $normalized) !== 1) {
-            throw new \InvalidArgumentException("Invalid storage name '{$name}'.");
         }
 
         return $normalized;
