@@ -148,7 +148,11 @@ test('context drivers must return filesystem operators', function (): void {
     $context = new StorageContext(
         ['tenant' => ['driver' => 'broken']],
         'tenant',
-        ['broken' => static fn (array $configuration): object => new stdClass()],
+        ['broken' => static function (array $configuration): object {
+            unset($configuration);
+
+            return new stdClass();
+        }],
     );
 
     expect(fn () => $context->filesystem())
@@ -199,7 +203,7 @@ test('it rejects invalid topology and unsafe logical paths', function (): void {
                 ['s3' => static fn (array $config): FilesystemOperator => StorageFactory::createFilesystem($config)],
             ))
             ->toThrow(InvalidArgumentException::class, 'reserved')
-            ->and(fn () => $context->resolve(DIRECTORY_SEPARATOR . 'outside.txt'))
+            ->and(fn () => $context->resolve('C:/outside.txt'))
             ->toThrow(InvalidArgumentException::class, 'must be relative')
             ->and(fn () => $context->resolve('../outside.txt'))
             ->toThrow(InvalidArgumentException::class, 'parent-directory traversal')
