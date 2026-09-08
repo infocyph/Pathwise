@@ -198,6 +198,7 @@ trait UploadProcessorValidationConcern
             $candidate = PathHelper::join($root, 'pathwise-scan-' . bin2hex(random_bytes(16)));
             if ($this->runSilently(static fn(): bool => mkdir($candidate, 0700))) {
                 $directory = $candidate;
+
                 break;
             }
         }
