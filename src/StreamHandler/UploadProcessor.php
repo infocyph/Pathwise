@@ -9,7 +9,6 @@ use Infocyph\Pathwise\Exceptions\UploadException;
 use Infocyph\Pathwise\Results\ChunkUploadState;
 use Infocyph\Pathwise\StreamHandler\Concerns\UploadProcessorChunkConcern;
 use Infocyph\Pathwise\StreamHandler\Concerns\UploadProcessorValidationConcern;
-use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use Psr\Log\LoggerInterface;
 
@@ -147,8 +146,8 @@ class UploadProcessor
                 $this->validateFinalizedUpload($stagingPath);
                 $destination = $this->finalizeIncomingFile($stagingPath, $extension);
             } catch (\Throwable $exception) {
-                if (FlysystemHelper::fileExists($stagingPath)) {
-                    FlysystemHelper::delete($stagingPath);
+                if ($this->storageFileExists($stagingPath)) {
+                    $this->storageDelete($stagingPath);
                 }
 
                 throw $exception;
@@ -256,8 +255,8 @@ class UploadProcessor
             $originalFilename,
         ): ChunkUploadState {
             $chunkDirectory = $this->getChunkDirectory($uploadId);
-            if (!FlysystemHelper::directoryExists($chunkDirectory)) {
-                FlysystemHelper::createDirectory($chunkDirectory);
+            if (!$this->storageDirectoryExists($chunkDirectory)) {
+                $this->storageCreateDirectory($chunkDirectory);
             }
 
             /** @var ChunkManifest $manifest */
@@ -497,7 +496,7 @@ class UploadProcessor
         $identifier = match ($this->namingStrategy) {
             'timestamp' => sprintf('%d_%s', time(), bin2hex(random_bytes(8))),
             default => $dataSource !== null
-                ? FlysystemHelper::checksum($dataSource, 'sha256')
+                ? $this->storageChecksum($dataSource, 'sha256')
                 : bin2hex(random_bytes(32)),
         };
         if (!is_string($identifier)) {
