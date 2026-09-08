@@ -21,27 +21,20 @@ jobs:
       php_extensions: "fileinfo, pcntl, posix, simplexml, xmlreader, zip"
       composer_flags: ""
       phpstan_memory_limit: "1G"
-      psalm_threads: "1"
       run_analysis: true
       run_svg_report: true
       fail_on_skipped_tests: true
       run_clean_install: true
+      integration_services: '[]'
+      service_topologies: '{}'
+      service_db_name: "phpforge"
+      service_db_user: "phpforge"
+      service_password: "Phpforge_123!"
       benchmark_composer_script: ""
       benchmark_result_file: ""
       benchmark_baseline_file: ""
       benchmark_max_regression_percent: 2
       benchmark_stable_environment: false
-      enable_redis_service: false
-      enable_valkey_service: false
-      enable_memcached_service: false
-      enable_postgres_service: false
-      enable_mysql_service: false
-      enable_scylladb_service: false
-      enable_elasticsearch_service: false
-      enable_mongodb_service: false
-      service_db_name: "phpforge"
-      service_db_user: "phpforge"
-      service_db_password: "phpforge"
       artifact_retention_days: 61
 
   windows:
