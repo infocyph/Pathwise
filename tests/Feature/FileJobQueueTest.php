@@ -179,7 +179,7 @@ test('it exposes an explicit lease lifecycle', function () {
     expect($queue->stats())->toMatchArray(['pending' => 0, 'processing' => 0, 'failed' => 0]);
 });
 
-test('a stale worker cannot acknowledge release renew or fail a reclaimed lease', function () {
+test('an expired or reclaimed lease cannot mutate queue state', function () {
     $queue = new FileJobQueue($this->queueFile, reservationTimeout: 1);
     $queue->enqueue('leased');
     $workerA = $queue->reserve();
@@ -189,17 +189,19 @@ test('a stale worker cannot acknowledge release renew or fail a reclaimed lease'
     $state['processing'][0]['reservedAt'] = time() - 10;
     file_put_contents($this->queueFile, json_encode($state, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
 
+    expect(fn () => $queue->acknowledge($workerA))->toThrow(QueueException::class, 'stale')
+        ->and(fn () => $queue->release($workerA))->toThrow(QueueException::class, 'stale')
+        ->and(fn () => $queue->renew($workerA))->toThrow(QueueException::class, 'stale')
+        ->and(fn () => $queue->fail($workerA, 'late failure'))->toThrow(QueueException::class, 'stale');
+
     $workerB = $queue->reserve();
     expect($workerB)->toBeInstanceOf(QueueReservation::class)
         ->and($workerB?->id)->toBe($workerA?->id)
         ->and($workerB?->leaseToken)->not->toBe($workerA?->leaseToken);
 
     expect(fn () => $queue->acknowledge($workerA))->toThrow(QueueException::class, 'stale')
-        ->and(fn () => $queue->release($workerA))->toThrow(QueueException::class, 'stale')
-        ->and(fn () => $queue->renew($workerA))->toThrow(QueueException::class, 'stale')
-        ->and(fn () => $queue->fail($workerA, 'late failure'))->toThrow(QueueException::class, 'stale');
+        ->and($queue->stats())->toMatchArray(['pending' => 0, 'processing' => 1, 'failed' => 0]);
 
-    expect($queue->stats())->toMatchArray(['pending' => 0, 'processing' => 1, 'failed' => 0]);
     $queue->acknowledge($workerB);
     expect($queue->stats())->toMatchArray(['pending' => 0, 'processing' => 0, 'failed' => 0]);
 });
