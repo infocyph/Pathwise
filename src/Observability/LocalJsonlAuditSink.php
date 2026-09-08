@@ -46,6 +46,8 @@ final readonly class LocalJsonlAuditSink implements AuditSink
             throw new AuditException("Unable to open audit record file: {$this->path}.");
         }
 
+        $locked = false;
+
         try {
             if (!chmod($this->path, 0600)) {
                 throw new AuditException("Unable to secure audit record file: {$this->path}.");
@@ -53,17 +55,34 @@ final readonly class LocalJsonlAuditSink implements AuditSink
             if (!flock($stream, LOCK_EX)) {
                 throw new AuditException("Unable to lock audit record file: {$this->path}.");
             }
+            $locked = true;
 
-            $written = fwrite($stream, $line);
-            if ($written !== strlen($line)) {
-                throw new AuditException("Unable to append audit record to {$this->path}.");
-            }
+            self::writeAll($stream, $line, $this->path);
             if (!fflush($stream)) {
                 throw new AuditException("Unable to flush audit record file: {$this->path}.");
             }
+            if (function_exists('fsync') && !fsync($stream)) {
+                throw new AuditException("Unable to synchronize audit record file: {$this->path}.");
+            }
         } finally {
-            flock($stream, LOCK_UN);
+            if ($locked) {
+                flock($stream, LOCK_UN);
+            }
             fclose($stream);
+        }
+    }
+
+    /** @param resource $stream */
+    private static function writeAll(mixed $stream, string $contents, string $path): void
+    {
+        $offset = 0;
+        $length = strlen($contents);
+        while ($offset < $length) {
+            $written = fwrite($stream, substr($contents, $offset));
+            if (!is_int($written) || $written < 1) {
+                throw new AuditException("Unable to append audit record to {$path}.");
+            }
+            $offset += $written;
         }
     }
 }

@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Infocyph\Pathwise\Retention;
 
 use Infocyph\Pathwise\Results\RetentionResult;
-
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\FlysystemPathResolver;
 use Infocyph\Pathwise\Utils\LocalFileIterator;
@@ -14,56 +13,28 @@ use InvalidArgumentException;
 
 final class RetentionManager
 {
-    /**
-     * Apply retention rules to a directory.
-     *
-     * @param string $directory The directory to apply retention rules to.
-     * @param int|null $keepLast Number of most recent files to keep (null for unlimited).
-     * @param int|null $maxAgeDays Maximum age of files in days (null for unlimited).
-     * @param string $sortBy Field to sort by ('mtime' or 'ctime').
-     */
     public static function apply(
         string $directory,
         ?int $keepLast = null,
         ?int $maxAgeDays = null,
         string $sortBy = 'mtime',
     ): RetentionResult {
-        self::validateOptions($keepLast, $maxAgeDays, $sortBy);
-
-        $directory = PathHelper::normalize($directory);
-        if ($sortBy === 'ctime' && !FlysystemHelper::isLocalPath($directory)) {
-            throw new InvalidArgumentException('ctime retention is unavailable for adapter-backed storage.');
-        }
-        if (!FlysystemHelper::directoryExists($directory)) {
-            return new RetentionResult([], []);
-        }
-
-        $files = self::collectFiles($directory);
-        usort($files, static fn(array $a, array $b): int => $b[$sortBy] <=> $a[$sortBy]);
-
-        $kept = [];
-        $deleted = [];
-        $cutoff = $maxAgeDays !== null ? (time() - ($maxAgeDays * 86400)) : null;
-
-        foreach ($files as $index => $file) {
-            $shouldDeleteByCount = $keepLast !== null && $index >= $keepLast;
-            $shouldDeleteByAge = $cutoff !== null && $file[$sortBy] < $cutoff;
-            $path = $file['path'];
-
-            if (($shouldDeleteByCount || $shouldDeleteByAge) && FlysystemHelper::fileExists($path)) {
-                FlysystemHelper::delete($path);
-                $deleted[] = $path;
-            } else {
-                $kept[] = $path;
-            }
-        }
-
-        return new RetentionResult($deleted, $kept);
+        return self::evaluate($directory, $keepLast, $maxAgeDays, $sortBy, true);
     }
 
     /**
-     * @return array<int, array{path: string, mtime: int, ctime: int|null}>
+     * Return the exact retention decision without deleting files.
      */
+    public static function preview(
+        string $directory,
+        ?int $keepLast = null,
+        ?int $maxAgeDays = null,
+        string $sortBy = 'mtime',
+    ): RetentionResult {
+        return self::evaluate($directory, $keepLast, $maxAgeDays, $sortBy, false);
+    }
+
+    /** @return array<int, array{path: string, mtime: int, ctime: int|null}> */
     private static function collectFiles(string $directory): array
     {
         if (PathHelper::hasScheme($directory) || (FlysystemHelper::hasDefaultFilesystem() && !PathHelper::isAbsolute($directory))) {
@@ -73,9 +44,7 @@ final class RetentionManager
         return self::collectFilesLocal($directory);
     }
 
-    /**
-     * @return array<int, array{path: string, mtime: int, ctime: int|null}>
-     */
+    /** @return array<int, array{path: string, mtime: int, ctime: int|null}> */
     private static function collectFilesLocal(string $directory): array
     {
         $files = [];
@@ -90,9 +59,7 @@ final class RetentionManager
         return $files;
     }
 
-    /**
-     * @return array<int, array{path: string, mtime: int, ctime: int|null}>
-     */
+    /** @return array<int, array{path: string, mtime: int, ctime: int|null}> */
     private static function collectFilesViaFlysystem(string $directory): array
     {
         $files = [];
@@ -100,33 +67,114 @@ final class RetentionManager
 
         foreach (FlysystemHelper::listContentsListing($directory, true) as $item) {
             $entry = self::normalizeFlysystemEntry($directory, $base, $item);
-            if ($entry === null) {
-                continue;
+            if ($entry !== null) {
+                $files[] = $entry;
             }
-
-            $files[] = $entry;
         }
 
         return $files;
     }
 
-    /**
-     * @return array{path: string, mtime: int, ctime: int|null}|null
-     */
-    private static function normalizeFlysystemEntry(string $directory, string $base, \League\Flysystem\StorageAttributes $item): ?array
+    /** @param list<string> $paths */
+    private static function deletePaths(array $paths): void
     {
+        foreach ($paths as $path) {
+            if (FlysystemHelper::fileExists($path)) {
+                FlysystemHelper::delete($path);
+            }
+        }
+    }
+
+    private static function evaluate(
+        string $directory,
+        ?int $keepLast,
+        ?int $maxAgeDays,
+        string $sortBy,
+        bool $delete,
+    ): RetentionResult {
+        self::validateOptions($keepLast, $maxAgeDays, $sortBy);
+        $directory = PathHelper::normalize($directory);
+
+        if ($sortBy === 'ctime' && !FlysystemHelper::isLocalPath($directory)) {
+            throw new InvalidArgumentException('ctime retention is unavailable for adapter-backed storage.');
+        }
+        if (!FlysystemHelper::directoryExists($directory)) {
+            return new RetentionResult([], []);
+        }
+
+        $decision = self::partitionFiles(
+            self::sortFiles(self::collectFiles($directory), $sortBy),
+            $keepLast,
+            $maxAgeDays,
+            $sortBy,
+        );
+        if ($delete) {
+            self::deletePaths($decision['deleted']);
+        }
+
+        return new RetentionResult($decision['deleted'], $decision['kept']);
+    }
+
+    /** @return array{path: string, mtime: int, ctime: int|null}|null */
+    private static function normalizeFlysystemEntry(
+        string $directory,
+        string $base,
+        \League\Flysystem\StorageAttributes $item,
+    ): ?array {
         $relative = FlysystemPathResolver::relativePathFromItem($item, $base, 'file');
         if ($relative === null) {
             return null;
         }
 
-        $mtime = $item->lastModified() ?? 0;
-
         return [
             'path' => PathHelper::join($directory, $relative),
-            'mtime' => $mtime,
+            'mtime' => $item->lastModified() ?? 0,
             'ctime' => null,
         ];
+    }
+
+    /**
+     * @param array<int, array{path: string, mtime: int, ctime: int|null}> $files
+     * @return array{deleted: list<string>, kept: list<string>}
+     */
+    private static function partitionFiles(
+        array $files,
+        ?int $keepLast,
+        ?int $maxAgeDays,
+        string $sortBy,
+    ): array {
+        $deleted = [];
+        $kept = [];
+        $cutoff = $maxAgeDays !== null ? time() - ($maxAgeDays * 86400) : null;
+
+        foreach ($files as $index => $file) {
+            $deleteByCount = $keepLast !== null && $index >= $keepLast;
+            $deleteByAge = $cutoff !== null && $file[$sortBy] < $cutoff;
+            if ($deleteByCount || $deleteByAge) {
+                $deleted[] = $file['path'];
+
+                continue;
+            }
+
+            $kept[] = $file['path'];
+        }
+
+        return ['deleted' => $deleted, 'kept' => $kept];
+    }
+
+    /**
+     * @param array<int, array{path: string, mtime: int, ctime: int|null}> $files
+     * @return array<int, array{path: string, mtime: int, ctime: int|null}>
+     */
+    private static function sortFiles(array $files, string $sortBy): array
+    {
+        usort($files, static function (array $first, array $second) use ($sortBy): int {
+            $comparison = $second[$sortBy] <=> $first[$sortBy];
+
+            return $comparison !== 0 ? $comparison : strcmp($first['path'], $second['path']);
+        });
+
+        return $files;
     }
 
     private static function validateOptions(?int $keepLast, ?int $maxAgeDays, string $sortBy): void

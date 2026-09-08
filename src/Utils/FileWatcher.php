@@ -6,23 +6,20 @@ namespace Infocyph\Pathwise\Utils;
 
 use FilesystemIterator;
 use Infocyph\Pathwise\Results\SnapshotDiff;
-
 use Infocyph\Pathwise\Results\WatchResult;
+use InvalidArgumentException;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 
 /**
  * @phpstan-type SnapshotEntry array{mtime: int, size: int}
  * @phpstan-type SnapshotMap array<string, SnapshotEntry>
- * @phpstan-type DiffReport array{created: list<string>, modified: list<string>, deleted: list<string>}
  */
 final class FileWatcher
 {
     /**
-     * Compare snapshots and return change report.
-     *
-     * @param SnapshotMap $previousSnapshot The previous snapshot data.
-     * @param SnapshotMap $currentSnapshot The current snapshot data.
+     * @param SnapshotMap $previousSnapshot
+     * @param SnapshotMap $currentSnapshot
      */
     public static function diff(array $previousSnapshot, array $currentSnapshot): SnapshotDiff
     {
@@ -49,16 +46,14 @@ final class FileWatcher
             }
         }
 
+        sort($created);
+        sort($modified);
+        sort($deleted);
+
         return new SnapshotDiff($created, $modified, $deleted);
     }
 
-    /**
-     * Build a snapshot map for a file or directory.
-     *
-     * @param string $path The path to snapshot.
-     * @param bool $recursive Whether to include subdirectories recursively.
-     * @return SnapshotMap The snapshot map with file paths as keys.
-     */
+    /** @return SnapshotMap */
     public static function snapshot(string $path, bool $recursive = true): array
     {
         $normalized = PathHelper::normalize($path);
@@ -91,11 +86,7 @@ final class FileWatcher
             : new FilesystemIterator($normalized, FilesystemIterator::SKIP_DOTS);
 
         foreach ($iterator as $item) {
-            if (!$item instanceof \SplFileInfo) {
-                continue;
-            }
-
-            if ($item->isDir()) {
+            if (!$item instanceof \SplFileInfo || $item->isDir()) {
                 continue;
             }
 
@@ -106,10 +97,7 @@ final class FileWatcher
             }
 
             $filePath = PathHelper::normalize($item->getPathname());
-            $entries[$filePath] = [
-                'mtime' => $mtime,
-                'size' => $size,
-            ];
+            $entries[$filePath] = ['mtime' => $mtime, 'size' => $size];
         }
 
         ksort($entries);
@@ -117,15 +105,6 @@ final class FileWatcher
         return $entries;
     }
 
-    /**
-     * Poll for file-system changes and invoke callback on each non-empty diff.
-     *
-     * @param string $path The path to watch.
-     * @param callable $onChange Callback invoked when changes detected. Receives diff array.
-     * @param int $durationSeconds How long to watch in seconds. Defaults to 5.
-     * @param int $intervalMilliseconds Polling interval in milliseconds. Defaults to 500.
-     * @param bool $recursive Whether to watch subdirectories. Defaults to true.
-     */
     public static function watch(
         string $path,
         callable $onChange,
@@ -133,29 +112,41 @@ final class FileWatcher
         int $intervalMilliseconds = 500,
         bool $recursive = true,
     ): WatchResult {
+        if ($durationSeconds < 1) {
+            throw new InvalidArgumentException('Watcher duration must be at least one second.');
+        }
+        if ($intervalMilliseconds < 10) {
+            throw new InvalidArgumentException('Watcher interval must be at least 10 milliseconds.');
+        }
+
         $snapshot = self::snapshot($path, $recursive);
-        $endAt = microtime(true) + max(1, $durationSeconds);
+        $endAt = microtime(true) + $durationSeconds;
         $changeSets = 0;
 
-        while (microtime(true) < $endAt) {
-            usleep(max(10, $intervalMilliseconds) * 1000);
+        while (true) {
+            $remainingMicroseconds = (int) floor(($endAt - microtime(true)) * 1_000_000);
+            if ($remainingMicroseconds <= 0) {
+                break;
+            }
+
+            usleep(min($intervalMilliseconds * 1000, $remainingMicroseconds));
+            if (microtime(true) >= $endAt) {
+                break;
+            }
+
             $current = self::snapshot($path, $recursive);
             $diff = self::diff($snapshot, $current);
-
             if (!$diff->isEmpty()) {
                 $onChange($diff);
                 $changeSets++;
             }
-
             $snapshot = $current;
         }
 
         return new WatchResult($snapshot, $changeSets);
     }
 
-    /**
-     * @return SnapshotMap
-     */
+    /** @return SnapshotMap */
     private static function snapshotViaFlysystem(string $path, bool $recursive): array
     {
         $entries = [];
@@ -170,11 +161,7 @@ final class FileWatcher
             $resolved = PathHelper::join($path, $relative);
             $lastModified = $item->lastModified() ?? 0;
             $fileSize = $item instanceof \League\Flysystem\FileAttributes ? ($item->fileSize() ?? 0) : 0;
-
-            $entries[$resolved] = [
-                'mtime' => $lastModified,
-                'size' => $fileSize,
-            ];
+            $entries[$resolved] = ['mtime' => $lastModified, 'size' => $fileSize];
         }
 
         ksort($entries);
