@@ -39,7 +39,7 @@ final class StorageContext
 
         $normalizedConfigurations = [];
         foreach ($configurations as $name => $configuration) {
-            if (!is_string($name) || !is_array($configuration)) {
+            if (!is_string($name)) {
                 throw new \InvalidArgumentException(
                     'Filesystem configurations must map valid names to configuration arrays.',
                 );
@@ -52,7 +52,7 @@ final class StorageContext
                 );
             }
 
-            $normalizedConfigurations[$normalizedName] = $configuration;
+            $normalizedConfigurations[$normalizedName] = self::normalizeConfiguration($configuration);
         }
 
         $defaultFilesystem = self::normalizeName($defaultFilesystem);
@@ -150,6 +150,27 @@ final class StorageContext
         [$resolvedName, $location] = $this->resolveIdentity($path, $name);
 
         return [$this->filesystem($resolvedName), $location];
+    }
+
+    /** @return array<string, mixed> */
+    private static function normalizeConfiguration(mixed $configuration): array
+    {
+        if (!is_array($configuration)) {
+            throw new \InvalidArgumentException(
+                'Filesystem configurations must map valid names to configuration arrays.',
+            );
+        }
+
+        $normalized = [];
+        foreach ($configuration as $key => $value) {
+            if (!is_string($key)) {
+                throw new \InvalidArgumentException('Filesystem configuration keys must be strings.');
+            }
+
+            $normalized[$key] = $value;
+        }
+
+        return $normalized;
     }
 
     private static function normalizeLocation(string $location): string
