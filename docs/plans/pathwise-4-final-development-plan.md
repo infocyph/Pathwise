@@ -32,7 +32,7 @@ Legend:
 - `[ ]` pending;
 - `[!]` blocked by an external prerequisite or release dependency.
 
-Current active batch: **Batch 13 — observability, retention, indexing, watcher, and transaction review**.
+Current active batch: **Batch 14 — complete Pathwise 4 documentation**.
 
 | Area | Status | Tracking note |
 | --- | --- | --- |
@@ -56,10 +56,10 @@ Current active batch: **Batch 13 — observability, retention, indexing, watcher
 | Batch 10 — file queue lease correctness/durability | [X] | Typed unique leases, expiry/renewal ownership checks, stale-worker rejection, versioned strict state, stable private lock file, crash-safe fsync+rename persistence, corruption handling, and recovery tests are CI-green on Linux and Windows. |
 | Batch 11 — archive/parser hardening | [X] | Unified manifest-based ZIP validation/extraction, collision and special-entry rejection, streamed byte enforcement, write-time revalidation, deterministic local/remote cleanup, source-symlink rejection, safe serialization boundaries, and parser regressions are CI-green across the full matrix. |
 | Batch 12 — static/global-state cleanup | [X] | Redundant process-global custom-driver/mount registries and facade mount gateways are removed; `StorageContext` owns persistent topology while stateless factory/helper capabilities remain. Full matrix passed run #148. |
-| Batch 13 — observability/retention/indexing/watcher review | [~] | Active whole-library subsystem audit and hardening. |
-| Batch 14 — complete Pathwise 4 documentation | [ ] | Release blocker; starts after public APIs are stable. |
+| Batch 13 — observability/retention/indexing/watcher review | [X] | Audit durability, retention preview/apply parity, streaming checksum iteration, deterministic watcher bounds/diffs, and private transaction rollback state are hardened. Full matrix passed run #166. |
+| Batch 14 — complete Pathwise 4 documentation | [~] | Active: rebuild all public documentation around the final 4.0 API and add a warning-free Sphinx CI gate. |
 | Batch 15 — performance/stress/release gates | [ ] | Final acceptance only after functional/security batches stabilize. |
-| Pathwise 4.0 release | [!] | Blocked until Batches 13–15 and all release gates pass. |
+| Pathwise 4.0 release | [!] | Blocked until Batches 14–15 and all release gates pass. |
 | Foundation 3 / Point 26.5 consumption | [!] | Blocked until Pathwise 4.0 is released; Foundation then raises its floor and removes duplicated generic filesystem mechanics. |
 
 Tracker maintenance rule: update this table whenever a batch starts, closes, is split, or gains a release-blocking finding. A batch is marked `[X]` only after its implementation and relevant acceptance checks are complete; writing code alone is not enough.
@@ -250,28 +250,21 @@ Security & Standards run **#148** passed Windows PHP 8.4/8.5, optional adapter c
 
 ---
 
-## Batch 13 — observability, audit, retention, indexing, watcher review — active
+## Batch 13 — observability, audit, retention, indexing, watcher review — complete
 
-Audit every remaining subsystem not covered above:
+The remaining operational subsystems were re-audited and hardened:
 
-- `AuditTrail` and sinks;
-- local JSONL audit file locking/durability/permissions;
-- partitioned audit paths and path containment;
-- retention dry-run/delete consistency;
-- checksum index concurrency and corruption behavior;
-- snapshot/diff behavior;
-- file watchers and polling bounds;
-- directory synchronization reports;
-- deduplication semantics and hash-algorithm defaults;
-- transaction journals and rollback behavior.
+- local JSONL auditing now uses full-write loops under an exclusive lock and flushes/synchronizes durable state;
+- Pathwise-owned audit and rollback state retains private local permissions where supported;
+- retention `preview()` and `apply()` share one deterministic decision engine so dry-run and deletion semantics cannot diverge;
+- checksum indexing exposes streaming iteration for large-directory workflows while preserving SHA-256 as the integrity-safe default;
+- snapshot/watcher output is deterministic and polling bounds are validated explicitly;
+- transaction rollback backups are private and synchronized before use;
+- focused regression tests cover the hardened behavior without introducing a second storage topology or application policy layer.
 
-Requirements:
+### Batch 13 acceptance — passed
 
-- no silent data corruption;
-- no unbounded in-memory growth on normal large-directory workflows where streaming is viable;
-- no unsafe default path creation;
-- persistent local state is private by default unless explicitly public/shared;
-- typed results/exceptions for ambiguous operational failures.
+Security & Standards run **#166** passed Windows PHP 8.4/8.5, optional adapter contracts, PHP 8.4/8.5 stable+lowest QA, PHPStan/Psalm, clean install, and all PHPForge quality gates.
 
 ---
 
@@ -422,10 +415,9 @@ Foundation should then:
 
 # Work order from this point
 
-1. **Batch 13** — remaining subsystem audit/hardening.
-2. **Batch 14** — complete documentation rebuild and migration guide.
-3. **Batch 15** — benchmarks/stress/final release gates.
-4. Release Pathwise 4.0, then complete Foundation Point 26.5 against the released floor.
+1. **Batch 14** — complete documentation rebuild and migration guide.
+2. **Batch 15** — benchmarks/stress/final release gates.
+3. Release Pathwise 4.0, then complete Foundation Point 26.5 against the released floor.
 
 ## Push discipline
 
