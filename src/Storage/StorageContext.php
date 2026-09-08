@@ -21,15 +21,15 @@ final class StorageContext
 
     private readonly string $defaultFilesystem;
 
-    /** @var array<string, callable(array<string, mixed>): FilesystemOperator> */
+    /** @var array<string, callable(array<string, mixed>): mixed> */
     private readonly array $drivers;
 
     /** @var array<string, FilesystemOperator> */
     private array $filesystems = [];
 
     /**
-     * @param array<string, array<string, mixed>> $configurations
-     * @param array<string, callable(array<string, mixed>): FilesystemOperator> $drivers
+     * @param array<array-key, mixed> $configurations
+     * @param array<array-key, mixed> $drivers Custom driver factories returning FilesystemOperator instances.
      */
     public function __construct(array $configurations, string $defaultFilesystem, array $drivers = [])
     {
@@ -187,7 +187,14 @@ final class StorageContext
         if (is_string($driver)) {
             $normalizedDriver = self::normalizeName($driver);
             if (isset($this->drivers[$normalizedDriver])) {
-                return ($this->drivers[$normalizedDriver])($configuration);
+                $filesystem = ($this->drivers[$normalizedDriver])($configuration);
+                if (!$filesystem instanceof FilesystemOperator) {
+                    throw new \UnexpectedValueException(
+                        "Storage driver '{$normalizedDriver}' must return a FilesystemOperator.",
+                    );
+                }
+
+                return $filesystem;
             }
 
             if (!StorageFactory::isOfficialDriver($normalizedDriver)) {
@@ -201,8 +208,8 @@ final class StorageContext
     }
 
     /**
-     * @param array<string, callable(array<string, mixed>): FilesystemOperator> $drivers
-     * @return array<string, callable(array<string, mixed>): FilesystemOperator>
+     * @param array<array-key, mixed> $drivers
+     * @return array<string, callable(array<string, mixed>): mixed>
      */
     private function normalizeDrivers(array $drivers): array
     {
