@@ -65,9 +65,6 @@ trait StorageContextRoutingConcern
         }
 
         $stream = $this->storageReadStream($source);
-        if (!is_resource($stream)) {
-            throw new \RuntimeException("Unable to read source stream: {$source}");
-        }
 
         try {
             $this->storageWriteStream($destination, $stream);
@@ -211,10 +208,25 @@ trait StorageContextRoutingConcern
     private function storageReadStream(string $path): mixed
     {
         $resolved = $this->storageResolution($path);
-
-        return $resolved === null
+        $stream = $resolved === null
             ? FlysystemHelper::readStream($path)
             : $resolved[0]->readStream($resolved[1]);
+
+        if (!is_resource($stream)) {
+            throw new \RuntimeException("Unable to read storage stream: {$path}");
+        }
+
+        return $stream;
+    }
+
+    /** @return array{FilesystemOperator, string}|null */
+    private function storageResolution(string $path): ?array
+    {
+        if (!$this->storageUsesContext($path)) {
+            return null;
+        }
+
+        return $this->storageContext?->resolve($path);
     }
 
     private function storageSize(string $path): int
@@ -224,6 +236,12 @@ trait StorageContextRoutingConcern
         return $resolved === null
             ? FlysystemHelper::size($path)
             : $resolved[0]->fileSize($resolved[1]);
+    }
+
+    private function storageUsesContext(string $path): bool
+    {
+        return $this->storageContext !== null
+            && (PathHelper::hasScheme($path) || !PathHelper::isAbsolute($path));
     }
 
     private function storageWrite(string $path, string $contents): void
@@ -252,21 +270,5 @@ trait StorageContextRoutingConcern
         }
 
         $resolved[0]->writeStream($resolved[1], $stream);
-    }
-
-    /** @return array{FilesystemOperator, string}|null */
-    private function storageResolution(string $path): ?array
-    {
-        if (!$this->storageUsesContext($path)) {
-            return null;
-        }
-
-        return $this->storageContext?->resolve($path);
-    }
-
-    private function storageUsesContext(string $path): bool
-    {
-        return $this->storageContext !== null
-            && (PathHelper::hasScheme($path) || !PathHelper::isAbsolute($path));
     }
 }
