@@ -152,6 +152,12 @@ final class StorageContext
         return [$this->filesystem($resolvedName), $location];
     }
 
+    private static function isAbsoluteLogicalPath(string $path): bool
+    {
+        return str_starts_with($path, '/')
+            || preg_match('/^[a-zA-Z]:/', $path) === 1;
+    }
+
     /** @return array<string, mixed> */
     private static function normalizeConfiguration(mixed $configuration): array
     {
@@ -279,7 +285,7 @@ final class StorageContext
             return [$scheme, self::normalizeLocation($matches[2])];
         }
 
-        if ($normalizedPath !== '' && PathHelper::isAbsolute($normalizedPath)) {
+        if ($normalizedPath !== '' && self::isAbsoluteLogicalPath($normalizedPath)) {
             throw new \InvalidArgumentException(
                 'StorageContext paths must be relative or use a configured filesystem scheme.',
             );
