@@ -182,51 +182,59 @@ class FileCompression
      *
      * @param array<string, string> $files An associative array mapping ZIP paths to local paths.
      * @param string $destination The destination directory to extract to.
-     *
-     *
      * @throws CompressionException If any of the files fail to extract.
      */
     public function batchExtractFiles(array $files, string $destination): self
     {
         $this->reopenIfNeeded();
         $destination = PathHelper::normalize($destination);
-        if (!FlysystemHelper::directoryExists($destination)) {
-            FlysystemHelper::createDirectory($destination);
-        }
         $this->log('Batch extracting files.');
         $this->progressCurrent = 0;
         $this->progressTotal = count($files);
-        ZipEntryValidator::validateArchive($this->zip, $destination);
+
+        $manifest = ZipEntryValidator::validateArchive(
+            $this->zip,
+            $destination,
+            $this->maxEntries,
+            $this->maxEntryUncompressedBytes,
+            $this->maxTotalUncompressedBytes,
+            $this->maxCompressionRatio,
+        );
+        $manifestByPath = [];
+        foreach ($manifest as $entry) {
+            $manifestByPath[$entry->path] = $entry;
+        }
+
+        $selected = [];
+        $selectedTargets = [];
         foreach ($files as $zipPath => $localPath) {
             $zipPath = ZipEntryValidator::validate($zipPath, $destination);
             $localPath = ZipEntryValidator::validate($localPath, $destination);
-            $targetPath = PathHelper::join($destination, $localPath);
-
-            if (str_ends_with($zipPath, '/')) {
-                if (!FlysystemHelper::directoryExists($targetPath)) {
-                    FlysystemHelper::createDirectory($targetPath);
-                }
-
-                continue;
+            $entry = $manifestByPath[$zipPath] ?? null;
+            if ($entry === null) {
+                throw new CompressionException("File not found in ZIP archive: {$zipPath}.");
             }
 
-            $stream = $this->zip->getStream($zipPath);
-            if (!is_resource($stream)) {
-                throw new CompressionException("File not found in ZIP archive: $zipPath.");
+            $targetKey = strtolower(rtrim(str_replace('\\', '/', $localPath), '/'));
+            if (isset($selectedTargets[$targetKey])) {
+                throw new CompressionException("Multiple ZIP entries target the same extraction path: {$localPath}");
             }
+            $selectedTargets[$targetKey] = true;
+            $selected[$entry->index] = $entry->withPath($localPath);
+        }
 
-            $targetDir = dirname($targetPath);
-            if (!FlysystemHelper::directoryExists($targetDir)) {
-                FlysystemHelper::createDirectory($targetDir);
+        ['extractDestination' => $extractDestination, 'extractTempDir' => $extractTempDir, 'isRemote' => $isRemoteDestination] = $this->prepareExtractionDestination($destination);
+        $this->applyArchivePassword();
+
+        try {
+            $this->extractArchive($selected, $extractDestination, $destination, $isRemoteDestination);
+            foreach ($selected as $entry) {
+                $this->advanceProgress('decompress', $entry->archiveName);
             }
-
-            try {
-                FlysystemHelper::writeStream($targetPath, $stream);
-            } finally {
-                fclose($stream);
+        } finally {
+            if ($extractTempDir !== null) {
+                $this->cleanupLocalizedPath($extractTempDir);
             }
-
-            $this->advanceProgress('decompress', $zipPath);
         }
 
         return $this;

@@ -17,7 +17,15 @@ final class ZipEntryValidator
 
     public const int DEFAULT_MAX_TOTAL_UNCOMPRESSED_BYTES = 4_294_967_296;
 
+    private const int UNIX_BLOCK_DEVICE = 0060000;
+
+    private const int UNIX_CHARACTER_DEVICE = 0020000;
+
+    private const int UNIX_FIFO = 0010000;
+
     private const int UNIX_FILE_TYPE_MASK = 0170000;
+
+    private const int UNIX_SOCKET = 0140000;
 
     private const int UNIX_SYMBOLIC_LINK = 0120000;
 
@@ -65,7 +73,7 @@ final class ZipEntryValidator
     }
 
     /**
-     * @return array<int, string>
+     * @return array<int, ZipArchiveManifestEntry>
      */
     public static function validateArchive(
         ZipArchive $archive,
@@ -88,24 +96,38 @@ final class ZipEntryValidator
         }
 
         $entries = [];
+        $seenPaths = [];
+        $filePaths = [];
+        $ancestorPaths = [];
         $totalUncompressedBytes = 0;
 
         for ($index = 0; $index < $archive->numFiles; $index++) {
-            $entry = $archive->getNameIndex($index);
-            if (!is_string($entry)) {
+            $archiveName = $archive->getNameIndex($index);
+            if (!is_string($archiveName)) {
                 throw new UnsafeArchiveEntryException("Unable to read ZIP entry at index {$index}.");
             }
 
-            $entries[$index] = self::validate($entry, $extractionRoot);
-            self::assertNotSymbolicLink($archive, $index, $entry);
-            $totalUncompressedBytes = self::validateEntryResources(
+            $path = self::validate($archiveName, $extractionRoot);
+            $directory = str_ends_with($path, '/');
+            self::assertSupportedEntryType($archive, $index, $archiveName);
+            self::assertNoPathConflict($path, $directory, $seenPaths, $filePaths, $ancestorPaths, $archiveName);
+
+            [$uncompressedBytes, $totalUncompressedBytes] = self::validateEntryResources(
                 $archive,
                 $index,
-                $entry,
+                $archiveName,
                 $totalUncompressedBytes,
                 $maxEntryUncompressedBytes,
                 $maxTotalUncompressedBytes,
                 $maxCompressionRatio,
+            );
+
+            $entries[$index] = new ZipArchiveManifestEntry(
+                index: $index,
+                archiveName: $archiveName,
+                path: $path,
+                uncompressedBytes: $uncompressedBytes,
+                directory: $directory,
             );
         }
 
@@ -129,6 +151,50 @@ final class ZipEntryValidator
         }
     }
 
+    /**
+     * @param array<string, bool> $seenPaths
+     * @param array<string, true> $filePaths
+     * @param array<string, true> $ancestorPaths
+     */
+    private static function assertNoPathConflict(
+        string $path,
+        bool $directory,
+        array &$seenPaths,
+        array &$filePaths,
+        array &$ancestorPaths,
+        string $entry,
+    ): void {
+        $canonical = strtolower(rtrim(str_replace('\\', '/', $path), '/'));
+        if (isset($seenPaths[$canonical])) {
+            throw new UnsafeArchiveEntryException("Duplicate or case-conflicting ZIP entry detected: {$entry}");
+        }
+        if (!$directory && isset($ancestorPaths[$canonical])) {
+            throw new UnsafeArchiveEntryException("ZIP file conflicts with an archive directory path: {$entry}");
+        }
+
+        $segments = explode('/', $canonical);
+        $ancestor = '';
+        $lastIndex = count($segments) - 1;
+        foreach ($segments as $index => $segment) {
+            if ($segment === '') {
+                continue;
+            }
+            $ancestor = $ancestor === '' ? $segment : $ancestor . '/' . $segment;
+            if ($index === $lastIndex) {
+                break;
+            }
+            if (isset($filePaths[$ancestor])) {
+                throw new UnsafeArchiveEntryException("ZIP entry is nested below an archive file: {$entry}");
+            }
+            $ancestorPaths[$ancestor] = true;
+        }
+
+        $seenPaths[$canonical] = $directory;
+        if (!$directory) {
+            $filePaths[$canonical] = true;
+        }
+    }
+
     /** @param list<string> $segments */
     private static function assertNoSymbolicLinkInDestination(string $root, array $segments, string $entry): void
     {
@@ -149,7 +215,7 @@ final class ZipEntryValidator
         }
     }
 
-    private static function assertNotSymbolicLink(ZipArchive $archive, int $index, string $entry): void
+    private static function assertSupportedEntryType(ZipArchive $archive, int $index, string $entry): void
     {
         $attributes = 0;
         $operationsSystem = 0;
@@ -164,8 +230,12 @@ final class ZipEntryValidator
         if ($mode === self::UNIX_SYMBOLIC_LINK) {
             throw new UnsafeArchiveEntryException("Symbolic-link ZIP entry detected: {$entry}");
         }
+        if (in_array($mode, [self::UNIX_BLOCK_DEVICE, self::UNIX_CHARACTER_DEVICE, self::UNIX_FIFO, self::UNIX_SOCKET], true)) {
+            throw new UnsafeArchiveEntryException("Special-file ZIP entry detected: {$entry}");
+        }
     }
 
+    /** @return array{int, int} */
     private static function validateEntryResources(
         ZipArchive $archive,
         int $index,
@@ -174,7 +244,7 @@ final class ZipEntryValidator
         int $maxEntryUncompressedBytes,
         int $maxTotalUncompressedBytes,
         float $maxCompressionRatio,
-    ): int {
+    ): array {
         $stat = $archive->statIndex($index);
         if (!is_array($stat)) {
             throw new UnsafeArchiveEntryException("Unable to read ZIP resource metadata for entry: {$entry}");
@@ -208,6 +278,6 @@ final class ZipEntryValidator
             );
         }
 
-        return $total;
+        return [$size, $total];
     }
 }

@@ -180,7 +180,7 @@ test('it exposes an explicit lease lifecycle', function () {
 });
 
 test('an expired or reclaimed lease cannot mutate queue state', function () {
-    $queue = new FileJobQueue($this->queueFile, reservationTimeout: 1);
+    $queue = new FileJobQueue($this->queueFile, reservationTimeout: 5);
     $queue->enqueue('leased');
     $workerA = $queue->reserve();
     expect($workerA)->toBeInstanceOf(QueueReservation::class);

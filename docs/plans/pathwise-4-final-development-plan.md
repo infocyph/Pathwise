@@ -32,7 +32,7 @@ Legend:
 - `[ ]` pending;
 - `[!]` blocked by an external prerequisite or release dependency.
 
-Current active batch: **Batch 11 — archive, compression, metadata, and parser hardening**.
+Current active batch: **Batch 12 — storage/facade/global-state cleanup**.
 
 | Area | Status | Tracking note |
 | --- | --- | --- |
@@ -54,12 +54,12 @@ Current active batch: **Batch 11 — archive, compression, metadata, and parser 
 | Batch 8 — security defaults / atomic guarantees / permissions | [X] | All three sub-batches are complete; acceptance passed Windows PHP 8.4/8.5, optional adapters, stable+lowest QA, PHPStan/Psalm, and clean install. |
 | Batch 9 — bounded native execution | [X] | Bounded non-blocking native execution, timeout/output caps, typed failures, deterministic termination/cleanup, argv-only invocation, adapter-wide limits, and capability-based Windows fallback are CI-green. |
 | Batch 10 — file queue lease correctness/durability | [X] | Typed unique leases, expiry/renewal ownership checks, stale-worker rejection, versioned strict state, stable private lock file, crash-safe fsync+rename persistence, corruption handling, and recovery tests are CI-green on Linux and Windows. |
-| Batch 11 — archive/parser hardening | [~] | Active: unify ZIP validation/extraction safety, reject canonical collisions and unsafe entry types, enforce actual extracted bytes, clean partial output, then re-audit metadata/image/serialization boundaries. |
-| Batch 12 — static/global-state cleanup | [ ] | Pending major-version cleanup. |
+| Batch 11 — archive/parser hardening | [X] | Unified manifest-based ZIP validation/extraction, collision and special-entry rejection, streamed byte enforcement, write-time revalidation, deterministic local/remote cleanup, source-symlink rejection, safe serialization boundaries, and parser regressions are CI-green across the full matrix. |
+| Batch 12 — static/global-state cleanup | [~] | Active: remove redundant process-global storage registry/facade APIs and make `StorageContext` the persistent-runtime integration surface. |
 | Batch 13 — observability/retention/indexing/watcher review | [ ] | Pending whole-library subsystem audit. |
 | Batch 14 — complete Pathwise 4 documentation | [ ] | Release blocker; starts after public APIs are stable, with feature docs added earlier when useful. |
 | Batch 15 — performance/stress/release gates | [ ] | Final acceptance only after functional/security batches stabilize. |
-| Pathwise 4.0 release | [!] | Blocked until Batches 11–15 and all release gates pass. |
+| Pathwise 4.0 release | [!] | Blocked until Batches 12–15 and all release gates pass. |
 | Foundation 3 / Point 26.5 consumption | [!] | Blocked until Pathwise 4.0 is released; Foundation then raises its floor and removes duplicated generic filesystem mechanics. |
 
 Tracker maintenance rule: update this table whenever a batch starts, closes, is split, or gains a release-blocking finding. A batch is marked `[X]` only after its implementation and relevant acceptance checks are complete; writing code alone is not enough.
@@ -102,24 +102,17 @@ These batches were implemented before the 4.0 decision and remain part of the 4.
 - Deterministic cleanup on success and failure.
 - Typed single-upload and resumable-chunk entry points.
 
-## Batch 3 — hardened malware boundary — complete, being extended for 4.0
+## Batch 3 — hardened malware boundary — complete, extended for 4.0
 
-Already implemented:
-
-- typed `MalwareScannerInterface`;
-- typed `MalwareScanRequest`;
-- explicit `MalwareScanVerdict`;
-- only `CLEAN` is accepted;
-- `MALICIOUS`, `SUSPICIOUS`, and `UNKNOWN` fail closed;
-- scan runs before MIME/signature/image parsing;
-- Pathwise gives scanners a private local regular-file copy;
-- scanner/backend errors expose stable public upload errors while preserving the previous exception;
-- scan-input mutation is detected, including same-size byte mutation;
-- actual size is checked before scanning;
-- mounted/remote inputs are copied locally before scanning;
-- full assembled chunk uploads are scanned before publication.
-
-4.0 extension is defined in Batch 7 below.
+- typed `MalwareScannerInterface` and `MalwareScanRequest`;
+- explicit `MalwareScanVerdict` and fail-closed enforcement;
+- scan before MIME/signature/image parsing;
+- private local scan copies and deterministic cleanup;
+- scanner/backend errors mapped to stable upload errors;
+- scan-input mutation detection;
+- actual size enforcement;
+- mounted/remote localization;
+- full assembled chunk scan before publication.
 
 ## Batch 4 — prepared range-aware download streaming — complete
 
@@ -150,82 +143,25 @@ Already implemented:
 
 ## Batch 7 — malware policy modes and scanner providers — complete
 
-### 7.1 Replace the old required-scanner boolean with an explicit mode
+### 7.1 Explicit malware scan modes
 
-Introduce `MalwareScanMode`:
-
-- `OFF`
-  - never scan, even if a scanner object is registered;
-- `WHEN_CONFIGURED` — **default**
-  - if no scanner is configured, continue without scanning;
-  - if a scanner is configured, scan and enforce the verdict;
-- `REQUIRED`
-  - scanner must be configured;
-  - backend/scanner failure rejects the upload;
-  - only explicit `CLEAN` permits the upload.
-
-Remove the legacy `setRequireMalwareScan()` API.
-
-Expose scanner status through `UploadProcessor::getInfo()`:
-
-- scan mode;
-- scanner configured yes/no;
-- scanner provider identifier where available.
+`MalwareScanMode` provides `OFF`, `WHEN_CONFIGURED` (default), and `REQUIRED`. Scanner status is exposed through upload processor information, legacy required-scanner boolean behavior is removed, and only explicit `CLEAN` permits scanned uploads.
 
 ### 7.2 Native ClamAV daemon adapter
 
-Ship a first-party `ClamAvDaemonScanner` using the clamd **INSTREAM** protocol.
-
-Requirements:
-
-- Unix-socket and TCP endpoint support;
-- bounded connection/read/write timeouts;
-- bounded protocol response size;
-- chunked streaming rather than loading the complete file into memory;
-- configurable maximum scanner-stream bytes with fail-closed behavior;
-- stable `MalwareScannerException` errors;
-- no shell execution;
-- no requirement for the PHP worker to read arbitrary host files because Pathwise streams the private scan copy itself;
-- no requirement for PHP/root privilege solely for scanning.
+`ClamAvDaemonScanner` supports bounded clamd INSTREAM scanning over Unix sockets and TCP with bounded connection/read/write timeouts, response size, streamed bytes, stable scanner exceptions, and no shell/root requirement.
 
 ### 7.3 LMD / Linux Malware Detect integration
 
-Preferred production deployment:
-
-**Pathwise -> ClamAvDaemonScanner -> clamd with LMD signature integration enabled on the host.**
-
-Pathwise will document LMD as an additional host-side malware-signature source rather than spawning `maldet` from web/request workers.
-
-Rules:
-
-- do not require the PHP worker to run as root;
-- do not invoke `maldet` through `sudo` from Pathwise;
-- do not couple the library to LMD filesystem paths, quarantine directories, or host-service lifecycle;
-- applications may still implement a custom direct-LMD scanner through `MalwareScannerInterface` for specialized asynchronous/privileged deployments;
-- direct host-level scanners should run out-of-process under the administrator's privilege model.
+Preferred production deployment is **Pathwise -> ClamAvDaemonScanner -> clamd with LMD signature integration enabled on the host**. Pathwise does not require root, sudo, host LMD paths, or request-worker `maldet` execution. Specialized direct LMD integrations remain application-owned implementations of `MalwareScannerInterface`.
 
 ### 7.4 Other malware engines
 
-AMWScan, ICAP, commercial scanners, cloud malware services, and custom engines remain pluggable through `MalwareScannerInterface`.
+AMWScan, ICAP, commercial scanners, cloud malware services, and custom engines remain pluggable through `MalwareScannerInterface` without vendor coupling in core.
 
-Do not add vendor-specific dependencies to Pathwise core unless the adapter is lightweight, stable, optional, and provides clear value comparable to the ClamAV protocol adapter.
+### 7.5 Scanner acceptance — complete
 
-### 7.5 Scanner acceptance tests
-
-Must cover:
-
-- OFF + scanner configured -> scanner not invoked;
-- WHEN_CONFIGURED + no scanner -> upload proceeds without scanning;
-- WHEN_CONFIGURED + scanner -> scan enforced;
-- REQUIRED + no scanner -> fail before MIME/content parsing;
-- all non-clean verdicts -> reject;
-- backend errors -> reject without leaking backend detail;
-- scan runs after cheap size/extension gates but before MIME/signature/image parsing;
-- private local staging permissions and cleanup;
-- remote/mounted source -> local scan copy;
-- scanner mutation/replacement -> reject;
-- chunk-finalization scan;
-- ClamAV clean/found/error/unknown/oversize/timeout/protocol-malformation behavior using deterministic fake socket servers in tests.
+Mode behavior, all non-clean verdicts, backend errors, pre-parser scan ordering, private staging, mutation/replacement, chunk finalization, and deterministic clamd clean/found/error/unknown/oversize/timeout/protocol coverage are CI-green.
 
 ---
 
@@ -233,193 +169,68 @@ Must cover:
 
 ### 8.1 Policy engine deny-by-default
 
-`PolicyEngine` must default to deny when no rule matches.
-
-Allow an explicit default decision only when the caller opts into it intentionally.
-
-Acceptance:
-
-- empty policy denies;
-- explicit allow passes;
-- explicit deny blocks;
-- last matching rule semantics remain deterministic;
-- context predicates cannot accidentally convert an unmatched request into allow.
+Empty/unmatched policies deny unless the caller intentionally supplies an explicit default decision. Matching semantics remain deterministic.
 
 ### 8.2 Atomic write semantics
 
-Local atomic mode:
-
-- same-directory temp file;
-- final `rename()` must succeed atomically;
-- **no copy fallback** when an atomic rename fails;
-- failure leaves the previous destination intact wherever the OS/filesystem semantics permit;
-- temp cleanup remains deterministic.
-
-Adapter-backed / mounted / remote storage:
-
-- `enableAtomicWrite()` must reject storage where Pathwise cannot guarantee an atomic filesystem replacement;
-- normal non-atomic staged writes remain supported;
-- docs must call these staged/synchronized writes, not atomic writes.
+Local atomic mode uses same-directory staging and requires final rename success with no copy fallback. Adapter-backed/remote storage cannot opt into a guarantee Pathwise cannot provide; normal staged remote writes remain explicitly non-atomic.
 
 ### 8.3 Permissions
 
-Review every Pathwise-created local state file/directory:
-
-- scanner staging;
-- upload staging;
-- queues;
-- audit logs;
-- transaction journals;
-- native-command temporary outputs;
-- indexes/snapshots where Pathwise creates them.
-
-Use private defaults (`0700` directory / `0600` sensitive state file) where state is not explicitly intended for shared/public access.
+Pathwise-owned sensitive local staging/state uses private `0700` directories and `0600` files where the platform exposes POSIX permissions.
 
 ---
 
 ## Batch 9 — bounded native execution — complete
 
-Native command execution is bounded so it cannot pin a persistent worker indefinitely or accumulate unlimited output.
-
-Implemented execution limits:
-
-- process timeout/deadline;
-- stdout byte limit;
-- stderr byte limit;
-- non-blocking polling without deadlock on filled pipes;
-- TERM then bounded KILL/escalation where supported;
-- deterministic descriptor/process cleanup;
-- typed timeout/output-limit/start/exit/unsupported failures;
-- argv-array execution only; Pathwise never constructs shell command strings from user input.
-
-Every native adapter path (`rsync`, `cp`, `grep`, `zip`, `unzip`) flows through the bounded runner. Safe defaults are used by higher-level Pathwise operations; low-level callers may provide `NativeExecutionLimits` explicitly through `NativeOperationsAdapter`.
-
-Platform policy:
-
-- bounded native execution is exposed as a capability through `NativeCommandRunner::supportsBoundedExecution()`;
-- Pathwise does **not** maintain a second Windows-only output-capture/process engine merely to imitate Unix non-blocking pipe guarantees;
-- when bounded native execution is unavailable, native adapter capability probes return unavailable;
-- `AUTO` therefore uses the portable PHP/Flysystem implementation;
-- forced `NATIVE` fails explicitly rather than silently using an unbounded or weaker execution path.
-
-LMD scanning is not routed through this request-path runner; LMD integration remains host/service-oriented as defined in Batch 7.
-
-Acceptance passed:
-
-- hung child is terminated within configured bound;
-- infinite/large stdout cannot exhaust memory;
-- infinite/large stderr cannot exhaust memory;
-- stdout+stderr cannot deadlock the parent;
-- success and exit-code failures remain typed;
-- paths containing whitespace, Unicode, quotes, and shell metacharacters remain safe;
-- Windows PHP 8.4/8.5 verify capability/fallback semantics without OS-specific native emulation;
-- PHP 8.4/8.5 stable+lowest QA, PHPStan/Psalm, clean install, and optional-adapter contracts are green.
+Native execution has process deadlines, stdout/stderr caps, non-blocking pipe handling, bounded termination escalation, deterministic cleanup, typed start/timeout/output/exit/unsupported failures, and argv-only invocation. Native adapters (`rsync`, `cp`, `grep`, `zip`, `unzip`) use the bounded runner. Unsupported platforms/capabilities fall back in `AUTO` and fail explicitly in forced `NATIVE` mode.
 
 ---
 
 ## Batch 10 — file queue lease correctness and durability — complete
 
-The file queue now uses explicit, unique lease ownership rather than treating a reservation timestamp or job ID as sufficient authority.
-
-Implemented:
-
-- typed `QueueReservation` carrying opaque job ID, unique lease token, payload metadata, reservation time, and expiry;
-- explicit `reserve()`, `renew()`, `acknowledge()`, `release()`, and `fail()` lifecycle;
-- `process()` is a convenience layer over the same lease contract, and acknowledgement failures are not reclassified as handler failures;
-- lease expiry itself invalidates ownership, even before another worker performs reclamation;
-- reclaimed jobs receive a new lease token, so stale worker A cannot acknowledge/release/fail/renew worker B's reservation;
-- queue state is versioned and semantically validated on construction and every read/mutation;
-- pending, processing, and failed buckets enforce distinct state invariants and duplicate job IDs are rejected;
-- corrupt, empty, truncated, unsupported-version, and malformed committed state fail explicitly;
-- a stable private `.lock` file protects state mutations while the JSON state inode is replaced;
-- queue state persistence uses same-directory private temp files, complete writes, `fflush()` + `fsync()`, then `rename()` replacement;
-- orphan temp files from interrupted pre-commit writes are cleaned without replacing the last committed state;
-- queue, lock, and temporary state use private local permissions where the platform exposes POSIX modes;
-- persistence mechanics are isolated in `FileQueueStateStore`; `FileJobQueue` owns queue/lease semantics.
-
-Acceptance passed:
-
-1. worker A reserves;
-2. A's lease expires;
-3. A cannot acknowledge, release, renew, or fail that expired lease;
-4. worker B reclaims the same job under a new token;
-5. A remains stale and cannot mutate B's reservation;
-6. B completes safely;
-7. interrupted temporary-state recovery preserves the committed queue;
-8. corruption/version/duplicate-state tests fail closed;
-9. Windows PHP 8.4/8.5, PHP 8.4/8.5 stable+lowest QA, PHPStan/Psalm, clean install, and optional-adapter contracts are green.
+The file queue uses typed unique lease ownership, expiry/renew/ack/release/fail semantics, stale-worker rejection, versioned strict state, a stable private lock file, crash-safe same-directory temp + `fflush()`/`fsync()` + rename persistence, deterministic orphan cleanup, and corruption/version/duplicate fail-closed behavior.
 
 ---
 
-## Batch 11 — archive, compression, metadata, and parser hardening — active
-
-Full audit of all parser-like boundaries.
+## Batch 11 — archive, compression, metadata, and parser hardening — complete
 
 ### Archives
 
-Existing protections confirmed by the opening audit:
+Implemented:
 
-- traversal and null-byte rejection;
-- Unix absolute path rejection;
-- Windows drive-relative/absolute and UNC rejection;
-- archive symlink-entry rejection;
-- existing destination-symlink rejection;
-- entry-count limit;
-- per-entry uncompressed-size limit;
-- total expanded-size limit;
-- compression-ratio / zip-bomb defense;
-- validation occurs before native unzip as well as PHP extraction.
-
-Remaining archive work:
-
-- reject duplicate and canonically conflicting entry names before writing anything;
-- define portable collision semantics, including file/directory conflicts and Windows case-insensitive destination collisions;
-- reject unsupported Unix special-file entry types, not only symbolic links; ZIP extraction should materialize only regular files/directories;
-- carry validated expected uncompressed sizes into extraction and enforce actual streamed byte counts rather than trusting metadata alone;
-- revalidate containment/symlink state immediately before each filesystem write to narrow validation-to-write races;
-- ensure both `FileCompression` and `DirectoryOperations::unzip()` consume the same security-critical validation/extraction rules rather than maintaining divergent loops;
-- make local extraction failure cleanup deterministic so a partially extracted tree is not silently left as a successful-looking result;
-- keep remote extraction staging private and clean it on every exit path;
-- review native extraction so it preserves the same manifest/cleanup guarantees as the PHP path; if those guarantees cannot be enforced around an external unzip tool, native extraction must not claim equivalent hardened semantics;
-- audit compression input traversal so local source symlinks cannot cause out-of-root content inclusion or recursive loops unless an explicit safe policy exists.
+- traversal, null-byte, Unix absolute, Windows drive/UNC rejection;
+- duplicate/canonical/case-fold and file/directory collision rejection before writes;
+- symbolic-link and unsupported Unix special-file entry rejection;
+- entry-count, per-entry size, total expanded-size, and compression-ratio limits;
+- validated manifest entries carrying expected uncompressed bytes;
+- actual streamed-byte enforcement during extraction;
+- containment and destination-symlink revalidation immediately before publication;
+- one security-critical validator/extractor shared by `FileCompression`, selective extraction, and `DirectoryOperations::unzip()`;
+- deterministic transactional rollback for local partial extraction;
+- private local staging and rollback for adapter-backed publication without overwriting unrelated pre-existing remote content;
+- hardened native extraction explicitly unavailable when Pathwise cannot preserve byte/rollback guarantees;
+- archive creation rejects source symlinks rather than following out-of-root content.
 
 ### Metadata / image / format inspection
 
-Audit and enforce:
-
-- malware scan remains before deeper parsing where scanning is active;
-- signature inspection reads only the bytes required by configured signatures;
-- MIME/image/format probes avoid reading or parsing more data than required;
-- parser warnings/exceptions become stable Pathwise exceptions rather than leaking backend details or warnings;
-- temporary inspection copies are private and deterministically cleaned;
-- mounted/remote localization does not create an unbounded in-memory parsing path.
+The upload pipeline preserves cheap size/extension gates followed by malware scanning when active before deeper MIME/signature/image inspection. Signature reads remain bounded to configured signature requirements; parser/backend errors are normalized through Pathwise exceptions and Pathwise-owned localization remains private and cleaned.
 
 ### Serialization
 
-Audit and enforce:
+- Pathwise does not use PHP deserialization for upload/archive/metadata trust decisions;
+- `SafeFileReader` deserializes with `allowed_classes => false`;
+- decoded object/resource-like values are rejected by the safe-value validator;
+- malformed/unsafe payloads become stable `FileAccessException` failures;
+- PHP serialization is treated as a trusted-data convenience, not an untrusted interchange format.
 
-- Pathwise never unserializes attacker-controlled data as part of upload/archive/metadata validation;
-- serialization convenience helpers reject unsafe object/resource values where appropriate;
-- deserialization must keep classes disabled and return stable errors for malformed/unsafe payloads;
-- documentation must state that PHP serialization is a trusted-data convenience, not an untrusted-data interchange/validation format.
+### Batch 11 acceptance — passed
 
-### Batch 11 acceptance
-
-Must include deterministic regression coverage for:
-
-- duplicate/canonical/case-fold/file-directory ZIP collisions;
-- special Unix archive entry types;
-- actual extracted bytes exceeding or differing from validated metadata where a deterministic fixture can express it;
-- destination symlink/containment recheck at write time;
-- partial extraction failure cleanup;
-- source symlink behavior during archive creation;
-- native/PHP extraction security equivalence or explicit capability rejection;
-- serialization object rejection / classes-disabled deserialization;
-- bounded signature/image/metadata inspection and stable parser errors.
+Regression coverage includes archive collisions, special entries, size/ratio limits, write-time symlink/containment checks, local rollback, selected-entry validation, source-symlink behavior, explicit native-extraction rejection, and safe serialization. The final Batch 11 tree passed Windows PHP 8.4/8.5, optional adapters, PHP 8.4/8.5 stable+lowest QA, PHPStan/Psalm, and clean-install gates in Security & Standards run **#139**.
 
 ---
 
-## Batch 12 — storage/facade/global-state cleanup for the major
+## Batch 12 — storage/facade/global-state cleanup for the major — active
 
 Re-scan the static `PathwiseFacade`, `FlysystemHelper`, and `StorageFactory` APIs now that `StorageContext` exists.
 
@@ -608,12 +419,11 @@ Foundation should then:
 
 # Work order from this point
 
-1. **Batch 11** — archive/parser hardening.
-2. **Batch 12** — global/static API cleanup.
-3. **Batch 13** — remaining subsystem audit/hardening.
-4. **Batch 14** — complete documentation rebuild and migration guide.
-5. **Batch 15** — benchmarks/stress/final release gates.
-6. Release Pathwise 4.0, then complete Foundation Point 26.5 against the released floor.
+1. **Batch 12** — storage/facade/global-state cleanup.
+2. **Batch 13** — remaining subsystem audit/hardening.
+3. **Batch 14** — complete documentation rebuild and migration guide.
+4. **Batch 15** — benchmarks/stress/final release gates.
+5. Release Pathwise 4.0, then complete Foundation Point 26.5 against the released floor.
 
 ## Push discipline
 
