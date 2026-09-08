@@ -54,7 +54,6 @@ test('it appends lines to the file', function () {
         ->and($writer->count())->toBe(2);
 });
 
-
 test('it writes CSV data to the file', function () {
     $writer = new SafeFileWriter($this->tempFilePath);
     $writer->writeCsv(['Name', 'Age']);
@@ -82,7 +81,6 @@ test('it writes JSON data with pretty print', function () {
     expect($normalizedContent)->toBe($expectedJson);
 });
 
-
 test('it writes XML data to the file', function () {
     $xml = new SimpleXMLElement('<root><item>Value</item></root>');
     $writer = new SafeFileWriter($this->tempFilePath);
@@ -96,7 +94,6 @@ test('it writes serialized data to the file', function () {
     $writer->writeSerialized(['key' => 'value']);
     $writer->writeSerialized(['another' => 'entry']);
 
-    // Deserialize all lines
     $lines = file($this->tempFilePath, FILE_IGNORE_NEW_LINES);
     $content = array_map(fn($line) => unserialize($line), $lines);
     expect($content)->toBe([
@@ -104,7 +101,6 @@ test('it writes serialized data to the file', function () {
         ['another' => 'entry'],
     ]);
 });
-
 
 test('it writes a JSON array to the file', function () {
     $writer = new SafeFileWriter($this->tempFilePath);
@@ -132,7 +128,6 @@ test('it locks and unlocks the file', function () {
 
     expect($normalizedContent)->toBe("Locked Content\n");
 });
-
 
 test('it counts total write operations', function () {
     $writer = new SafeFileWriter($this->tempFilePath);
@@ -171,7 +166,7 @@ test('it converts to string and JSON serializes', function () {
         ->and(json_encode($writer))->toContain('"filename"');
 });
 
-test('it supports atomic write mode', function () {
+test('it supports atomic local replacement mode', function () {
     file_put_contents($this->tempFilePath, 'before');
 
     $writer = (new SafeFileWriter($this->tempFilePath))
@@ -183,6 +178,13 @@ test('it supports atomic write mode', function () {
     $writer->close();
     $normalizedContent = str_replace(["\r\n", "\r"], "\n", file_get_contents($this->tempFilePath));
     expect($normalizedContent)->toBe("after\n");
+});
+
+test('it rejects atomic mode for adapter-backed paths', function () {
+    $writer = new SafeFileWriter('writer://remote.txt');
+
+    expect(fn () => $writer->enableAtomicWrite())
+        ->toThrow(FileAccessException::class, 'requires a direct-local filesystem path');
 });
 
 test('it verifies checksum after writing', function () {
