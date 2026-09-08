@@ -203,8 +203,6 @@ test('it rejects invalid topology and unsafe logical paths', function (): void {
                 ['s3' => static fn (array $config): FilesystemOperator => StorageFactory::createFilesystem($config)],
             ))
             ->toThrow(InvalidArgumentException::class, 'reserved')
-            ->and(fn () => $context->resolve('C:/outside.txt'))
-            ->toThrow(InvalidArgumentException::class, 'must be relative')
             ->and(fn () => $context->resolve('../outside.txt'))
             ->toThrow(InvalidArgumentException::class, 'parent-directory traversal')
             ->and(fn () => $context->localPath('local://safe/../../outside.txt'))
@@ -213,3 +211,18 @@ test('it rejects invalid topology and unsafe logical paths', function (): void {
         FlysystemHelper::deleteDirectory($root);
     }
 });
+
+test('it rejects absolute logical paths consistently across platforms', function (string $path): void {
+    $context = new StorageContext([
+        'local' => ['driver' => 'local', 'root' => sys_get_temp_dir()],
+    ], 'local');
+
+    expect(fn () => $context->resolve($path))
+        ->toThrow(InvalidArgumentException::class, 'must be relative');
+})->with([
+    'unix root' => '/outside.txt',
+    'windows drive absolute slash' => 'C:/outside.txt',
+    'windows drive absolute backslash' => 'C:\\outside.txt',
+    'windows drive relative' => 'C:outside.txt',
+    'UNC path' => '\\\\server\\share.txt',
+]);
