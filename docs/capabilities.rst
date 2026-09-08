@@ -1,141 +1,155 @@
 Capabilities
 ============
 
-This page answers one question: **what does Pathwise include today?**
+Pathwise 4 combines storage-neutral filesystem I/O with explicit local-only
+capabilities and hardened workflow primitives.
 
-At a Glance
------------
+Runtime Model
+-------------
 
-Pathwise combines two layers:
+* ``PathwiseFacade`` is stateless convenience for common operations.
+* ``StorageFactory`` is a stateless Flysystem constructor/driver metadata helper.
+* ``StorageContext`` owns persistent named storage topology for one application
+  runtime/generation.
+* Direct absolute paths remain local. Context relative/scheme paths resolve
+  through the injected context.
+* Low-level ``FlysystemHelper`` routing exists for standalone utility use, not
+  as the recommended multi-application registry.
 
-* Storage-safe file operations (local paths and mounted scheme paths).
-* Higher-level workflows (upload pipeline, compression, retention, queue, audit, policy).
+File and Directory Operations
+-----------------------------
 
-Primary Modules
----------------
+``Infocyph\Pathwise\FileManager``
+   ``FileOperations``, ``SafeFileReader``, ``SafeFileWriter``,
+   ``FileCompression``, ``SafeSymlinkManager`` and local transaction support.
 
-Unified Facade (``Infocyph\Pathwise\PathwiseFacade``)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+``Infocyph\Pathwise\DirectoryManager``
+   ``DirectoryOperations`` for recursive lifecycle, listing/filtering, sync and
+   archive workflows with typed ``SyncReport`` output.
 
-Class:
+Capabilities include checksums, verified writes/copies, locking, atomic local
+replacement, safe rollback, ZIP hardening, filters/progress, and explicit
+storage/platform capability failures.
 
-* ``PathwiseFacade``
+Storage
+-------
 
-What you get:
+``Infocyph\Pathwise\Storage``
+   ``StorageContext`` and ``StorageFactory``.
 
-* One path-bound entry to ``FileOperations``, ``DirectoryOperations``,
-  ``SafeFileReader``, ``SafeFileWriter`` and ``FileCompression``.
-* Static gateways for ``UploadProcessor``, ``DownloadProcessor``,
-  ``StorageFactory``, ``PolicyEngine``, ``FileJobQueue``, ``AuditTrail``,
-  ``RetentionManager``, ``ChecksumIndexer`` and ``FileWatcher``.
+Flysystem adapter construction covers local, FTP, memory, read-only,
+path-prefixing, S3 variants, Azure, Google Cloud Storage, GridFS, SFTP, WebDAV
+and ZIP adapter packages when installed. Custom driver factories are scoped to
+one ``StorageContext``.
 
-File IO (``Infocyph\Pathwise\FileManager``)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Uploads
+-------
 
-Classes:
+``UploadProcessor`` provides:
 
-* ``FileOperations``
-* ``SafeFileReader``
-* ``SafeFileWriter``
-* ``FileCompression``
+* genuine PHP HTTP upload provenance checking;
+* trusted application/CLI ingestion;
+* framework-neutral ``UploadSource`` mover/path/stream ingestion;
+* private owned staging and deterministic cleanup;
+* validation profiles, MIME/size/extension/signature/image checks;
+* hash/timestamp naming with deterministic collision checks;
+* resumable chunk manifests/state/finalization;
+* typed malware scanner contracts and explicit scan modes;
+* direct ``StorageContext`` integration.
 
-What you get:
+Downloads
+---------
 
-* Create/read/update/delete, stream reads/writes, checksum verify/copy verify.
-* Atomic-safe writer mode, lock support, structured read/write helpers.
-* ZIP workflows with password/encryption, include/exclude patterns, progress callbacks.
+``DownloadProcessor`` provides:
 
-Directory Workflows (``Infocyph\Pathwise\DirectoryManager``)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+* allowed-root/extension/hidden-file/max-size policy;
+* safe filenames and response-oriented metadata;
+* byte range parsing and typed ``DownloadPreparation``;
+* range-aware iterable ``streamChunks()`` with source cleanup;
+* direct output-stream copying through ``streamDownload()``;
+* stale-preparation revalidation;
+* direct ``StorageContext`` integration.
 
-Class:
+Security
+--------
 
-* ``DirectoryOperations``
+``PolicyEngine``
+   Deny-by-default path/operation policy with conditions and last-match-wins
+   rules.
 
-What you get:
+Archive security
+   Manifest-driven ZIP validation/extraction with path, collision, entry-type,
+   size, compression-ratio, source-symlink and write-time checks.
 
-* Idempotent create, recursive copy/move/delete.
-* Listing, flattening, find/filter, size/depth metrics.
-* Lazy directory sync with readonly ``SyncReport`` and explicit comparison strategy.
-* Zip/unzip helpers for local and mounted paths.
+Symbolic links
+   ``SafeSymlinkManager`` validates allowed link/target roots and existing
+   targets for direct-local link lifecycle.
 
-Uploads (``Infocyph\Pathwise\StreamHandler``)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Serialization
+   Defensive serialized-value validation without object instantiation.
 
-Class:
+Native execution
+   Bounded argv execution with timeout/output limits and deterministic
+   termination/cleanup.
 
-* ``UploadProcessor``
+Operations and Data Management
+------------------------------
 
-What you get:
+``Queue\FileJobQueue``
+   Direct-local durable queue with typed opaque leases, renewal, stale-worker
+   rejection, strict versioned state and crash-safe persistence.
 
-* Standard upload handling and destination strategy.
-* Validation presets (image/video/document), MIME and size rules.
-* Chunked/resumable upload flow.
-* Extension allowlist/blocklist controls.
-* Upload ID validation for chunk/session identifiers.
-* Strict content checks (MIME-extension agreement and file signature checks).
-* Optional or required malware scan callback.
+``Observability``
+   ``AuditTrail`` plus local JSONL, callback and partitioned sinks.
 
-Downloads (``Infocyph\Pathwise\StreamHandler``)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+``Indexing\ChecksumIndexer``
+   Content index, duplicate detection and local hard-link deduplication.
 
-Class:
+``Retention\RetentionManager``
+   Count/age-based retention with typed result.
 
-* ``DownloadProcessor``
+``Utils\FileWatcher``
+   Snapshot, diff and bounded polling watcher behavior.
 
-What you get:
+Typed Results
+-------------
 
-* Secure download metadata generation for HTTP adapters.
-* Extension allowlist/blocklist controls.
-* Allowed-root restriction to prevent path breakout.
-* Hidden-file blocking and max-size limits.
-* Optional range request handling and partial-download metadata.
-* Stream copy into caller-provided output resources.
+Important public results include ``ChunkUploadState``, ``DownloadPreparation``,
+``RangeDownloadMetadata``, ``DownloadStreamResult``, ``QueueProcessResult``,
+``SyncReport``, ``SymlinkStatus``, ``SnapshotDiff``, ``WatchResult``,
+``RetentionResult``, ``DeduplicationResult`` and ``NativeExecutionResult``.
 
-Security and Operations
-^^^^^^^^^^^^^^^^^^^^^^^
+Local-Only Capabilities
+-----------------------
 
-Classes:
+Pathwise does not pretend that object storage can provide OS primitives. These
+remain direct-local/platform dependent:
 
-* ``PolicyEngine`` (allow/deny + conditions)
-* ``AuditTrail`` (JSONL audit logging)
-* ``FileJobQueue`` (file-backed queue)
-* ``ChecksumIndexer`` (duplicate/index workflows)
-* ``RetentionManager`` (keep-last and age-based cleanup)
-* ``FileWatcher`` (snapshot/diff/watch)
+* ``flock`` queue/session coordination;
+* native subprocess paths;
+* POSIX/Windows ownership operations;
+* symlink/hard-link semantics;
+* local transaction/atomic rename guarantees.
 
-Storage and Path Model
-----------------------
+See :doc:`performance-portability` for the complete capability table.
 
-Pathwise accepts:
-
-* Local paths (absolute or relative).
-* Mounted scheme paths like ``assets://images/logo.png``.
-
-Mounting is done through ``FlysystemHelper::mount()``. Once mounted, most
-high-level modules can use the scheme path directly.
-
-For config-driven adapter bootstrap, use
-``Infocyph\Pathwise\Storage\StorageFactory`` (see ``storage-adapters``).
-
-Runtime and Extensions
-----------------------
+Requirements
+------------
 
 Required:
 
 * PHP 8.4+
-* ``league/flysystem`` 3.x
 * ``ext-fileinfo``
+* ``league/flysystem`` 3.x
+* ``psr/log`` 3.x
 
-Optional:
+Optional extensions/adapters are installed only for selected capabilities.
 
-* ``ext-zip`` (archive features)
-* ``ext-posix`` (richer Unix ownership data)
-* ``ext-xmlreader``, ``ext-simplexml`` (XML helpers)
+Read Next
+---------
 
-What to Read Next
------------------
-
-* ``file-facade`` for unified usage style.
-* ``quickstart`` for first-use examples.
-* ``recipes`` for end-to-end flows.
+* :doc:`quickstart`
+* :doc:`storage-context`
+* :doc:`storage-adapters`
+* :doc:`security`
+* :doc:`api-reference`
