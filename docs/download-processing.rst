@@ -3,94 +3,128 @@ Download Processing
 
 Namespace: ``Infocyph\Pathwise\StreamHandler``
 
-Where it fits:
+``DownloadProcessor`` separates secure download preparation from body delivery.
+That makes it suitable for framework adapters without making Pathwise an HTTP
+response implementation.
 
-* Use this module when you need secure download metadata and controlled stream
-  delivery for local or mounted filesystems.
+Core Flow
+---------
 
-``DownloadProcessor`` supports:
-
-* Download metadata generation with headers suitable for HTTP adapters.
-* Safe download filename handling for ``Content-Disposition``.
-* Extension allowlist/blocklist controls.
-* Allowed-root restrictions to prevent serving files outside trusted paths.
-* Hidden-file blocking.
-* Optional max download size enforcement.
-* Optional range requests with byte-range parsing and partial metadata.
-* Range-aware iterable chunk streaming for framework response adapters.
-* Stream copy to caller-provided output resources.
-* Mounted/default filesystem paths (e.g. ``s3://...``) via Flysystem routing.
-
-Security controls
------------------
-
-``DownloadProcessor`` exposes explicit hardening options:
-
-* ``setAllowedRoots(array $roots)``
-* ``setExtensionPolicy(array $allowedExtensions = [], array $blockedExtensions = [])``
-* ``setBlockHiddenFiles(bool $block = true)``
-* ``setMaxDownloadSize(int $maxDownloadSize = 0)``
-* ``setRangeRequestsEnabled(bool $enabled = true)``
-* ``setForceAttachment(bool $enabled = true)``
-* ``setDefaultDownloadName(string $name)``
-* ``setChunkSize(int $chunkSize)``
-
-Prepared Chunk Streaming
-------------------------
-
-Frameworks that own their HTTP response lifecycle can prepare headers/status
-first and then hand the exact prepared range back to Pathwise for body delivery:
-
-.. code-block:: php
-
-   $manifest = $downloads->prepareDownload(
-       path: 's3://downloads/video.mp4',
-       downloadName: 'video.mp4',
-       rangeHeader: $rangeHeader,
-   );
-
-   foreach ($downloads->streamChunks($manifest) as $chunk) {
-       yield $chunk;
-   }
-
-``streamChunks()`` opens the source lazily, positions seekable or non-seekable
-streams at the prepared range start, limits reads to the prepared content
-length, and closes the input stream in a ``finally`` block. Disposing a
-partially-consumed generator therefore releases its input resource.
-
-A ``DownloadPreparation`` is metadata, not an authorization capability. Before
-opening its body, Pathwise re-applies current path/hidden-file/allowed-root and
-extension policy, checks the current maximum-size policy, and verifies that the
-source size and last-modified metadata still match the preparation. Stale or
-manually constructed preparations cannot use ``streamChunks()`` to bypass the
-current download policy.
-
-``streamDownload()`` uses this same chunk-streaming core, so direct output-stream
-copies and framework iterable responses share range, incomplete-read, and
-resource-cleanup behavior.
-
-Examples
---------
-
-Prepare secure metadata:
+1. Configure storage and policy.
+2. Call ``prepareDownload()`` to validate the path and produce typed metadata.
+3. Bridge ``DownloadPreparation::status`` and ``headers`` to the framework.
+4. Stream exactly that preparation through ``streamChunks()`` or use
+   ``streamDownload()`` for a writable PHP resource.
 
 .. code-block:: php
 
    use Infocyph\Pathwise\StreamHandler\DownloadProcessor;
 
    $downloads = new DownloadProcessor();
-   $downloads->setAllowedRoots(['/srv/app/downloads']);
-   $downloads->setExtensionPolicy(['pdf', 'zip'], ['php', 'phar', 'exe']);
+   $downloads->setStorageContext($storage);
+   $downloads->setAllowedRoots(['objects://downloads']);
+   $downloads->setExtensionPolicy(['pdf', 'zip', 'mp4']);
 
-   $manifest = $downloads->prepareDownload(
-       path: '/srv/app/downloads/report.pdf',
-       downloadName: 'monthly-report.pdf',
-       rangeHeader: null,
+   $prepared = $downloads->prepareDownload(
+       path: 'objects://downloads/video.mp4',
+       downloadName: 'video.mp4',
+       rangeHeader: $_SERVER['HTTP_RANGE'] ?? null,
    );
 
-   // Use $manifest->status, $manifest->headers, and $manifest->range.
+   foreach ($downloads->streamChunks($prepared) as $chunk) {
+       echo $chunk;
+   }
 
-Stream output with range support:
+StorageContext Integration
+--------------------------
+
+``setStorageContext()`` gives the processor an instance-owned resolver. Configure
+it before path/root policy.
+
+* direct absolute paths remain local;
+* relative paths use the context default filesystem;
+* ``name://path`` selects a configured context filesystem;
+* no global mount is registered.
+
+The same logical storage name can therefore be used by processors belonging to
+different applications in one process without cross-talk.
+
+Security Controls
+-----------------
+
+``DownloadProcessor`` exposes:
+
+* ``setAllowedRoots(array $roots)``;
+* ``setExtensionPolicy(array $allowedExtensions = [], array $blockedExtensions = [])``;
+* ``setBlockHiddenFiles(bool $block = true)``;
+* ``setMaxDownloadSize(int $maxDownloadSize = 0)``;
+* ``setRangeRequestsEnabled(bool $enabled = true)``;
+* ``setForceAttachment(bool $enabled = true)``;
+* ``setDefaultDownloadName(string $name)``;
+* ``setChunkSize(int $chunkSize)``.
+
+Hidden files are blocked by default. The default blocked extension set covers
+common executable/server-side script types. Allowed-root checks compare paths
+inside the same resolved filesystem; a path on another context filesystem
+cannot satisfy a root merely by sharing a textual prefix.
+
+DownloadPreparation
+-------------------
+
+``prepareDownload()`` returns ``DownloadPreparation`` containing:
+
+* canonical Pathwise path;
+* safe download filename;
+* MIME type;
+* size and last-modified metadata;
+* weak ETag;
+* status (``200`` or ``206``);
+* ``RangeDownloadMetadata``;
+* response-oriented headers.
+
+Headers include safe ``Content-Disposition``, ``Content-Length``,
+``Content-Type``, ``Last-Modified``, ``ETag``, ``Accept-Ranges``,
+``Cache-Control`` and ``X-Content-Type-Options``. Framework/application code
+still owns conditional request policy such as If-None-Match/If-Modified-Since.
+
+Range Semantics
+---------------
+
+Pathwise accepts one byte range in the standard ``bytes=start-end``, open-ended,
+or suffix form. Invalid/unsatisfiable ranges raise ``DownloadException`` rather
+than silently degrading to a full response.
+
+``RangeDownloadMetadata`` exposes the resolved start/end, content length, and
+partial flag. Empty files have a zero content length and no numeric start/end.
+
+Prepared Streaming and Revalidation
+-----------------------------------
+
+``streamChunks(DownloadPreparation $preparation)`` opens the source lazily,
+positions seekable streams directly or discards bytes on non-seekable streams,
+reads no more than the prepared range, and closes the source in a ``finally``
+block. Disposing the generator early therefore closes its input resource.
+
+A preparation is metadata, **not** an authorization capability. Before opening
+the body Pathwise re-applies current path/root/hidden-file/extension/max-size
+policy and verifies that current size/last-modified metadata still matches the
+preparation. Stale or manually-constructed preparations cannot bypass policy.
+
+.. code-block:: php
+
+   $prepared = $downloads->prepareDownload(
+       '/srv/app/downloads/report.pdf',
+       'monthly-report.pdf',
+   );
+
+   foreach ($downloads->streamChunks($prepared) as $chunk) {
+       // yield/write chunk to your framework response
+   }
+
+Direct Output Stream
+--------------------
+
+``streamDownload()`` shares the same preparation and chunk-streaming core:
 
 .. code-block:: php
 
@@ -103,19 +137,19 @@ Stream output with range support:
        rangeHeader: $_SERVER['HTTP_RANGE'] ?? null,
    );
 
-   // $result->preparation contains status, headers, and range metadata.
-   // $result->bytesSent is the number of bytes written to the output stream.
+   // $result->preparation
+   // $result->bytesSent
 
-Mounted storage example:
+Writes are completed fully or fail with ``DownloadException``; partial
+``fwrite()`` results are retried until the current chunk is complete.
 
-.. code-block:: php
+Framework Boundary
+------------------
 
-   use Infocyph\Pathwise\Storage\StorageFactory;
-   use Infocyph\Pathwise\StreamHandler\DownloadProcessor;
+Pathwise owns filesystem/range mechanics. An HTTP framework owns request
+conditionals, response object creation, server offload features such as
+X-Sendfile/X-Accel-Redirect, and connection lifecycle. This boundary is
+intentional and is the integration model used by Foundation 3.
 
-   StorageFactory::mount('s3', ['adapter' => $myS3Adapter]);
-
-   $downloads = new DownloadProcessor();
-   $downloads->setAllowedRoots(['s3://downloads']);
-
-   $manifest = $downloads->prepareDownload('s3://downloads/report.pdf');
+See :doc:`storage-context`, :doc:`security`, and
+:doc:`performance-portability`.
