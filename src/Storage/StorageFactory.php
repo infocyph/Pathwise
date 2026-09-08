@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\Storage;
 
-use Infocyph\Pathwise\Utils\FlysystemHelper;
 use League\Flysystem\Filesystem;
 use League\Flysystem\FilesystemAdapter;
 use League\Flysystem\FilesystemOperator;
@@ -31,86 +30,25 @@ final class StorageFactory
         'zip-archive' => 'ziparchive',
     ];
 
-    /**
-     * @var array<string, array{package: string, adapter_class: non-empty-string}>
-     */
+    /** @var array<string, array{package: string, adapter_class: non-empty-string}> */
     private const array OFFICIAL_DRIVERS = [
-        'local' => [
-            'package' => 'league/flysystem-local',
-            'adapter_class' => LocalFilesystemAdapter::class,
-        ],
-        'ftp' => [
-            'package' => 'league/flysystem-ftp',
-            'adapter_class' => 'League\\Flysystem\\Ftp\\FtpAdapter',
-        ],
-        'inmemory' => [
-            'package' => 'league/flysystem-memory',
-            'adapter_class' => 'League\\Flysystem\\InMemory\\InMemoryFilesystemAdapter',
-        ],
-        'read-only' => [
-            'package' => 'league/flysystem-read-only',
-            'adapter_class' => 'League\\Flysystem\\ReadOnly\\ReadOnlyFilesystemAdapter',
-        ],
-        'path-prefixing' => [
-            'package' => 'league/flysystem-path-prefixing',
-            'adapter_class' => 'League\\Flysystem\\PathPrefixing\\PathPrefixedAdapter',
-        ],
-        'aws-s3' => [
-            'package' => 'league/flysystem-aws-s3-v3',
-            'adapter_class' => 'League\\Flysystem\\AwsS3V3\\AwsS3V3Adapter',
-        ],
-        'async-aws-s3' => [
-            'package' => 'league/flysystem-async-aws-s3',
-            'adapter_class' => 'League\\Flysystem\\AsyncAwsS3\\AsyncAwsS3Adapter',
-        ],
-        'azure-blob-storage' => [
-            'package' => 'league/flysystem-azure-blob-storage',
-            'adapter_class' => 'League\\Flysystem\\AzureBlobStorage\\AzureBlobStorageAdapter',
-        ],
-        'google-cloud-storage' => [
-            'package' => 'league/flysystem-google-cloud-storage',
-            'adapter_class' => 'League\\Flysystem\\GoogleCloudStorage\\GoogleCloudStorageAdapter',
-        ],
-        'mongodb-gridfs' => [
-            'package' => 'league/flysystem-gridfs',
-            'adapter_class' => 'League\\Flysystem\\GridFS\\GridFSAdapter',
-        ],
-        'sftp-v2' => [
-            'package' => 'league/flysystem-sftp-v2',
-            'adapter_class' => 'League\\Flysystem\\PhpseclibV2\\SftpAdapter',
-        ],
-        'sftp-v3' => [
-            'package' => 'league/flysystem-sftp-v3',
-            'adapter_class' => 'League\\Flysystem\\PhpseclibV3\\SftpAdapter',
-        ],
-        'webdav' => [
-            'package' => 'league/flysystem-webdav',
-            'adapter_class' => 'League\\Flysystem\\WebDAV\\WebDAVAdapter',
-        ],
-        'ziparchive' => [
-            'package' => 'league/flysystem-ziparchive',
-            'adapter_class' => 'League\\Flysystem\\ZipArchive\\ZipArchiveAdapter',
-        ],
+        'local' => ['package' => 'league/flysystem-local', 'adapter_class' => LocalFilesystemAdapter::class],
+        'ftp' => ['package' => 'league/flysystem-ftp', 'adapter_class' => 'League\\Flysystem\\Ftp\\FtpAdapter'],
+        'inmemory' => ['package' => 'league/flysystem-memory', 'adapter_class' => 'League\\Flysystem\\InMemory\\InMemoryFilesystemAdapter'],
+        'read-only' => ['package' => 'league/flysystem-read-only', 'adapter_class' => 'League\\Flysystem\\ReadOnly\\ReadOnlyFilesystemAdapter'],
+        'path-prefixing' => ['package' => 'league/flysystem-path-prefixing', 'adapter_class' => 'League\\Flysystem\\PathPrefixing\\PathPrefixedAdapter'],
+        'aws-s3' => ['package' => 'league/flysystem-aws-s3-v3', 'adapter_class' => 'League\\Flysystem\\AwsS3V3\\AwsS3V3Adapter'],
+        'async-aws-s3' => ['package' => 'league/flysystem-async-aws-s3', 'adapter_class' => 'League\\Flysystem\\AsyncAwsS3\\AsyncAwsS3Adapter'],
+        'azure-blob-storage' => ['package' => 'league/flysystem-azure-blob-storage', 'adapter_class' => 'League\\Flysystem\\AzureBlobStorage\\AzureBlobStorageAdapter'],
+        'google-cloud-storage' => ['package' => 'league/flysystem-google-cloud-storage', 'adapter_class' => 'League\\Flysystem\\GoogleCloudStorage\\GoogleCloudStorageAdapter'],
+        'mongodb-gridfs' => ['package' => 'league/flysystem-gridfs', 'adapter_class' => 'League\\Flysystem\\GridFS\\GridFSAdapter'],
+        'sftp-v2' => ['package' => 'league/flysystem-sftp-v2', 'adapter_class' => 'League\\Flysystem\\PhpseclibV2\\SftpAdapter'],
+        'sftp-v3' => ['package' => 'league/flysystem-sftp-v3', 'adapter_class' => 'League\\Flysystem\\PhpseclibV3\\SftpAdapter'],
+        'webdav' => ['package' => 'league/flysystem-webdav', 'adapter_class' => 'League\\Flysystem\\WebDAV\\WebDAVAdapter'],
+        'ziparchive' => ['package' => 'league/flysystem-ziparchive', 'adapter_class' => 'League\\Flysystem\\ZipArchive\\ZipArchiveAdapter'],
     ];
 
-    /** @var array<string, callable(array<string, mixed>): FilesystemOperator> */
-    private static array $drivers = [];
-
-    /**
-     * Clear all registered custom drivers.
-     */
-    public static function clearDrivers(): void
-    {
-        self::$drivers = [];
-    }
-
-    /**
-     * Create a filesystem from configuration.
-     *
-     * @param array<string, mixed> $config The filesystem configuration.
-     * @return FilesystemOperator The created filesystem.
-     * @throws \InvalidArgumentException If the driver is unsupported.
-     */
+    /** @param array<string, mixed> $config */
     public static function createFilesystem(array $config): FilesystemOperator
     {
         self::assertUnambiguousConfig($config);
@@ -130,153 +68,31 @@ final class StorageFactory
         if ($driver === 'local') {
             return self::createLocalFilesystemFromConfig($config);
         }
-
-        $custom = self::createFromRegisteredDriver($driver, $config);
-        if ($custom !== null) {
-            return $custom;
-        }
-
         if (self::isOfficialDriver($driver)) {
             return self::createOfficialFilesystem($driver, $config);
         }
 
         throw new \InvalidArgumentException(
-            "Unsupported storage driver '{$driver}'. Register it via StorageFactory::registerDriver().",
+            "Unsupported storage driver '{$driver}'. Supply custom driver factories to StorageContext.",
         );
     }
 
-    /**
-     * Get the names of all registered custom drivers.
-     *
-     * @return list<string> The driver names.
-     */
-    public static function driverNames(): array
-    {
-        return array_keys(self::$drivers);
-    }
-
-    /**
-     * Check if a custom driver is registered.
-     *
-     * @param string $name The driver name.
-     * @return bool True if the driver is registered, false otherwise.
-     */
-    public static function hasDriver(string $name): bool
-    {
-        return isset(self::$drivers[self::canonicalDriverName($name)]);
-    }
-
-    /**
-     * Check if a driver is an official Flysystem driver.
-     *
-     * @param string $driver The driver name.
-     * @return bool True if it's an official driver, false otherwise.
-     */
     public static function isOfficialDriver(string $driver): bool
     {
         return isset(self::OFFICIAL_DRIVERS[self::canonicalDriverName($driver)]);
     }
 
-    /**
-     * Create and mount a filesystem under a name.
-     *
-     * @param string $name The mount name.
-     * @param array<string, mixed> $config The filesystem configuration.
-     * @return FilesystemOperator The created filesystem.
-     */
-    public static function mount(string $name, array $config): FilesystemOperator
-    {
-        $filesystem = self::createFilesystem($config);
-        FlysystemHelper::mount($name, $filesystem);
-
-        return $filesystem;
-    }
-
-    /**
-     * Mount multiple filesystems at once.
-     *
-     * @param array<string, array<string, mixed>> $mounts Array of mount name => config pairs.
-     */
-    public static function mountMany(array $mounts): void
-    {
-        $prepared = [];
-        foreach ($mounts as $name => $config) {
-            if ($name === '') {
-                throw new \InvalidArgumentException('Mount names must be non-empty strings.');
-            }
-            if (FlysystemHelper::hasMount($name) || array_key_exists($name, $prepared)) {
-                throw new \InvalidArgumentException("Flysystem mount '{$name}' is already registered.");
-            }
-            $prepared[$name] = self::createFilesystem($config);
-        }
-
-        $mounted = [];
-
-        try {
-            foreach ($prepared as $name => $filesystem) {
-                FlysystemHelper::mount($name, $filesystem);
-                $mounted[] = $name;
-            }
-        } catch (\Throwable $exception) {
-            foreach ($mounted as $name) {
-                FlysystemHelper::unmount($name);
-            }
-
-            throw $exception;
-        }
-    }
-
-    /**
-     * Get all official driver metadata.
-     *
-     * @return array<string, array{package: string, adapter_class: non-empty-string}> The official drivers.
-     */
+    /** @return array<string, array{package: string, adapter_class: non-empty-string}> */
     public static function officialDrivers(): array
     {
         return self::OFFICIAL_DRIVERS;
     }
 
-    /**
-     * Register a custom driver factory.
-     *
-     * @param string $name The driver name.
-     * @param callable(array<string, mixed>): FilesystemOperator $factory Factory that receives config and returns filesystem.
-     * @throws \InvalidArgumentException If the driver name is empty.
-     */
-    public static function registerDriver(string $name, callable $factory): void
-    {
-        $driver = self::canonicalDriverName($name);
-        if ($driver === '') {
-            throw new \InvalidArgumentException('Driver name is required.');
-        }
-        if (isset(self::OFFICIAL_DRIVERS[$driver]) || isset(self::$drivers[$driver])) {
-            throw new \InvalidArgumentException("Storage driver name '{$name}' is reserved or already registered.");
-        }
-
-        self::$drivers[$driver] = $factory;
-    }
-
-    /**
-     * Get the suggested package for an official driver.
-     *
-     * @param string $driver The driver name.
-     * @return string|null The package name, or null if not an official driver.
-     */
     public static function suggestedPackage(string $driver): ?string
     {
         $normalized = self::canonicalDriverName($driver);
 
         return self::OFFICIAL_DRIVERS[$normalized]['package'] ?? null;
-    }
-
-    /**
-     * Unregister a custom driver.
-     *
-     * @param string $name The driver name to unregister.
-     */
-    public static function unregisterDriver(string $name): void
-    {
-        unset(self::$drivers[self::canonicalDriverName($name)]);
     }
 
     /** @param array<string, mixed> $config */
@@ -299,26 +115,12 @@ final class StorageFactory
 
     private static function canonicalDriverName(string $name): string
     {
-        $normalized = self::normalizeDriverName($name);
+        $normalized = strtolower(trim($name));
 
         return self::DRIVER_ALIASES[$normalized] ?? $normalized;
     }
 
-    /**
-     * @param array<string, mixed> $config
-     */
-    private static function createFromRegisteredDriver(string $driver, array $config): ?FilesystemOperator
-    {
-        if (!isset(self::$drivers[$driver])) {
-            return null;
-        }
-
-        return self::$drivers[$driver]($config);
-    }
-
-    /**
-     * @param array<string, mixed> $config
-     */
+    /** @param array<string, mixed> $config */
     private static function createLocalFilesystem(array $config): FilesystemOperator
     {
         $root = $config['root'] ?? null;
@@ -329,9 +131,7 @@ final class StorageFactory
         return new Filesystem(new LocalFilesystemAdapter($root), self::resolveOptions($config));
     }
 
-    /**
-     * @param array<string, mixed> $config
-     */
+    /** @param array<string, mixed> $config */
     private static function createLocalFilesystemFromConfig(array $config): FilesystemOperator
     {
         $adapter = self::resolveAdapter($config);
@@ -342,9 +142,7 @@ final class StorageFactory
         return self::createLocalFilesystem($config);
     }
 
-    /**
-     * @param array<string, mixed> $config
-     */
+    /** @param array<string, mixed> $config */
     private static function createOfficialFilesystem(string $driver, array $config): FilesystemOperator
     {
         $driver = self::canonicalDriverName($driver);
@@ -373,10 +171,10 @@ final class StorageFactory
             $reflection = new \ReflectionClass($adapterClass);
             $required = $reflection->getConstructor()?->getNumberOfRequiredParameters() ?? 0;
             if ($required > 0) {
-                throw new \InvalidArgumentException(
-                    "Storage driver '{$driver}' requires explicit constructor config.",
-                );
+                throw new \InvalidArgumentException("Storage driver '{$driver}' requires explicit constructor config.");
             }
+
+            /** @var FilesystemAdapter $adapter */
             $adapter = $reflection->newInstance();
 
             return new Filesystem($adapter, self::resolveOptions($config));
@@ -388,24 +186,17 @@ final class StorageFactory
                 "Storage driver '{$driver}' requires either 'adapter' or 'constructor' config.",
             );
         }
-
         if (!array_is_list($constructor)) {
             throw new \InvalidArgumentException('Storage "constructor" must be a list of positional arguments.');
         }
-        $arguments = $constructor;
-        $adapter = new \ReflectionClass($adapterClass)->newInstanceArgs($arguments);
+
+        /** @var FilesystemAdapter $adapter */
+        $adapter = new \ReflectionClass($adapterClass)->newInstanceArgs($constructor);
 
         return new Filesystem($adapter, self::resolveOptions($config));
     }
 
-    private static function normalizeDriverName(string $name): string
-    {
-        return strtolower(trim($name));
-    }
-
-    /**
-     * @param array<string, mixed> $config
-     */
+    /** @param array<string, mixed> $config */
     private static function resolveAdapter(array $config): ?FilesystemAdapter
     {
         /** @var FilesystemAdapter|null $adapter */
@@ -414,9 +205,7 @@ final class StorageFactory
         return $adapter;
     }
 
-    /**
-     * @param array<string, mixed> $config
-     */
+    /** @param array<string, mixed> $config */
     private static function resolveDriver(array $config): string
     {
         $driverInput = $config['driver'] ?? 'local';
@@ -455,9 +244,7 @@ final class StorageFactory
         return $normalized;
     }
 
-    /**
-     * @param array<string, mixed> $config
-     */
+    /** @param array<string, mixed> $config */
     private static function resolveProvidedFilesystem(array $config): ?FilesystemOperator
     {
         /** @var FilesystemOperator|null $filesystem */

@@ -12,11 +12,7 @@ use League\Flysystem\Local\LocalFilesystemAdapter;
 
 function storageContextTempDirectory(string $prefix): string
 {
-    $directory = sys_get_temp_dir()
-        . DIRECTORY_SEPARATOR
-        . $prefix
-        . bin2hex(random_bytes(8));
-
+    $directory = sys_get_temp_dir() . DIRECTORY_SEPARATOR . $prefix . bin2hex(random_bytes(8));
     if (!mkdir($directory, 0755, true) && !is_dir($directory)) {
         throw new RuntimeException("Unable to create test directory '{$directory}'.");
     }
@@ -26,22 +22,17 @@ function storageContextTempDirectory(string $prefix): string
 
 beforeEach(function (): void {
     FlysystemHelper::reset();
-    StorageFactory::clearDrivers();
 });
 
 afterEach(function (): void {
     FlysystemHelper::reset();
-    StorageFactory::clearDrivers();
 });
 
 test('it resolves and caches named filesystems without global mounts', function (): void {
     $root = storageContextTempDirectory('pathwise_context_');
 
     try {
-        $context = new StorageContext([
-            'local' => ['driver' => 'local', 'root' => $root],
-        ], 'local');
-
+        $context = new StorageContext(['local' => ['driver' => 'local', 'root' => $root]], 'local');
         [$filesystem, $location] = $context->resolve('nested/file.txt');
         $filesystem->write($location, 'context-data');
 
@@ -62,13 +53,8 @@ test('two contexts can reuse the same logical filesystem name without cross talk
     $rootB = storageContextTempDirectory('pathwise_context_b_');
 
     try {
-        $contextA = new StorageContext([
-            'assets' => ['driver' => 'local', 'root' => $rootA],
-        ], 'assets');
-        $contextB = new StorageContext([
-            'assets' => ['driver' => 'local', 'root' => $rootB],
-        ], 'assets');
-
+        $contextA = new StorageContext(['assets' => ['driver' => 'local', 'root' => $rootA]], 'assets');
+        $contextB = new StorageContext(['assets' => ['driver' => 'local', 'root' => $rootB]], 'assets');
         [$filesystemA, $locationA] = $contextA->resolve('assets://same.txt');
         [$filesystemB, $locationB] = $contextB->resolve('assets://same.txt');
         $filesystemA->write($locationA, 'A');
@@ -77,8 +63,6 @@ test('two contexts can reuse the same logical filesystem name without cross talk
         expect($filesystemA)->not->toBe($filesystemB)
             ->and($filesystemA->read('same.txt'))->toBe('A')
             ->and($filesystemB->read('same.txt'))->toBe('B')
-            ->and(file_get_contents(PathHelper::join($rootA, 'same.txt')))->toBe('A')
-            ->and(file_get_contents(PathHelper::join($rootB, 'same.txt')))->toBe('B')
             ->and(FlysystemHelper::hasMount('assets'))->toBeFalse();
     } finally {
         FlysystemHelper::deleteDirectory($rootA);
@@ -86,10 +70,9 @@ test('two contexts can reuse the same logical filesystem name without cross talk
     }
 });
 
-test('custom drivers are isolated per context and do not mutate StorageFactory', function (): void {
+test('custom drivers are isolated per context', function (): void {
     $rootA = storageContextTempDirectory('pathwise_driver_a_');
     $rootB = storageContextTempDirectory('pathwise_driver_b_');
-
     $factory = static fn (string $root): Closure => static function (array $configuration) use ($root): FilesystemOperator {
         unset($configuration);
 
@@ -97,51 +80,28 @@ test('custom drivers are isolated per context and do not mutate StorageFactory',
     };
 
     try {
-        $contextA = new StorageContext(
-            ['tenant' => ['driver' => 'isolated']],
-            'tenant',
-            ['isolated' => $factory($rootA)],
-        );
-        $contextB = new StorageContext(
-            ['tenant' => ['driver' => 'isolated']],
-            'tenant',
-            ['isolated' => $factory($rootB)],
-        );
-
+        $contextA = new StorageContext(['tenant' => ['driver' => 'isolated']], 'tenant', ['isolated' => $factory($rootA)]);
+        $contextB = new StorageContext(['tenant' => ['driver' => 'isolated']], 'tenant', ['isolated' => $factory($rootB)]);
         $contextA->filesystem()->write('value.txt', 'A');
         $contextB->filesystem()->write('value.txt', 'B');
 
         expect($contextA->hasDriver('isolated'))->toBeTrue()
             ->and($contextB->hasDriver('isolated'))->toBeTrue()
-            ->and(StorageFactory::hasDriver('isolated'))->toBeFalse()
             ->and($contextA->filesystem()->read('value.txt'))->toBe('A')
-            ->and($contextB->filesystem()->read('value.txt'))->toBe('B');
+            ->and($contextB->filesystem()->read('value.txt'))->toBe('B')
+            ->and(fn () => StorageFactory::createFilesystem(['driver' => 'isolated']))
+            ->toThrow(InvalidArgumentException::class, 'StorageContext');
     } finally {
         FlysystemHelper::deleteDirectory($rootA);
         FlysystemHelper::deleteDirectory($rootB);
     }
 });
 
-test('a context cannot fall through to globally registered custom drivers', function (): void {
-    $root = storageContextTempDirectory('pathwise_global_driver_');
+test('a context never invents a missing custom driver', function (): void {
+    $context = new StorageContext(['tenant' => ['driver' => 'custom-only']], 'tenant');
 
-    StorageFactory::registerDriver(
-        'global-only',
-        static fn (array $configuration): FilesystemOperator => new Filesystem(
-            new LocalFilesystemAdapter(is_string($configuration['root'] ?? null) ? $configuration['root'] : $root),
-        ),
-    );
-
-    try {
-        $context = new StorageContext([
-            'tenant' => ['driver' => 'global-only', 'root' => $root],
-        ], 'tenant');
-
-        expect(fn () => $context->filesystem())
-            ->toThrow(InvalidArgumentException::class, 'Supply it to StorageContext explicitly');
-    } finally {
-        FlysystemHelper::deleteDirectory($root);
-    }
+    expect(fn () => $context->filesystem())
+        ->toThrow(InvalidArgumentException::class, 'Supply it to StorageContext explicitly');
 });
 
 test('context drivers must return filesystem operators', function (): void {
@@ -168,7 +128,6 @@ test('it resolves explicit schemes and rejects conflicting selection', function 
             'primary' => ['driver' => 'local', 'root' => $rootA],
             'archive' => ['driver' => 'local', 'root' => $rootB],
         ], 'primary');
-
         [$archive, $location] = $context->resolve('archive://reports/q1.txt');
 
         expect($location)->toBe('reports/q1.txt')
@@ -187,9 +146,7 @@ test('it rejects invalid topology and unsafe logical paths', function (): void {
     $root = storageContextTempDirectory('pathwise_context_invalid_');
 
     try {
-        $context = new StorageContext([
-            'local' => ['driver' => 'local', 'root' => $root],
-        ], 'local');
+        $context = new StorageContext(['local' => ['driver' => 'local', 'root' => $root]], 'local');
 
         expect(fn () => new StorageContext([], 'local'))
             ->toThrow(InvalidArgumentException::class, 'At least one filesystem')
@@ -201,8 +158,7 @@ test('it rejects invalid topology and unsafe logical paths', function (): void {
                 ['local' => ['driver' => 'local', 'root' => $root]],
                 'local',
                 ['s3' => static fn (array $config): FilesystemOperator => StorageFactory::createFilesystem($config)],
-            ))
-            ->toThrow(InvalidArgumentException::class, 'reserved')
+            ))->toThrow(InvalidArgumentException::class, 'reserved')
             ->and(fn () => $context->resolve('../outside.txt'))
             ->toThrow(InvalidArgumentException::class, 'parent-directory traversal')
             ->and(fn () => $context->localPath('local://safe/../../outside.txt'))
@@ -213,9 +169,7 @@ test('it rejects invalid topology and unsafe logical paths', function (): void {
 });
 
 test('it rejects absolute logical paths consistently across platforms', function (string $path): void {
-    $context = new StorageContext([
-        'local' => ['driver' => 'local', 'root' => sys_get_temp_dir()],
-    ], 'local');
+    $context = new StorageContext(['local' => ['driver' => 'local', 'root' => sys_get_temp_dir()]], 'local');
 
     expect(fn () => $context->resolve($path))
         ->toThrow(InvalidArgumentException::class, 'must be relative');

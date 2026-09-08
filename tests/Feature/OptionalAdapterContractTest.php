@@ -40,7 +40,10 @@ afterEach(function () {
 
 if (class_exists($memoryAdapterClass)) {
     test('storage-neutral contracts run against the in-memory adapter', function () {
-        StorageFactory::mount('memory-contract', ['driver' => 'inmemory']);
+        FlysystemHelper::mount(
+            'memory-contract',
+            StorageFactory::createFilesystem(['driver' => 'inmemory']),
+        );
         $file = new FileOperations('memory-contract://source/file.txt');
         $file->create('memory')->copy('memory-contract://source/copy.txt');
         $report = (new DirectoryOperations('memory-contract://source'))->syncTo('memory-contract://target');
@@ -55,10 +58,13 @@ if (class_exists($readOnlyAdapterClass)) {
     test('read-only adapters preserve reads and reject mutations', function () {
         $localAdapter = new LocalFilesystemAdapter($this->adapterRoot);
         (new Filesystem($localAdapter))->write('readable.txt', 'read-only');
-        StorageFactory::mount('read-only-contract', [
-            'driver' => 'read-only',
-            'constructor' => [$localAdapter],
-        ]);
+        FlysystemHelper::mount(
+            'read-only-contract',
+            StorageFactory::createFilesystem([
+                'driver' => 'read-only',
+                'constructor' => [$localAdapter],
+            ]),
+        );
         $file = new FileOperations('read-only-contract://readable.txt');
 
         expect($file->read())->toBe('read-only')
@@ -69,10 +75,13 @@ if (class_exists($readOnlyAdapterClass)) {
 
 if (class_exists($pathPrefixingAdapterClass)) {
     test('path-prefixing adapters confine storage-neutral writes to their prefix', function () {
-        StorageFactory::mount('prefix-contract', [
-            'driver' => 'path-prefixing',
-            'constructor' => [new LocalFilesystemAdapter($this->adapterRoot), 'tenant-a'],
-        ]);
+        FlysystemHelper::mount(
+            'prefix-contract',
+            StorageFactory::createFilesystem([
+                'driver' => 'path-prefixing',
+                'constructor' => [new LocalFilesystemAdapter($this->adapterRoot), 'tenant-a'],
+            ]),
+        );
         $file = new FileOperations('prefix-contract://nested/file.txt');
         $file->create('prefixed');
 

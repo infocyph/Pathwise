@@ -7,62 +7,36 @@ use Infocyph\Pathwise\Utils\FlysystemHelper;
 use League\Flysystem\Filesystem;
 use League\Flysystem\Local\LocalFilesystemAdapter;
 
-beforeEach(function () {
+beforeEach(function (): void {
     FlysystemHelper::reset();
-    StorageFactory::clearDrivers();
 });
 
-afterEach(function () {
+afterEach(function (): void {
     FlysystemHelper::reset();
-    StorageFactory::clearDrivers();
 });
 
-test('it creates a local filesystem from driver config', function () {
+test('it creates a local filesystem without mutating global routing state', function (): void {
     $root = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('storage_local_', true);
     mkdir($root, 0755, true);
 
     try {
-        $filesystem = StorageFactory::createFilesystem([
-            'driver' => 'local',
-            'root' => $root,
-        ]);
-
+        $filesystem = StorageFactory::createFilesystem(['driver' => 'local', 'root' => $root]);
         $filesystem->write('a.txt', 'hello');
 
-        expect($filesystem->read('a.txt'))->toBe('hello');
+        expect($filesystem->read('a.txt'))->toBe('hello')
+            ->and(FlysystemHelper::hasDefaultFilesystem())->toBeFalse()
+            ->and(FlysystemHelper::hasMount('local'))->toBeFalse();
     } finally {
         FlysystemHelper::deleteDirectory($root);
     }
 });
 
-test('it mounts a filesystem from local driver config', function () {
-    $root = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('storage_mount_', true);
-    mkdir($root, 0755, true);
-
-    try {
-        StorageFactory::mount('assets', [
-            'driver' => 'local',
-            'root' => $root,
-        ]);
-
-        FlysystemHelper::write('assets://reports/q1.txt', 'Q1');
-
-        expect(FlysystemHelper::read('assets://reports/q1.txt'))->toBe('Q1');
-    } finally {
-        FlysystemHelper::unmount('assets');
-        FlysystemHelper::deleteDirectory($root);
-    }
-});
-
-test('it creates a filesystem from a provided adapter', function () {
+test('it creates a filesystem from a provided adapter', function (): void {
     $root = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('storage_adapter_', true);
     mkdir($root, 0755, true);
 
     try {
-        $filesystem = StorageFactory::createFilesystem([
-            'adapter' => new LocalFilesystemAdapter($root),
-        ]);
-
+        $filesystem = StorageFactory::createFilesystem(['adapter' => new LocalFilesystemAdapter($root)]);
         $filesystem->write('b.txt', 'world');
 
         expect($filesystem->read('b.txt'))->toBe('world');
@@ -71,112 +45,46 @@ test('it creates a filesystem from a provided adapter', function () {
     }
 });
 
-test('it returns the provided filesystem instance as-is', function () {
+test('it returns a provided filesystem instance as-is', function (): void {
     $root = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('storage_passthrough_', true);
     mkdir($root, 0755, true);
 
     try {
         $filesystem = new Filesystem(new LocalFilesystemAdapter($root));
-        $resolved = StorageFactory::createFilesystem(['filesystem' => $filesystem]);
-
-        expect($resolved)->toBe($filesystem);
+        expect(StorageFactory::createFilesystem(['filesystem' => $filesystem]))->toBe($filesystem);
     } finally {
         FlysystemHelper::deleteDirectory($root);
     }
 });
 
-test('it supports custom registered drivers', function () {
-    $root = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('storage_custom_', true);
-    mkdir($root, 0755, true);
-
-    StorageFactory::registerDriver('custom-local', function (array $config) use ($root): Filesystem {
-        $base = (string) ($config['root'] ?? $root);
-
-        return new Filesystem(new LocalFilesystemAdapter($base));
-    });
-
-    try {
-        StorageFactory::mount('custom', [
-            'driver' => 'custom-local',
-            'root' => $root,
-        ]);
-
-        FlysystemHelper::write('custom://nested/file.txt', 'custom-data');
-
-        expect(FlysystemHelper::read('custom://nested/file.txt'))->toBe('custom-data')
-            ->and(StorageFactory::hasDriver('custom-local'))->toBeTrue()
-            ->and(StorageFactory::driverNames())->toContain('custom-local');
-    } finally {
-        FlysystemHelper::unmount('custom');
-        FlysystemHelper::deleteDirectory($root);
-    }
-});
-
-test('it exposes official adapter metadata and package lookup', function () {
+test('it exposes official adapter metadata and package lookup', function (): void {
     $official = StorageFactory::officialDrivers();
 
     expect($official)->toHaveKeys([
-        'local',
-        'ftp',
-        'inmemory',
-        'read-only',
-        'path-prefixing',
-        'aws-s3',
-        'async-aws-s3',
-        'azure-blob-storage',
-        'google-cloud-storage',
-        'mongodb-gridfs',
-        'sftp-v2',
-        'sftp-v3',
-        'webdav',
-        'ziparchive',
+        'local', 'ftp', 'inmemory', 'read-only', 'path-prefixing', 'aws-s3', 'async-aws-s3',
+        'azure-blob-storage', 'google-cloud-storage', 'mongodb-gridfs', 'sftp-v2', 'sftp-v3',
+        'webdav', 'ziparchive',
     ])
         ->and(StorageFactory::suggestedPackage('s3'))->toBe('league/flysystem-aws-s3-v3')
         ->and(StorageFactory::suggestedPackage('in-memory'))->toBe('league/flysystem-memory')
         ->and(StorageFactory::suggestedPackage('zip'))->toBe('league/flysystem-ziparchive');
 });
 
-test('it mounts multiple storages from config map', function () {
-    $rootA = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('storage_many_a_', true);
-    $rootB = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('storage_many_b_', true);
-    mkdir($rootA, 0755, true);
-    mkdir($rootB, 0755, true);
-
-    try {
-        StorageFactory::mountMany([
-            'a' => ['driver' => 'local', 'root' => $rootA],
-            'b' => ['driver' => 'local', 'root' => $rootB],
-        ]);
-
-        FlysystemHelper::write('a://one.txt', 'A');
-        FlysystemHelper::write('b://two.txt', 'B');
-
-        expect(FlysystemHelper::read('a://one.txt'))->toBe('A')
-            ->and(FlysystemHelper::read('b://two.txt'))->toBe('B');
-    } finally {
-        FlysystemHelper::unmount('a');
-        FlysystemHelper::unmount('b');
-        FlysystemHelper::deleteDirectory($rootA);
-        FlysystemHelper::deleteDirectory($rootB);
-    }
+test('unsupported custom drivers direct callers to StorageContext', function (): void {
+    expect(fn () => StorageFactory::createFilesystem(['driver' => 'tenant-driver']))
+        ->toThrow(InvalidArgumentException::class, 'StorageContext');
 });
 
-test('it throws for unsupported driver', function () {
-    expect(fn () => StorageFactory::createFilesystem(['driver' => 'made-up-driver']))
-        ->toThrow(InvalidArgumentException::class, 'Unsupported storage driver');
-});
-
-test('it throws for local driver without root', function () {
+test('it throws for local driver without root', function (): void {
     expect(fn () => StorageFactory::createFilesystem(['driver' => 'local']))
         ->toThrow(InvalidArgumentException::class, 'Local driver requires a non-empty "root" path');
 });
 
-test('it provides package guidance for missing official drivers', function () {
-    $adapterClass = StorageFactory::officialDrivers()['aws-s3']['adapter_class'];
-
-    if (!class_exists($adapterClass)) {
+test('it provides package guidance for missing official drivers', function (): void {
+    $metadata = StorageFactory::officialDrivers()['aws-s3'];
+    if (!class_exists($metadata['adapter_class'])) {
         expect(fn () => StorageFactory::createFilesystem(['driver' => 's3']))
-            ->toThrow(InvalidArgumentException::class, 'league/flysystem-aws-s3-v3');
+            ->toThrow(InvalidArgumentException::class, $metadata['package']);
 
         return;
     }
@@ -185,11 +93,9 @@ test('it provides package guidance for missing official drivers', function () {
         ->toThrow(InvalidArgumentException::class, "requires either 'adapter' or 'constructor'");
 });
 
-test('it supports in-memory driver when adapter package exists', function () {
+test('it supports in-memory driver when the optional adapter exists', function (): void {
     $metadata = StorageFactory::officialDrivers()['inmemory'];
-    $adapterClass = $metadata['adapter_class'];
-
-    if (!class_exists($adapterClass)) {
+    if (!class_exists($metadata['adapter_class'])) {
         expect(fn () => StorageFactory::createFilesystem(['driver' => 'in-memory']))
             ->toThrow(InvalidArgumentException::class, $metadata['package']);
 
@@ -202,7 +108,7 @@ test('it supports in-memory driver when adapter package exists', function () {
     expect($filesystem->read('memory.txt'))->toBe('memory-data');
 });
 
-test('it rejects conflicting configuration modes and malformed options', function () {
+test('it rejects conflicting configuration modes and malformed options', function (): void {
     $root = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('storage_conflict_', true);
     mkdir($root);
     $adapter = new LocalFilesystemAdapter($root);
@@ -213,37 +119,6 @@ test('it rejects conflicting configuration modes and malformed options', functio
             ->and(fn () => StorageFactory::createFilesystem(['adapter' => $adapter, 'options' => ['bad']]))
             ->toThrow(InvalidArgumentException::class, 'keys must be strings');
     } finally {
-        rmdir($root);
-    }
-});
-
-test('it rejects duplicate and official custom driver names', function () {
-    $root = sys_get_temp_dir();
-    $factory = static fn (array $config): Filesystem => new Filesystem(new LocalFilesystemAdapter(
-        is_string($config['root'] ?? null) ? $config['root'] : $root,
-    ));
-    StorageFactory::registerDriver('custom-driver', $factory);
-
-    expect(fn () => StorageFactory::registerDriver('custom-driver', $factory))
-        ->toThrow(InvalidArgumentException::class, 'already registered')
-        ->and(fn () => StorageFactory::registerDriver('s3', $factory))
-        ->toThrow(InvalidArgumentException::class, 'reserved');
-});
-
-test('mountMany rolls back earlier mounts when a later mount fails', function () {
-    $root = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('storage_rollback_', true);
-    mkdir($root);
-    FlysystemHelper::mount('occupied', new Filesystem(new LocalFilesystemAdapter($root)));
-
-    try {
-        expect(fn () => StorageFactory::mountMany([
-            'prepared' => ['driver' => 'local', 'root' => $root],
-            'occupied' => ['driver' => 'local', 'root' => $root],
-        ]))->toThrow(InvalidArgumentException::class)
-            ->and(FlysystemHelper::hasMount('prepared'))->toBeFalse()
-            ->and(FlysystemHelper::hasMount('occupied'))->toBeTrue();
-    } finally {
-        FlysystemHelper::reset();
         rmdir($root);
     }
 });

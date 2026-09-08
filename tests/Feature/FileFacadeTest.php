@@ -2,33 +2,26 @@
 
 declare(strict_types=1);
 
-use Infocyph\Pathwise\PathwiseFacade;
 use Infocyph\Pathwise\DirectoryManager\DirectoryOperations;
-use Infocyph\Pathwise\Storage\StorageFactory;
+use Infocyph\Pathwise\PathwiseFacade;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 
-beforeEach(function () {
+beforeEach(function (): void {
     FlysystemHelper::reset();
-    StorageFactory::clearDrivers();
     $this->workspace = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('pathwise_file_facade_', true);
     mkdir($this->workspace, 0755, true);
 });
 
-afterEach(function () {
+afterEach(function (): void {
     FlysystemHelper::reset();
-    StorageFactory::clearDrivers();
-
-    if (!is_dir($this->workspace)) {
-        return;
+    if (is_dir($this->workspace)) {
+        (new DirectoryOperations($this->workspace))->delete(true);
     }
-
-    (new DirectoryOperations($this->workspace))->delete(true);
 });
 
-test('it provides path-bound file accessors', function () {
+test('it provides path-bound file accessors', function (): void {
     $filePath = $this->workspace . DIRECTORY_SEPARATOR . 'sample.txt';
     $entry = PathwiseFacade::at($filePath);
-
     $entry->file()->create("line-1\n");
 
     $writer = $entry->writer(true);
@@ -47,7 +40,7 @@ test('it provides path-bound file accessors', function () {
         ->and($entry->metadata())->toBeArray();
 });
 
-test('it provides path-bound directory and compression accessors', function () {
+test('it provides path-bound directory and compression accessors', function (): void {
     $sourceDir = $this->workspace . DIRECTORY_SEPARATOR . 'source';
     mkdir($sourceDir, 0755, true);
     file_put_contents($sourceDir . DIRECTORY_SEPARATOR . 'a.txt', 'A');
@@ -60,20 +53,14 @@ test('it provides path-bound directory and compression accessors', function () {
     PathwiseFacade::at($zipPath)->compression()->decompress($extractDir)->save();
 
     expect(FlysystemHelper::fileExists($zipPath))->toBeTrue()
-        ->and(FlysystemHelper::fileExists($extractDir . DIRECTORY_SEPARATOR . 'a.txt'))->toBeTrue()
         ->and(FlysystemHelper::read($extractDir . DIRECTORY_SEPARATOR . 'a.txt'))->toBe('A');
 });
 
-test('it provides static gateways for processors policy storage and ops tooling', function () {
+test('it provides stateless gateways for processors policy storage and ops tooling', function (): void {
     $root = $this->workspace . DIRECTORY_SEPARATOR . 'storage';
     mkdir($root, 0755, true);
-
-    PathwiseFacade::mountStorage('facade', [
-        'driver' => 'local',
-        'root' => $root,
-    ]);
-
-    FlysystemHelper::write('facade://data/file.txt', 'hello');
+    $filesystem = PathwiseFacade::createFilesystem(['driver' => 'local', 'root' => $root]);
+    $filesystem->write('data/file.txt', 'hello');
 
     $upload = PathwiseFacade::upload();
     $download = PathwiseFacade::download();
@@ -85,8 +72,7 @@ test('it provides static gateways for processors policy storage and ops tooling'
     $stats = $queue->stats();
 
     $auditFile = $this->workspace . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'audit.jsonl';
-    $audit = PathwiseFacade::audit($auditFile);
-    $audit->log('facade.test', ['ok' => true]);
+    PathwiseFacade::audit($auditFile)->log('facade.test', ['ok' => true]);
 
     $watchPath = $this->workspace . DIRECTORY_SEPARATOR . 'watch.txt';
     file_put_contents($watchPath, 'v1');
@@ -101,13 +87,13 @@ test('it provides static gateways for processors policy storage and ops tooling'
     file_put_contents($dupDir . DIRECTORY_SEPARATOR . 'b.txt', 'dup');
     $index = PathwiseFacade::index($dupDir);
     $duplicates = PathwiseFacade::duplicates($dupDir);
-
     $retention = PathwiseFacade::retain($this->workspace . DIRECTORY_SEPARATOR . 'empty-retention');
 
     expect($upload)->toBeInstanceOf(\Infocyph\Pathwise\StreamHandler\UploadProcessor::class)
         ->and($download)->toBeInstanceOf(\Infocyph\Pathwise\StreamHandler\DownloadProcessor::class)
         ->and($policy->isAllowed('read', 'anything'))->toBeTrue()
-        ->and(FlysystemHelper::read('facade://data/file.txt'))->toBe('hello')
+        ->and($filesystem->read('data/file.txt'))->toBe('hello')
+        ->and(FlysystemHelper::hasMount('facade'))->toBeFalse()
         ->and($stats['pending'])->toBe(1)
         ->and(FlysystemHelper::fileExists($auditFile))->toBeTrue()
         ->and($diff->modified)->toContain($watchPath)
@@ -115,6 +101,4 @@ test('it provides static gateways for processors policy storage and ops tooling'
         ->and($duplicates)->not->toBeEmpty()
         ->and($retention->deleted)->toBe([])
         ->and($retention->kept)->toBe([]);
-
-    FlysystemHelper::unmount('facade');
 });

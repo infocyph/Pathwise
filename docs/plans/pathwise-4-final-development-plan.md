@@ -32,7 +32,7 @@ Legend:
 - `[ ]` pending;
 - `[!]` blocked by an external prerequisite or release dependency.
 
-Current active batch: **Batch 12 — storage/facade/global-state cleanup**.
+Current active batch: **Batch 13 — observability, retention, indexing, watcher, and transaction review**.
 
 | Area | Status | Tracking note |
 | --- | --- | --- |
@@ -55,11 +55,11 @@ Current active batch: **Batch 12 — storage/facade/global-state cleanup**.
 | Batch 9 — bounded native execution | [X] | Bounded non-blocking native execution, timeout/output caps, typed failures, deterministic termination/cleanup, argv-only invocation, adapter-wide limits, and capability-based Windows fallback are CI-green. |
 | Batch 10 — file queue lease correctness/durability | [X] | Typed unique leases, expiry/renewal ownership checks, stale-worker rejection, versioned strict state, stable private lock file, crash-safe fsync+rename persistence, corruption handling, and recovery tests are CI-green on Linux and Windows. |
 | Batch 11 — archive/parser hardening | [X] | Unified manifest-based ZIP validation/extraction, collision and special-entry rejection, streamed byte enforcement, write-time revalidation, deterministic local/remote cleanup, source-symlink rejection, safe serialization boundaries, and parser regressions are CI-green across the full matrix. |
-| Batch 12 — static/global-state cleanup | [~] | Active: remove redundant process-global storage registry/facade APIs and make `StorageContext` the persistent-runtime integration surface. |
-| Batch 13 — observability/retention/indexing/watcher review | [ ] | Pending whole-library subsystem audit. |
-| Batch 14 — complete Pathwise 4 documentation | [ ] | Release blocker; starts after public APIs are stable, with feature docs added earlier when useful. |
+| Batch 12 — static/global-state cleanup | [X] | Redundant process-global custom-driver/mount registries and facade mount gateways are removed; `StorageContext` owns persistent topology while stateless factory/helper capabilities remain. Full matrix passed run #148. |
+| Batch 13 — observability/retention/indexing/watcher review | [~] | Active whole-library subsystem audit and hardening. |
+| Batch 14 — complete Pathwise 4 documentation | [ ] | Release blocker; starts after public APIs are stable. |
 | Batch 15 — performance/stress/release gates | [ ] | Final acceptance only after functional/security batches stabilize. |
-| Pathwise 4.0 release | [!] | Blocked until Batches 12–15 and all release gates pass. |
+| Pathwise 4.0 release | [!] | Blocked until Batches 13–15 and all release gates pass. |
 | Foundation 3 / Point 26.5 consumption | [!] | Blocked until Pathwise 4.0 is released; Foundation then raises its floor and removes duplicated generic filesystem mechanics. |
 
 Tracker maintenance rule: update this table whenever a batch starts, closes, is split, or gains a release-blocking finding. A batch is marked `[X]` only after its implementation and relevant acceptance checks are complete; writing code alone is not enough.
@@ -230,24 +230,27 @@ Regression coverage includes archive collisions, special entries, size/ratio lim
 
 ---
 
-## Batch 12 — storage/facade/global-state cleanup for the major — active
+## Batch 12 — storage/facade/global-state cleanup for the major — complete
 
-Re-scan the static `PathwiseFacade`, `FlysystemHelper`, and `StorageFactory` APIs now that `StorageContext` exists.
+Pathwise 4 now has one persistent-runtime storage topology model rather than two competing registries:
 
-Goals:
+- `StorageContext` owns named filesystem topology, default selection, lazy filesystem caching, logical paths, local-root capability, and per-instance custom driver factories;
+- process-global custom-driver registration was removed from `StorageFactory`;
+- `StorageFactory` remains a stateless constructor/metadata helper for built-in and optional Flysystem adapters;
+- `StorageFactory::mount()` / `mountMany()` were removed;
+- facade-level storage mounting gateways were removed;
+- `PathwiseFacade` remains a stateless convenience API and does not own storage topology;
+- low-level `FlysystemHelper` mount/default routing remains available for Pathwise's storage-neutral static/path APIs and direct low-level use, but is not the recommended multi-app registry;
+- optional adapters remain optional and capability/package failures remain explicit;
+- tests prove two `StorageContext` instances can reuse logical names without cross-talk and that custom drivers cannot leak globally.
 
-- `StorageContext` is the recommended persistent-runtime integration API;
-- remove or de-emphasize redundant global mutable APIs when their only purpose is legacy compatibility;
-- avoid two competing ways to implement the same multi-app storage registry;
-- keep lightweight stateless convenience helpers where they remain useful;
-- keep optional Flysystem adapters optional;
-- ensure all adapter capability failures are explicit and typed.
+### Batch 12 acceptance — passed
 
-Because 4.0 may break compatibility, removal is preferable to retaining unsafe duplicate global state solely for BC.
+Security & Standards run **#148** passed Windows PHP 8.4/8.5, optional adapter contracts, PHP 8.4/8.5 stable+lowest QA, PHPStan/Psalm, clean install, and all PHPForge quality gates.
 
 ---
 
-## Batch 13 — observability, audit, retention, indexing, watcher review
+## Batch 13 — observability, audit, retention, indexing, watcher review — active
 
 Audit every remaining subsystem not covered above:
 
@@ -419,11 +422,10 @@ Foundation should then:
 
 # Work order from this point
 
-1. **Batch 12** — storage/facade/global-state cleanup.
-2. **Batch 13** — remaining subsystem audit/hardening.
-3. **Batch 14** — complete documentation rebuild and migration guide.
-4. **Batch 15** — benchmarks/stress/final release gates.
-5. Release Pathwise 4.0, then complete Foundation Point 26.5 against the released floor.
+1. **Batch 13** — remaining subsystem audit/hardening.
+2. **Batch 14** — complete documentation rebuild and migration guide.
+3. **Batch 15** — benchmarks/stress/final release gates.
+4. Release Pathwise 4.0, then complete Foundation Point 26.5 against the released floor.
 
 ## Push discipline
 
