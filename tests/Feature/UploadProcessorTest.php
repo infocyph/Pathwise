@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 use Infocyph\Pathwise\Exceptions\FileSizeExceededException;
 use Infocyph\Pathwise\Exceptions\UploadException;
+use Infocyph\Pathwise\StreamHandler\MalwareScannerInterface;
+use Infocyph\Pathwise\StreamHandler\MalwareScanRequest;
+use Infocyph\Pathwise\StreamHandler\MalwareScanVerdict;
 use Infocyph\Pathwise\StreamHandler\UploadProcessor;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use League\Flysystem\Filesystem;
@@ -137,16 +140,19 @@ test('it supports chunked upload and finalize flow', function () {
 
 test('it exposes malware scanner state in info', function () {
     $this->uploadProcessor->setDirectorySettings($this->uploadDir);
-    $this->uploadProcessor->setMalwareScanner(function (string $path, string $mime): bool {
-        unset($path, $mime);
+    $this->uploadProcessor->setMalwareScanner(new class implements MalwareScannerInterface {
+        public function scan(MalwareScanRequest $request): MalwareScanVerdict
+        {
+            unset($request);
 
-        return true;
+            return MalwareScanVerdict::CLEAN;
+        }
     });
 
     expect($this->uploadProcessor->getInfo()['hasMalwareScanner'])->toBeTrue();
 });
 
-test('it blocks finalize when malware scan fails', function () {
+test('it blocks finalize when malware scan rejects the upload', function () {
     $this->uploadProcessor->setDirectorySettings($this->uploadDir, false, $this->uploadDir);
     $this->uploadProcessor->setValidationProfile('document');
 
@@ -161,14 +167,17 @@ test('it blocks finalize when malware scan fails', function () {
         'name' => 'chunk.part',
     ], $uploadId, 0, 1, 'merged.txt');
 
-    $this->uploadProcessor->setMalwareScanner(function (string $path, string $mime): bool {
-        unset($path, $mime);
+    $this->uploadProcessor->setMalwareScanner(new class implements MalwareScannerInterface {
+        public function scan(MalwareScanRequest $request): MalwareScanVerdict
+        {
+            unset($request);
 
-        return false;
+            return MalwareScanVerdict::MALICIOUS;
+        }
     });
 
     expect(fn() => $this->uploadProcessor->finalizeChunkUpload($uploadId))
-        ->toThrow(UploadException::class, 'Malware scan failed');
+        ->toThrow(UploadException::class, 'Malware scan rejected the upload.');
 });
 
 test('it blocks upload when extension is blocked', function () {

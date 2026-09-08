@@ -28,7 +28,7 @@ Where it fits:
 * Strict content checks:
   * extension <> MIME agreement
   * lightweight file signature verification for common formats
-* First-class ``MalwareScannerInterface`` support plus callback compatibility.
+* First-class ``MalwareScannerInterface`` support.
 
 Storage notes:
 
@@ -96,30 +96,67 @@ so an invalid framework upload is not materialized unnecessarily.
 Malware Scanning
 ----------------
 
-Prefer ``MalwareScannerInterface`` for production scanner integrations. It is an
-invokable contract so existing ``setMalwareScanner(callable $scanner)`` callers
-remain compatible without an adapter layer.
+Production malware scanning uses the typed ``MalwareScannerInterface``. The
+scanner receives a ``MalwareScanRequest`` containing a Pathwise-owned local
+regular file, the actual size, and the normalized extension.
+
+Pathwise never passes a Flysystem URI, mounted path, symlink, or caller-owned
+file directly to the scanner. The upload is copied into a private ``0700`` scan
+directory and the scan file is forced to ``0600`` permissions. The scan copy is
+removed in a ``finally`` path after every verdict or failure.
 
 .. code-block:: php
 
    use Infocyph\Pathwise\StreamHandler\MalwareScannerInterface;
+   use Infocyph\Pathwise\StreamHandler\MalwareScanRequest;
+   use Infocyph\Pathwise\StreamHandler\MalwareScanVerdict;
 
    final class ClamScanner implements MalwareScannerInterface
    {
-       public function __invoke(string $filePath, string $mimeType): bool
+       public function scan(MalwareScanRequest $request): MalwareScanVerdict
        {
-           // Return true when clean, false when the payload must be rejected.
-           return true;
+           // Scan $request->localPath with clamd, ICAP, or another engine.
+           return MalwareScanVerdict::CLEAN;
        }
    }
 
    $uploader->setMalwareScanner(new ClamScanner());
    $uploader->setRequireMalwareScan(true);
 
-A scanner returning ``false`` rejects the upload. A scanner/backend exception
-also fails closed. Pathwise exposes only the stable ``Malware scanner failed.``
-message for backend failures and keeps the original throwable as the previous
-exception, so infrastructure details are not leaked through upload errors.
+Only an explicit ``MalwareScanVerdict::CLEAN`` is accepted. ``MALICIOUS``,
+``SUSPICIOUS``, and ``UNKNOWN`` all reject the upload. Scanner/backend
+exceptions fail closed as ``Malware scanner failed.`` while the original
+throwable is retained as the previous exception for internal diagnostics.
+
+The hardened validation order is:
+
+#. upload/error and HTTP provenance checks
+#. metadata size rejection
+#. authoritative actual-size validation
+#. extension allow/block policy
+#. materialize private local malware-scan copy
+#. malware scan
+#. MIME detection and MIME allowlist
+#. extension-to-MIME and magic-signature checks
+#. image/format-specific parsing
+#. final naming and publication
+
+This deliberately keeps attacker-controlled content away from MIME/signature
+and image parsers until the configured malware boundary has accepted it.
+
+The scan copy is immutable by contract. Pathwise verifies its size after the
+scanner returns and rejects scanner mutation. Pathwise also rechecks the source
+size around scanning and fails if the source changes during scan preparation or
+execution.
+
+When ``setRequireMalwareScan(true)`` is enabled and no scanner is configured,
+Pathwise fails before MIME detection or deeper parsing.
+
+For resumable uploads, individual chunks are not treated as independently safe
+files. Pathwise scans the fully assembled staging object during
+``finalizeChunkUpload()`` before deeper content validation and publication.
+This avoids both per-chunk scanner cost and false assurance when malicious
+structure spans chunk boundaries.
 
 Security Hardening Controls
 ---------------------------
@@ -197,9 +234,7 @@ Hardened chunk upload:
 
    $uploader->setChunkLimits(maxChunkCount: 20, maxChunkSize: 2 * 1024 * 1024); // 2MB
    $uploader->setRequireMalwareScan(true);
-   $uploader->setMalwareScanner(
-       fn (string $path, string $type): bool => true // return false to block
-   );
+   $uploader->setMalwareScanner(new ClamScanner());
 
    $uploader->processChunkUpload(
        chunkFile: $_FILES['chunk'],

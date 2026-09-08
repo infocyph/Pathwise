@@ -6,6 +6,8 @@ namespace Infocyph\Pathwise\StreamHandler\Concerns;
 
 use Infocyph\Pathwise\Exceptions\FileSizeExceededException;
 use Infocyph\Pathwise\Exceptions\UploadException;
+use Infocyph\Pathwise\StreamHandler\MalwareScanRequest;
+use Infocyph\Pathwise\StreamHandler\MalwareScanVerdict;
 use Infocyph\Pathwise\Utils\ExtensionPolicy;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\MetadataHelper;
@@ -38,6 +40,16 @@ trait UploadProcessorValidationConcern
         return PathHelper::join($destinationDir, $fileName);
     }
 
+    private function cleanupMalwareScanInput(string $path, string $directory): void
+    {
+        if (is_file($path) || is_link($path)) {
+            $this->runSilently(static fn(): bool => unlink($path));
+        }
+        if (is_dir($directory) && !is_link($directory)) {
+            $this->runSilently(static fn(): bool => rmdir($directory));
+        }
+    }
+
     private function copyImageToInspectionFile(string $filePath, string $tempFile): void
     {
         $stream = FlysystemHelper::readStream($filePath);
@@ -57,6 +69,35 @@ trait UploadProcessorValidationConcern
         stream_copy_to_stream($stream, $target);
         fclose($stream);
         fclose($target);
+    }
+
+    private function copyToMalwareScanInput(string $filePath, string $target): void
+    {
+        $source = FlysystemHelper::readStream($filePath);
+        $destination = fopen($target, 'xb');
+        if (!is_resource($source) || !is_resource($destination)) {
+            if (is_resource($source)) {
+                fclose($source);
+            }
+            if (is_resource($destination)) {
+                fclose($destination);
+            }
+
+            throw new UploadException('Unable to prepare malware scan input.');
+        }
+
+        try {
+            if (stream_copy_to_stream($source, $destination) === false) {
+                throw new UploadException('Unable to prepare malware scan input.');
+            }
+        } finally {
+            fclose($source);
+            fclose($destination);
+        }
+
+        if (!$this->runSilently(static fn(): bool => chmod($target, 0600))) {
+            throw new UploadException('Unable to secure malware scan input.');
+        }
     }
 
     private function deleteIncomingFile(string $path): void
@@ -133,6 +174,37 @@ trait UploadProcessorValidationConcern
     private function isImage(string $fileType): bool
     {
         return str_starts_with($fileType, 'image/');
+    }
+
+    /**
+     * @return array{string, string}
+     */
+    private function materializeMalwareScanInput(string $filePath): array
+    {
+        $root = PathHelper::toAbsolutePath(sys_get_temp_dir());
+        $directory = '';
+
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $candidate = PathHelper::join($root, 'pathwise-scan-' . bin2hex(random_bytes(16)));
+            if ($this->runSilently(static fn(): bool => mkdir($candidate, 0700))) {
+                $directory = $candidate;
+                break;
+            }
+        }
+
+        if ($directory === '') {
+            throw new UploadException('Unable to allocate malware scan staging directory.');
+        }
+
+        $target = PathHelper::join($directory, 'payload');
+        try {
+            $this->copyToMalwareScanInput($filePath, $target);
+        } catch (\Throwable $exception) {
+            $this->cleanupMalwareScanInput($target, $directory);
+            throw $exception;
+        }
+
+        return [$target, $directory];
     }
 
     private function moveIncomingFile(string $source, string $destination): void
@@ -272,9 +344,9 @@ trait UploadProcessorValidationConcern
         }
     }
 
-    private function scanForMalware(string $filePath, string $fileType): void
+    private function scanForMalware(string $filePath, string $extension, int $expectedSize): void
     {
-        if (!is_callable($this->malwareScanner)) {
+        if ($this->malwareScanner === null) {
             if ($this->requireMalwareScan) {
                 throw new UploadException('Malware scanner is required but not configured.');
             }
@@ -282,14 +354,36 @@ trait UploadProcessorValidationConcern
             return;
         }
 
-        try {
-            $result = ($this->malwareScanner)($filePath, $fileType);
-        } catch (\Throwable $exception) {
-            throw new UploadException('Malware scanner failed.', 0, $exception);
-        }
+        [$scanPath, $scanDirectory] = $this->materializeMalwareScanInput($filePath);
 
-        if ($result === false) {
-            throw new UploadException('Malware scan failed.');
+        try {
+            $request = new MalwareScanRequest(
+                localPath: $scanPath,
+                extension: $this->normalizeExtension($extension),
+            );
+            if ($request->size !== $expectedSize || FlysystemHelper::size($filePath) !== $expectedSize) {
+                throw new UploadException('Upload changed during malware scan preparation.');
+            }
+
+            try {
+                $verdict = $this->malwareScanner->scan($request);
+            } catch (\Throwable $exception) {
+                throw new UploadException('Malware scanner failed.', 0, $exception);
+            }
+
+            clearstatcache(true, $scanPath);
+            $sizeAfterScan = filesize($scanPath);
+            if (!is_int($sizeAfterScan) || $sizeAfterScan !== $request->size) {
+                throw new UploadException('Malware scanner modified scan input.');
+            }
+            if (FlysystemHelper::size($filePath) !== $expectedSize) {
+                throw new UploadException('Upload changed during malware scanning.');
+            }
+            if ($verdict !== MalwareScanVerdict::CLEAN) {
+                throw new UploadException('Malware scan rejected the upload.');
+            }
+        } finally {
+            $this->cleanupMalwareScanInput($scanPath, $scanDirectory);
         }
     }
 
@@ -409,7 +503,7 @@ trait UploadProcessorValidationConcern
     private function validateFinalizedUpload(string $destination): void
     {
         $extension = pathinfo($destination, PATHINFO_EXTENSION);
-        $this->validateUploadedPayload($destination, $extension, true);
+        $this->validateUploadedPayload($destination, $extension);
     }
 
     /**
@@ -493,21 +587,19 @@ trait UploadProcessorValidationConcern
         }
     }
 
-    private function validateUploadedPayload(string $filePath, string $extension, bool $validateSize): string
+    private function validateUploadedPayload(string $filePath, string $extension): string
     {
-        if ($validateSize) {
-            $this->validateFileSize(FlysystemHelper::size($filePath));
-        }
+        $actualSize = FlysystemHelper::size($filePath);
+        $this->validateFileSize($actualSize);
+        $this->validateFileExtension($extension);
+        $this->scanForMalware($filePath, $extension, $actualSize);
 
         $fileType = $this->getFileMimeType($filePath);
-        $this->validateFileExtension($extension);
         $this->validateFileType($fileType);
         $this->validateContentTypeIntegrity($filePath, $fileType, $extension);
         if ($this->isImage($fileType)) {
             $this->validateImageDimensions($filePath);
         }
-
-        $this->scanForMalware($filePath, $fileType);
 
         return $fileType;
     }
