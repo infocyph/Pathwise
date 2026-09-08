@@ -176,6 +176,16 @@ trait UploadProcessorValidationConcern
         return str_starts_with($fileType, 'image/');
     }
 
+    private function malwareScanDigest(string $path): string
+    {
+        $digest = hash_file('sha256', $path);
+        if (!is_string($digest)) {
+            throw new UploadException('Unable to verify malware scan input integrity.');
+        }
+
+        return $digest;
+    }
+
     /**
      * @return array{string, string}
      */
@@ -201,6 +211,7 @@ trait UploadProcessorValidationConcern
             $this->copyToMalwareScanInput($filePath, $target);
         } catch (\Throwable $exception) {
             $this->cleanupMalwareScanInput($target, $directory);
+
             throw $exception;
         }
 
@@ -365,6 +376,8 @@ trait UploadProcessorValidationConcern
                 throw new UploadException('Upload changed during malware scan preparation.');
             }
 
+            $digestBeforeScan = $this->malwareScanDigest($scanPath);
+
             try {
                 $verdict = $this->malwareScanner->scan($request);
             } catch (\Throwable $exception) {
@@ -372,8 +385,17 @@ trait UploadProcessorValidationConcern
             }
 
             clearstatcache(true, $scanPath);
+            if (is_link($scanPath) || !is_file($scanPath)) {
+                throw new UploadException('Malware scanner modified scan input.');
+            }
+
             $sizeAfterScan = filesize($scanPath);
-            if (!is_int($sizeAfterScan) || $sizeAfterScan !== $request->size) {
+            $digestAfterScan = $this->malwareScanDigest($scanPath);
+            if (
+                !is_int($sizeAfterScan)
+                || $sizeAfterScan !== $request->size
+                || !hash_equals($digestBeforeScan, $digestAfterScan)
+            ) {
                 throw new UploadException('Malware scanner modified scan input.');
             }
             if (FlysystemHelper::size($filePath) !== $expectedSize) {
