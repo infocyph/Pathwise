@@ -6,11 +6,15 @@ namespace Infocyph\Pathwise\Native;
 
 final readonly class NativeExecutionLimits
 {
-    public const float DEFAULT_TIMEOUT_SECONDS = 300.0;
-    public const int DEFAULT_STDOUT_BYTES = 4_194_304;
-    public const int DEFAULT_STDERR_BYTES = 4_194_304;
-    public const float DEFAULT_TERMINATION_GRACE_SECONDS = 1.0;
     public const int DEFAULT_POLL_INTERVAL_MICROSECONDS = 10_000;
+
+    public const int DEFAULT_STDERR_BYTES = 4_194_304;
+
+    public const int DEFAULT_STDOUT_BYTES = 4_194_304;
+
+    public const float DEFAULT_TERMINATION_GRACE_SECONDS = 1.0;
+
+    public const float DEFAULT_TIMEOUT_SECONDS = 300.0;
 
     public function __construct(
         public float $timeoutSeconds = self::DEFAULT_TIMEOUT_SECONDS,
