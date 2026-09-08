@@ -177,7 +177,7 @@ Security and Archives
 See :doc:`security`.
 
 Indexing, Retention and Watchers
--------------------------------
+--------------------------------
 
 ``Indexing\ChecksumIndexer``
    Content-hash indexing, duplicate detection, and local hard-link
