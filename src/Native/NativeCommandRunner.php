@@ -168,6 +168,30 @@ final class NativeCommandRunner
         ));
     }
 
+    private static function drainFinalPipes(
+        mixed $stdout,
+        mixed $stderr,
+        string &$stdoutBuffer,
+        string &$stderrBuffer,
+        int &$stdoutBytes,
+        int &$stderrBytes,
+        NativeExecutionLimits $limits,
+    ): ?NativeExecutionFailure {
+        return self::drainPipe(
+            $stdout,
+            $stdoutBuffer,
+            $stdoutBytes,
+            $limits->stdoutBytes,
+            NativeExecutionFailure::STDOUT_LIMIT,
+        ) ?? self::drainPipe(
+            $stderr,
+            $stderrBuffer,
+            $stderrBytes,
+            $limits->stderrBytes,
+            NativeExecutionFailure::STDERR_LIMIT,
+        );
+    }
+
     private static function drainPipe(
         mixed $pipe,
         string &$buffer,
@@ -304,21 +328,18 @@ final class NativeCommandRunner
             }
 
             if (!$status['running']) {
-                $finalFailure = self::drainPipe(
-                    $stdout,
-                    $stdoutBuffer,
-                    $stdoutBytes,
-                    $limits->stdoutBytes,
-                    NativeExecutionFailure::STDOUT_LIMIT,
-                ) ?? self::drainPipe(
-                    $stderr,
-                    $stderrBuffer,
-                    $stderrBytes,
-                    $limits->stderrBytes,
-                    NativeExecutionFailure::STDERR_LIMIT,
-                );
-
-                return [$finalFailure, $status['exitcode']];
+                return [
+                    self::drainFinalPipes(
+                        $stdout,
+                        $stderr,
+                        $stdoutBuffer,
+                        $stderrBuffer,
+                        $stdoutBytes,
+                        $stderrBytes,
+                        $limits,
+                    ),
+                    $status['exitcode'],
+                ];
             }
 
             if (hrtime(true) >= $deadline) {
