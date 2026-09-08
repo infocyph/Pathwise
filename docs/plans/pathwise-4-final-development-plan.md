@@ -21,6 +21,46 @@ Baseline main commit: `8226cf42747ae131486063cad39335d6dfc1c7f7`
 
 The branch name predates the decision to ship the work as a major release. The release target from this plan forward is **4.0**, not 3.2.
 
+## Execution tracker
+
+Last tracker update: **2026-09-08**
+
+Legend:
+
+- `[X]` complete and already implemented on the development branch;
+- `[~]` actively being implemented or still needs its final acceptance/CI closure;
+- `[ ]` pending;
+- `[!]` blocked by an external prerequisite or release dependency.
+
+Current active batch: **Batch 7 — malware policy modes and scanner providers**.
+
+| Area | Status | Tracking note |
+| --- | --- | --- |
+| Plan freeze / Pathwise 4 scope | [X] | Major-release scope, ownership rules, work order, documentation gate, and release gates are frozen in this file. |
+| Batch 1 — instance-scoped storage context | [X] | `StorageContext` and per-instance storage/driver resolution are implemented. |
+| Batch 2 — typed upload-source ownership | [X] | `UploadSource` materialization and cleanup ownership are implemented. |
+| Batch 3 — hardened malware boundary | [X] | Typed request/verdict contract, private staging, fail-closed verdicts, mutation detection, and chunk-finalization scanning are implemented; provider/mode expansion is tracked in Batch 7. |
+| Batch 4 — prepared range-aware download streaming | [X] | Range-aware iterable streaming and deterministic resource closure are implemented. |
+| Batch 5 — generic safe symlink management | [X] | Generic root-contained link create/status/remove behavior is implemented. |
+| Batch 6 — production PSR-3 dependency | [X] | `psr/log ^3.0.2` is a direct production dependency. |
+| Batch 7.1 — malware scan modes/status | [~] | `OFF`, `WHEN_CONFIGURED`, and `REQUIRED` behavior is implemented; final status/provider diagnostics and QA closure remain. |
+| Batch 7.2 — ClamAV daemon adapter | [~] | INSTREAM adapter exists; stream-size bounding, protocol tests, static-analysis/style cleanup, and final CI closure are in progress. |
+| Batch 7.3 — LMD integration guidance | [ ] | Document the preferred ClamAV + LMD host deployment without root/sudo coupling in request workers. |
+| Batch 7.4 — other scanner engines | [~] | Core typed scanner contract is already generic; provider examples/documentation remain. |
+| Batch 7.5 — scanner acceptance suite | [~] | Core malware boundary tests pass; deterministic fake-clamd protocol/error/timeout/limit coverage is being completed. |
+| Batch 8 — security defaults / atomic guarantees / permissions | [ ] | Starts after Batch 7 closes. |
+| Batch 9 — bounded native execution | [ ] | Pending. |
+| Batch 10 — file queue lease correctness/durability | [ ] | Pending. |
+| Batch 11 — archive/parser hardening | [ ] | Pending. |
+| Batch 12 — static/global-state cleanup | [ ] | Pending major-version cleanup. |
+| Batch 13 — observability/retention/indexing/watcher review | [ ] | Pending whole-library subsystem audit. |
+| Batch 14 — complete Pathwise 4 documentation | [ ] | Release blocker; starts after public APIs are stable, with feature docs added earlier when useful. |
+| Batch 15 — performance/stress/release gates | [ ] | Final acceptance only after functional/security batches stabilize. |
+| Pathwise 4.0 release | [!] | Blocked until Batches 7–15 and all release gates pass. |
+| Foundation 3 / Point 26.5 consumption | [!] | Blocked until Pathwise 4.0 is released; Foundation then raises its floor and removes duplicated generic filesystem mechanics. |
+
+Tracker maintenance rule: update this table whenever a batch starts, closes, is split, or gains a release-blocking finding. A batch is marked `[X]` only after its implementation and relevant acceptance checks are complete; writing code alone is not enough.
+
 ## Principles
 
 1. **Security before compatibility.** Breaking changes are acceptable when they remove ambiguous, unsafe, or misleading behavior.
