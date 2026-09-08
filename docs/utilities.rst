@@ -3,25 +3,33 @@ Utilities
 
 Namespace: ``Infocyph\Pathwise\Utils``
 
-Path and metadata helpers:
+Pathwise utilities are shared low-level building blocks. They do not replace
+``StorageContext`` as application-owned storage topology.
 
-* ``PathHelper``: normalize, join, relative/absolute conversion, scheme-aware paths.
-* ``MetadataHelper``: size, mime, checksum, timestamps, ownership, path type.
-* ``PermissionsHelper``: read/write/execute checks and permission formatting.
+Path and Storage Helpers
+------------------------
 
-Ownership resolution:
+``PathHelper``
+   Normalize/join/relative/absolute/temp and scheme-aware path operations.
 
-* Uses OS-specific adapters in ``Utils\\Ownership`` (POSIX, Windows, fallback).
-* Avoids shell-based ownership lookup.
+``FlysystemHelper``
+   Low-level direct-local/default/mount storage routing used by the standalone
+   storage-neutral APIs. Persistent applications should prefer
+   ``StorageContext`` for named filesystem ownership and isolation.
 
-File watch helper:
+``MetadataHelper``
+   Size, MIME, checksum, timestamp, ownership and path-type helpers subject to
+   the selected storage/platform capability.
 
-* ``FileWatcher`` provides snapshot/diff/watch flows for change tracking.
+``PermissionsHelper``
+   Direct-local permission checks/formatting and mutation where supported.
 
-Examples
---------
+Ownership resolution is delegated to OS-capability implementations under
+``Utils\Ownership`` (POSIX, Windows and fallback). Pathwise does not shell out
+merely to discover ownership metadata.
 
-Path and metadata:
+Path and Metadata Example
+-------------------------
 
 .. code-block:: php
 
@@ -32,13 +40,41 @@ Path and metadata:
    $mime = MetadataHelper::getMimeType($path);
    $meta = MetadataHelper::getAllMetadata($path);
 
-Watcher snapshot + diff:
+File Watcher
+------------
+
+``FileWatcher`` provides deterministic snapshot/diff/polling workflows:
+
+* ``snapshot()`` returns a path-keyed ``mtime``/``size`` map sorted by path;
+* ``diff()`` returns typed ``SnapshotDiff`` with sorted created/modified/deleted
+  lists;
+* ``watch()`` invokes a callback for non-empty diffs and returns typed
+  ``WatchResult``;
+* watch duration must be at least one second;
+* polling interval must be at least 10 milliseconds;
+* snapshots of a directory necessarily retain one metadata entry per observed
+  file, so memory grows with the watched set.
 
 .. code-block:: php
 
+   use Infocyph\Pathwise\Results\SnapshotDiff;
    use Infocyph\Pathwise\Utils\FileWatcher;
 
    $before = FileWatcher::snapshot('/tmp/reports');
-   // perform file operations
+   // Perform file operations.
    $after = FileWatcher::snapshot('/tmp/reports');
    $changes = FileWatcher::diff($before, $after);
+
+   $result = FileWatcher::watch(
+       '/tmp/reports',
+       static function (SnapshotDiff $diff): void {
+           // Handle one deterministic change set.
+       },
+       durationSeconds: 5,
+       intervalMilliseconds: 500,
+   );
+
+``FileWatcher`` is polling, not an OS event-stream abstraction. For very large
+namespaces or long-running distributed watching, use a platform/application
+service designed for that scale and treat Pathwise snapshots as bounded
+filesystem workflows. See :doc:`performance-portability`.
