@@ -6,7 +6,6 @@ namespace Infocyph\Pathwise\StreamHandler\Concerns;
 
 use Infocyph\Pathwise\Exceptions\FileSizeExceededException;
 use Infocyph\Pathwise\Exceptions\UploadException;
-use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 
 /**
@@ -31,7 +30,7 @@ trait UploadProcessorChunkConcern
             throw new UploadException("Invalid merge stream for chunk index {$index}.");
         }
 
-        $input = FlysystemHelper::readStream($chunkPath);
+        $input = $this->storageReadStream($chunkPath);
         if (!is_resource($input)) {
             throw new UploadException("Failed to read chunk index {$index}.");
         }
@@ -59,16 +58,14 @@ trait UploadProcessorChunkConcern
         }
     }
 
-    /**
-     */
     private function cleanupChunkUploadArtifacts(string $uploadId, string $chunkDirectory): void
     {
         $manifestPath = $this->getChunkManifestPath($uploadId);
-        if (FlysystemHelper::fileExists($manifestPath)) {
-            FlysystemHelper::delete($manifestPath);
+        if ($this->storageFileExists($manifestPath)) {
+            $this->storageDelete($manifestPath);
         }
-        if (FlysystemHelper::directoryExists($chunkDirectory)) {
-            FlysystemHelper::deleteDirectory($chunkDirectory);
+        if ($this->storageDirectoryExists($chunkDirectory)) {
+            $this->storageDeleteDirectory($chunkDirectory);
         }
     }
 
@@ -91,11 +88,11 @@ trait UploadProcessorChunkConcern
     private function loadChunkManifest(string $uploadId): ?array
     {
         $path = $this->getChunkManifestPath($uploadId);
-        if (!FlysystemHelper::fileExists($path)) {
+        if (!$this->storageFileExists($path)) {
             return null;
         }
 
-        $content = FlysystemHelper::read($path);
+        $content = $this->storageRead($path);
 
         $manifest = json_decode($content, true);
         if (!is_array($manifest)) {
@@ -127,8 +124,6 @@ trait UploadProcessorChunkConcern
         ];
     }
 
-    /**
-     */
     private function mergeChunksToDestination(string $chunkDirectory, int $totalChunks, string $destination): void
     {
         $output = fopen('php://temp', 'rb+');
@@ -145,7 +140,7 @@ trait UploadProcessorChunkConcern
             }
 
             rewind($output);
-            FlysystemHelper::writeStream($destination, $output);
+            $this->storageWriteStream($destination, $output);
         } finally {
             fclose($output);
         }
@@ -157,7 +152,7 @@ trait UploadProcessorChunkConcern
         $received = [];
         for ($index = 0; $index < $totalChunks; $index++) {
             $name = sprintf('chunk_%06d.part', $index);
-            if (FlysystemHelper::fileExists(PathHelper::join($chunkDirectory, $name))) {
+            if ($this->storageFileExists(PathHelper::join($chunkDirectory, $name))) {
                 $received[(string) $index] = $name;
             }
         }
@@ -165,12 +160,10 @@ trait UploadProcessorChunkConcern
         return $received;
     }
 
-    /**
-     */
     private function resolveChunkPath(string $chunkDirectory, int $index): string
     {
         $chunkPath = PathHelper::join($chunkDirectory, sprintf('chunk_%06d.part', $index));
-        if (!FlysystemHelper::fileExists($chunkPath)) {
+        if (!$this->storageFileExists($chunkPath)) {
             throw new UploadException("Missing chunk file for index {$index}.");
         }
 
@@ -213,7 +206,7 @@ trait UploadProcessorChunkConcern
             throw new UploadException('Failed to persist chunk manifest.');
         }
 
-        FlysystemHelper::write($path, $json);
+        $this->storageWrite($path, $json);
     }
 
     /**
@@ -261,11 +254,11 @@ trait UploadProcessorChunkConcern
     private function withChunkSessionLock(string $uploadId, callable $operation): mixed
     {
         $chunkDirectory = $this->getChunkDirectory($uploadId);
-        if (!FlysystemHelper::isLocalPath($chunkDirectory)) {
+        if (!$this->storageIsLocalPath($chunkDirectory)) {
             return $operation();
         }
 
-        $lockDirectory = dirname($chunkDirectory);
+        $lockDirectory = dirname($this->storageDirectLocalPath($chunkDirectory) ?? $chunkDirectory);
         if (!is_dir($lockDirectory) && !mkdir($lockDirectory, 0700, true) && !is_dir($lockDirectory)) {
             throw new UploadException('Unable to create chunk lock directory.');
         }
