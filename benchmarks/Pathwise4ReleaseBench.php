@@ -55,6 +55,65 @@ final class Pathwise4ReleaseBench
 
     private string $uploadTempDirectory;
 
+    public function setUp(): void
+    {
+        FlysystemHelper::reset();
+
+        $this->baseDirectory = PathHelper::join(
+            sys_get_temp_dir(),
+            'pathwise4_release_bench_' . bin2hex(random_bytes(8)),
+        );
+        $this->adapterRoot = PathHelper::join($this->baseDirectory, 'adapter');
+        $contextRoot = PathHelper::join($this->baseDirectory, 'context');
+        $this->dedupDirectory = PathHelper::join($this->baseDirectory, 'dedup');
+        $this->indexDirectory = PathHelper::join($this->baseDirectory, 'index');
+        $this->uploadDirectory = PathHelper::join($this->baseDirectory, 'uploads');
+        $this->uploadTempDirectory = PathHelper::join($this->baseDirectory, 'upload-temp');
+
+        foreach ([
+            $this->baseDirectory,
+            $this->adapterRoot,
+            $contextRoot,
+            $this->dedupDirectory,
+            $this->indexDirectory,
+            $this->uploadDirectory,
+            $this->uploadTempDirectory,
+        ] as $directory) {
+            if (!mkdir($directory, 0700, true) && !is_dir($directory)) {
+                throw new \RuntimeException("Unable to create release benchmark fixture: {$directory}");
+            }
+        }
+
+        $this->payloadFile = PathHelper::join($this->baseDirectory, 'payload.txt');
+        $this->largeFile = PathHelper::join($this->baseDirectory, 'large.bin');
+        $this->archivePath = PathHelper::join($this->baseDirectory, 'fixture.zip');
+
+        file_put_contents($this->payloadFile, str_repeat('pathwise-release\n', 65_536));
+        file_put_contents($this->largeFile, str_repeat('0123456789abcdef', 524_288));
+
+        $this->createIndexFixture();
+        $this->createDedupFixture();
+        $this->createArchiveFixture();
+
+        $this->storageContext = new StorageContext([
+            'bench' => [
+                'driver' => 'local',
+                'root' => $contextRoot,
+            ],
+        ], 'bench');
+        $this->storageContext->filesystem();
+
+        FlysystemHelper::setDefaultFilesystem(
+            new Filesystem(new LocalFilesystemAdapter($this->adapterRoot)),
+        );
+    }
+
+    public function tearDown(): void
+    {
+        FlysystemHelper::reset();
+        $this->deleteLocalTree($this->baseDirectory);
+    }
+
     public function benchAdapterStagedWriter(): void
     {
         $writer = new SafeFileWriter('staged-writer.bin');
@@ -216,6 +275,7 @@ final class Pathwise4ReleaseBench
                 'text/plain',
             );
             $materialization = $source->materialize($this->uploadTempDirectory);
+
             try {
                 if ($materialization->size !== filesize($this->payloadFile)) {
                     throw new \RuntimeException('Upload materialization size mismatch.');
@@ -226,65 +286,6 @@ final class Pathwise4ReleaseBench
         } finally {
             fclose($stream);
         }
-    }
-
-    public function setUp(): void
-    {
-        FlysystemHelper::reset();
-
-        $this->baseDirectory = PathHelper::join(
-            sys_get_temp_dir(),
-            'pathwise4_release_bench_' . bin2hex(random_bytes(8)),
-        );
-        $this->adapterRoot = PathHelper::join($this->baseDirectory, 'adapter');
-        $contextRoot = PathHelper::join($this->baseDirectory, 'context');
-        $this->dedupDirectory = PathHelper::join($this->baseDirectory, 'dedup');
-        $this->indexDirectory = PathHelper::join($this->baseDirectory, 'index');
-        $this->uploadDirectory = PathHelper::join($this->baseDirectory, 'uploads');
-        $this->uploadTempDirectory = PathHelper::join($this->baseDirectory, 'upload-temp');
-
-        foreach ([
-            $this->baseDirectory,
-            $this->adapterRoot,
-            $contextRoot,
-            $this->dedupDirectory,
-            $this->indexDirectory,
-            $this->uploadDirectory,
-            $this->uploadTempDirectory,
-        ] as $directory) {
-            if (!mkdir($directory, 0700, true) && !is_dir($directory)) {
-                throw new \RuntimeException("Unable to create release benchmark fixture: {$directory}");
-            }
-        }
-
-        $this->payloadFile = PathHelper::join($this->baseDirectory, 'payload.txt');
-        $this->largeFile = PathHelper::join($this->baseDirectory, 'large.bin');
-        $this->archivePath = PathHelper::join($this->baseDirectory, 'fixture.zip');
-
-        file_put_contents($this->payloadFile, str_repeat('pathwise-release\n', 65_536));
-        file_put_contents($this->largeFile, str_repeat('0123456789abcdef', 524_288));
-
-        $this->createIndexFixture();
-        $this->createDedupFixture();
-        $this->createArchiveFixture();
-
-        $this->storageContext = new StorageContext([
-            'bench' => [
-                'driver' => 'local',
-                'root' => $contextRoot,
-            ],
-        ], 'bench');
-        $this->storageContext->filesystem();
-
-        FlysystemHelper::setDefaultFilesystem(
-            new Filesystem(new LocalFilesystemAdapter($this->adapterRoot)),
-        );
-    }
-
-    public function tearDown(): void
-    {
-        FlysystemHelper::reset();
-        $this->deleteLocalTree($this->baseDirectory);
     }
 
     private function createArchiveFixture(): void
