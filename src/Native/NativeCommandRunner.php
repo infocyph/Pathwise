@@ -222,13 +222,7 @@ final class NativeCommandRunner
             return false;
         }
 
-        foreach ($command as $argument) {
-            if (str_contains($argument, "\0")) {
-                return false;
-            }
-        }
-
-        return true;
+        return array_all($command, static fn(string $argument): bool => !str_contains($argument, "\0"));
     }
 
     /** @return list<string> */
@@ -241,7 +235,7 @@ final class NativeCommandRunner
 
         $lines = preg_split('/\R/', $normalized);
 
-        return $lines === false ? [] : array_values($lines);
+        return $lines === false ? [] : $lines;
     }
 
     private static function locateExecutable(string $command): bool
@@ -300,15 +294,17 @@ final class NativeCommandRunner
                 NativeExecutionFailure::STDERR_LIMIT,
             );
             $status = proc_get_status($process);
-            if (!is_array($status)) {
-                return [
-                    $failure ?? NativeExecutionFailure::IO_ERROR,
-                    self::terminateBounded($process, $stdout, $stderr, $limits),
-                ];
+
+            if ($failure !== null) {
+                $exitCode = $status['running']
+                    ? self::terminateBounded($process, $stdout, $stderr, $limits)
+                    : $status['exitcode'];
+
+                return [$failure, $exitCode];
             }
 
             if (!$status['running']) {
-                $finalFailure = $failure ?? self::drainPipe(
+                $finalFailure = self::drainPipe(
                     $stdout,
                     $stdoutBuffer,
                     $stdoutBytes,
@@ -321,13 +317,8 @@ final class NativeCommandRunner
                     $limits->stderrBytes,
                     NativeExecutionFailure::STDERR_LIMIT,
                 );
-                $exitCode = is_int($status['exitcode']) ? $status['exitcode'] : -1;
 
-                return [$finalFailure, $exitCode];
-            }
-
-            if ($failure !== null) {
-                return [$failure, self::terminateBounded($process, $stdout, $stderr, $limits)];
+                return [$finalFailure, $status['exitcode']];
             }
 
             if (hrtime(true) >= $deadline) {
@@ -368,6 +359,17 @@ final class NativeCommandRunner
         }
     }
 
+    private static function startFailedResult(string $displayCommand, string $message): NativeExecutionResult
+    {
+        return new NativeExecutionResult(
+            false,
+            $displayCommand,
+            self::EXIT_START_FAILED,
+            [$message],
+            NativeExecutionFailure::START_FAILED,
+        );
+    }
+
     /**
      * @param list<string> $command
      * @param array<int, resource> $pipes
@@ -399,17 +401,6 @@ final class NativeCommandRunner
         }
     }
 
-    private static function startFailedResult(string $displayCommand, string $message): NativeExecutionResult
-    {
-        return new NativeExecutionResult(
-            false,
-            $displayCommand,
-            self::EXIT_START_FAILED,
-            [$message],
-            NativeExecutionFailure::START_FAILED,
-        );
-    }
-
     /** @param resource $process */
     private static function terminateBounded(
         mixed $process,
@@ -433,7 +424,7 @@ final class NativeCommandRunner
     {
         self::runSilently(static fn(): bool => proc_terminate($process));
         $status = proc_get_status($process);
-        if (is_array($status) && $status['running']) {
+        if ($status['running']) {
             self::runSilently(static fn(): bool => proc_terminate($process, 9));
         }
     }
@@ -462,11 +453,8 @@ final class NativeCommandRunner
             self::discardAvailable($stdout);
             self::discardAvailable($stderr);
             $status = proc_get_status($process);
-            if (!is_array($status)) {
-                return null;
-            }
             if (!$status['running']) {
-                return is_int($status['exitcode']) ? $status['exitcode'] : null;
+                return $status['exitcode'];
             }
 
             usleep($limits->pollIntervalMicroseconds);
