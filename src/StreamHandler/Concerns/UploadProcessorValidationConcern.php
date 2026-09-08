@@ -207,6 +207,7 @@ trait UploadProcessorValidationConcern
         }
 
         $target = PathHelper::join($directory, 'payload');
+
         try {
             $this->copyToMalwareScanInput($filePath, $target);
         } catch (\Throwable $exception) {
