@@ -44,6 +44,10 @@
             "Infocyph\\Pathwise\\": "src/"
         }
     },
+    "scripts": {
+        "benchmark:release": "@php vendor/bin/phpbench run benchmarks/Pathwise4ReleaseBench.php --report=aggregate --output=json --progress=none --bootstrap=vendor/autoload.php --revs=1 --iterations=1",
+        "stress:release": "@php vendor/bin/phpbench run benchmarks/stress/ReleaseStress.php --report=aggregate --progress=none --bootstrap=vendor/autoload.php --revs=1 --iterations=1"
+    },
     "config": {
         "allow-plugins": {
             "ergebnis/composer-normalize": true,
