@@ -204,6 +204,24 @@ final class StorageContext
         return $normalized;
     }
 
+    private static function normalizeLocation(string $location): string
+    {
+        $normalized = str_replace('\\', '/', trim($location));
+        if (str_contains($normalized, "\0")) {
+            throw new \InvalidArgumentException('Storage path cannot contain a null byte.');
+        }
+        if (preg_match('~(?:^|/)\.\.(?:/|$)~', $normalized) === 1) {
+            throw new \InvalidArgumentException('Storage path cannot contain parent-directory traversal.');
+        }
+
+        $segments = array_values(array_filter(
+            explode('/', trim($normalized, '/')),
+            static fn(string $segment): bool => $segment !== '' && $segment !== '.',
+        ));
+
+        return implode('/', $segments);
+    }
+
     private static function normalizeName(string $name): string
     {
         $normalized = strtolower(trim($name));
@@ -230,7 +248,7 @@ final class StorageContext
                 );
             }
 
-            return [$scheme, trim($matches[2], '/')];
+            return [$scheme, self::normalizeLocation($matches[2])];
         }
 
         if ($normalizedPath !== '' && PathHelper::isAbsolute($normalizedPath)) {
@@ -239,7 +257,7 @@ final class StorageContext
             );
         }
 
-        return [$this->resolveName($name), trim($normalizedPath, '/')];
+        return [$this->resolveName($name), self::normalizeLocation($normalizedPath)];
     }
 
     private function resolveName(?string $name): string
