@@ -32,7 +32,7 @@ Legend:
 - `[ ]` pending;
 - `[!]` blocked by an external prerequisite or release dependency.
 
-Current active batch: **Batch 9 — bounded native execution**.
+Current active batch: **Batch 10 — file queue lease correctness and durability**.
 
 | Area | Status | Tracking note |
 | --- | --- | --- |
@@ -52,14 +52,14 @@ Current active batch: **Batch 9 — bounded native execution**.
 | Batch 8.2 — truthful atomic-write semantics | [X] | Local same-directory rename is the only atomic guarantee; adapter-backed atomic mode is rejected and staged remote writes remain explicitly non-atomic. |
 | Batch 8.3 — private Pathwise-owned local state | [X] | Scanner/upload staging, queue state, local JSONL audit state, and partitioned audit objects use private defaults where Pathwise owns creation; POSIX permission acceptance and cross-platform semantics are CI-green. |
 | Batch 8 — security defaults / atomic guarantees / permissions | [X] | All three sub-batches are complete; acceptance passed Windows PHP 8.4/8.5, optional adapters, stable+lowest QA, PHPStan/Psalm, and clean install. |
-| Batch 9 — bounded native execution | [~] | Active: audit the existing runner and replace unbounded process/output behavior with deadline, output caps, non-deadlocking pipe polling, and deterministic termination/cleanup. |
-| Batch 10 — file queue lease correctness/durability | [ ] | Pending. |
+| Batch 9 — bounded native execution | [X] | Bounded non-blocking native execution, timeout/output caps, typed failures, deterministic termination/cleanup, argv-only invocation, adapter-wide limits, and capability-based Windows fallback are CI-green. |
+| Batch 10 — file queue lease correctness/durability | [~] | Active: replace reservation timestamps as ownership with unique lease tokens and harden persistence/recovery. |
 | Batch 11 — archive/parser hardening | [ ] | Pending. |
 | Batch 12 — static/global-state cleanup | [ ] | Pending major-version cleanup. |
 | Batch 13 — observability/retention/indexing/watcher review | [ ] | Pending whole-library subsystem audit. |
 | Batch 14 — complete Pathwise 4 documentation | [ ] | Release blocker; starts after public APIs are stable, with feature docs added earlier when useful. |
 | Batch 15 — performance/stress/release gates | [ ] | Final acceptance only after functional/security batches stabilize. |
-| Pathwise 4.0 release | [!] | Blocked until Batches 9–15 and all release gates pass. |
+| Pathwise 4.0 release | [!] | Blocked until Batches 10–15 and all release gates pass. |
 | Foundation 3 / Point 26.5 consumption | [!] | Blocked until Pathwise 4.0 is released; Foundation then raises its floor and removes duplicated generic filesystem mechanics. |
 
 Tracker maintenance rule: update this table whenever a batch starts, closes, is split, or gains a release-blocking finding. A batch is marked `[X]` only after its implementation and relevant acceptance checks are complete; writing code alone is not enough.
@@ -74,6 +74,7 @@ Tracker maintenance rule: update this table whenever a batch starts, closes, is 
 6. **Prefer typed contracts/results over magic booleans and loosely-shaped arrays for new major APIs.**
 7. **No hidden privilege requirements.** A normal PHP/web worker must not need root to use Pathwise.
 8. **Document every public capability with complete working examples.** A feature is not release-complete if consumers cannot discover and correctly compose it from the documentation.
+9. **Platform support is capability-based, not emulation-based.** Do not create parallel OS-specific engines merely to imitate unavailable guarantees. `AUTO` must use the portable Pathwise/PHP implementation when a native capability is unavailable; forced `NATIVE` must fail explicitly and typed.
 
 ---
 
@@ -276,34 +277,43 @@ Use private defaults (`0700` directory / `0600` sensitive state file) where stat
 
 ---
 
-## Batch 9 — bounded native execution
+## Batch 9 — bounded native execution — complete
 
-Current native command execution must not be able to pin a persistent worker indefinitely or accumulate unlimited output.
+Native command execution is bounded so it cannot pin a persistent worker indefinitely or accumulate unlimited output.
 
-Introduce explicit execution limits:
+Implemented execution limits:
 
 - process timeout/deadline;
 - stdout byte limit;
 - stderr byte limit;
-- polling without deadlock on filled pipes;
+- non-blocking polling without deadlock on filled pipes;
 - TERM then bounded KILL/escalation where supported;
 - deterministic descriptor/process cleanup;
-- typed timeout/output-limit failures;
-- preserve argv-array execution; never construct shell command strings from user input.
+- typed timeout/output-limit/start/exit/unsupported failures;
+- argv-array execution only; Pathwise never constructs shell command strings from user input.
 
-Apply limits to every native adapter path (`rsync`, native copy/move, zip tools, etc.).
+Every native adapter path (`rsync`, `cp`, `grep`, `zip`, `unzip`) flows through the bounded runner. Safe defaults are used by higher-level Pathwise operations; low-level callers may provide `NativeExecutionLimits` explicitly through `NativeOperationsAdapter`.
 
-Do **not** implement LMD scanning by routing `maldet` through this request-path runner; LMD integration remains host/service-oriented as defined in Batch 7.
+Platform policy:
 
-Acceptance:
+- bounded native execution is exposed as a capability through `NativeCommandRunner::supportsBoundedExecution()`;
+- Pathwise does **not** maintain a second Windows-only output-capture/process engine merely to imitate Unix non-blocking pipe guarantees;
+- when bounded native execution is unavailable, native adapter capability probes return unavailable;
+- `AUTO` therefore uses the portable PHP/Flysystem implementation;
+- forced `NATIVE` fails explicitly rather than silently using an unbounded or weaker execution path.
+
+LMD scanning is not routed through this request-path runner; LMD integration remains host/service-oriented as defined in Batch 7.
+
+Acceptance passed:
 
 - hung child is terminated within configured bound;
 - infinite/large stdout cannot exhaust memory;
 - infinite/large stderr cannot exhaust memory;
 - stdout+stderr cannot deadlock the parent;
-- success result remains typed;
-- exit-code failures remain typed;
-- paths containing whitespace, Unicode, quotes, and shell metacharacters remain safe.
+- success and exit-code failures remain typed;
+- paths containing whitespace, Unicode, quotes, and shell metacharacters remain safe;
+- Windows PHP 8.4/8.5 verify capability/fallback semantics without OS-specific native emulation;
+- PHP 8.4/8.5 stable+lowest QA, PHPStan/Psalm, clean install, and optional-adapter contracts are green.
 
 ---
 
@@ -560,14 +570,13 @@ Foundation should then:
 
 # Work order from this point
 
-1. **Batch 9** — bounded native execution.
-2. **Batch 10** — queue lease/durability repair.
-3. **Batch 11** — archive/parser hardening.
-4. **Batch 12** — global/static API cleanup.
-5. **Batch 13** — remaining subsystem audit/hardening.
-6. **Batch 14** — complete documentation rebuild and migration guide.
-7. **Batch 15** — benchmarks/stress/final release gates.
-8. Release Pathwise 4.0, then complete Foundation Point 26.5 against the released floor.
+1. **Batch 10** — queue lease/durability repair.
+2. **Batch 11** — archive/parser hardening.
+3. **Batch 12** — global/static API cleanup.
+4. **Batch 13** — remaining subsystem audit/hardening.
+5. **Batch 14** — complete documentation rebuild and migration guide.
+6. **Batch 15** — benchmarks/stress/final release gates.
+7. Release Pathwise 4.0, then complete Foundation Point 26.5 against the released floor.
 
 ## Push discipline
 
