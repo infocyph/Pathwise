@@ -32,6 +32,34 @@ test('it writes JSON lines audit records', function () {
     }
 });
 
+test('local audit state uses private permissions', function () {
+    if (PHP_OS_FAMILY === 'Windows') {
+        expect(true)->toBeTrue();
+
+        return;
+    }
+
+    $root = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('pathwise_private_audit_', true);
+    $logFile = $root . DIRECTORY_SEPARATOR . 'state' . DIRECTORY_SEPARATOR . 'events.jsonl';
+
+    try {
+        $audit = new AuditTrail($logFile);
+        $audit->log('private');
+
+        $directoryMode = fileperms(dirname($logFile));
+        $fileMode = fileperms($logFile);
+
+        expect($directoryMode)->toBeInt()
+            ->and($directoryMode & 0777)->toBe(0700)
+            ->and($fileMode)->toBeInt()
+            ->and($fileMode & 0777)->toBe(0600);
+    } finally {
+        if (is_dir($root)) {
+            (new Infocyph\Pathwise\DirectoryManager\DirectoryOperations($root))->delete(true);
+        }
+    }
+});
+
 test('it fails without corrupting the log when context cannot be encoded', function () {
     $logFile = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid('audit_', true) . '.jsonl';
     $audit = new AuditTrail($logFile);
@@ -82,6 +110,20 @@ test('it writes one immutable object per event to mounted storage', function () 
         $files = array_values(array_filter($objects, static fn ($entry): bool => $entry->isFile()));
 
         expect($files)->toHaveCount(2);
+
+        if (PHP_OS_FAMILY !== 'Windows') {
+            $firstPath = $root . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $files[0]->path());
+            $fileMode = fileperms($firstPath);
+            $directoryMode = fileperms(dirname($firstPath));
+            $rootMode = fileperms($root);
+
+            expect($fileMode)->toBeInt()
+                ->and($fileMode & 0777)->toBe(0600)
+                ->and($directoryMode)->toBeInt()
+                ->and($directoryMode & 0777)->toBe(0700)
+                ->and($rootMode)->toBeInt()
+                ->and($rootMode & 0777)->toBe(0755);
+        }
     } finally {
         FlysystemHelper::unmount('audit-partition');
         (new Infocyph\Pathwise\DirectoryManager\DirectoryOperations($root))->delete(true);
