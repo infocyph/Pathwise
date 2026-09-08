@@ -111,6 +111,19 @@ trait StorageContextRoutingConcern
         $resolved[0]->deleteDirectory($resolved[1]);
     }
 
+    private function storageDirectLocalPath(string $path): ?string
+    {
+        if ($this->storageContext !== null && !PathHelper::isAbsolute($path)) {
+            try {
+                return $this->storageContext->localPath($path);
+            } catch (\InvalidArgumentException) {
+                return null;
+            }
+        }
+
+        return FlysystemHelper::isLocalPath($path) ? PathHelper::normalize($path) : null;
+    }
+
     private function storageDirectoryExists(string $path): bool
     {
         $resolved = $this->storageResolution($path);
@@ -131,17 +144,7 @@ trait StorageContextRoutingConcern
 
     private function storageIsLocalPath(string $path): bool
     {
-        if ($this->storageContext === null || PathHelper::isAbsolute($path)) {
-            return FlysystemHelper::isLocalPath($path);
-        }
-
-        $canonical = $this->storageContext->path($path);
-        $separator = strpos($canonical, '://');
-        if ($separator === false) {
-            return false;
-        }
-
-        return $this->storageContext->isLocal(substr($canonical, 0, $separator));
+        return $this->storageDirectLocalPath($path) !== null;
     }
 
     private function storageIsSameOrDescendant(string $root, string $path): bool
