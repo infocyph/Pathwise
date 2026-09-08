@@ -16,6 +16,7 @@ jobs:
       integration_services: '[]'
       service_topologies: '{}'
       php_extensions: "fileinfo, pcntl, posix, simplexml, xmlreader, zip"
+      benchmark_composer_script: "benchmark:release"
     permissions:
       security-events: write
       actions: read
@@ -78,3 +79,21 @@ jobs:
           composer require --dev --no-interaction --prefer-dist league/flysystem-memory:^3 league/flysystem-read-only:^3 league/flysystem-path-prefixing:^3
       - name: "Run adapter contracts"
         run: composer ic:test:code
+
+  release-stress:
+    name: "Release stress / PHP 8.4"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Set up PHP"
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: "fileinfo, pcntl, posix, simplexml, xmlreader, zip"
+          coverage: none
+          tools: composer:v2
+      - name: "Install dependencies"
+        run: composer install --no-interaction --prefer-dist
+      - name: "Run release stress workloads"
+        run: composer stress:release
