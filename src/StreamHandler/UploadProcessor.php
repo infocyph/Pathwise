@@ -40,6 +40,7 @@ use Psr\Log\LoggerInterface;
  *     validationProfile: string|null,
  *     hasMalwareScanner: bool,
  *     malwareScannerClass: string|null,
+ *     malwareScannerProvider: string|null,
  *     malwareScanMode: string,
  *     malwareScanStatus: string,
  *     strictContentTypeValidation: bool
@@ -180,8 +181,9 @@ class UploadProcessor
             'validationProfile' => $this->validationProfile,
             'hasMalwareScanner' => $this->malwareScanner !== null,
             'malwareScannerClass' => $this->malwareScanner !== null ? $this->malwareScanner::class : null,
+            'malwareScannerProvider' => $this->malwareScannerProvider(),
             'malwareScanMode' => $this->malwareScanMode->value,
-            'malwareScanStatus' => $this->malwareScanStatus(),
+            'malwareScanStatus' => $this->malwareScanStatus()->value,
             'strictContentTypeValidation' => $this->strictContentTypeValidation,
         ];
     }
@@ -395,19 +397,19 @@ class UploadProcessor
     }
 
     /**
-     * Configure or clear the malware scanner used before content parsing.
-     */
-    public function setMalwareScanner(?MalwareScannerInterface $scanner): void
-    {
-        $this->malwareScanner = $scanner;
-    }
-
-    /**
      * Configure malware scan policy.
      */
     public function setMalwareScanMode(MalwareScanMode $mode): void
     {
         $this->malwareScanMode = $mode;
+    }
+
+    /**
+     * Configure or clear the malware scanner used before content parsing.
+     */
+    public function setMalwareScanner(?MalwareScannerInterface $scanner): void
+    {
+        $this->malwareScanner = $scanner;
     }
 
     /**
@@ -509,12 +511,27 @@ class UploadProcessor
             : sprintf('upload_%s', $identifier);
     }
 
-    private function malwareScanStatus(): string
+    private function malwareScannerProvider(): ?string
+    {
+        if (!$this->malwareScanner instanceof MalwareScannerProviderInterface) {
+            return null;
+        }
+
+        $provider = trim($this->malwareScanner->providerId());
+
+        return $provider !== '' ? $provider : null;
+    }
+
+    private function malwareScanStatus(): MalwareScanStatus
     {
         return match ($this->malwareScanMode) {
-            MalwareScanMode::OFF => 'disabled',
-            MalwareScanMode::REQUIRED => $this->malwareScanner === null ? 'required_unconfigured' : 'required_ready',
-            MalwareScanMode::WHEN_CONFIGURED => $this->malwareScanner === null ? 'unconfigured' : 'configured',
+            MalwareScanMode::OFF => MalwareScanStatus::DISABLED,
+            MalwareScanMode::REQUIRED => $this->malwareScanner === null
+                ? MalwareScanStatus::REQUIRED_UNCONFIGURED
+                : MalwareScanStatus::REQUIRED_READY,
+            MalwareScanMode::WHEN_CONFIGURED => $this->malwareScanner === null
+                ? MalwareScanStatus::UNCONFIGURED
+                : MalwareScanStatus::CONFIGURED,
         };
     }
 

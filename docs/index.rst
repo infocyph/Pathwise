@@ -21,6 +21,7 @@ queue/audit tooling, and operational helpers.
    symlink-management
    directory-manager
    upload-processing
+   malware-scanning
    download-processing
    security
    queue

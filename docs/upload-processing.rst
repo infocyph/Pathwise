@@ -28,7 +28,8 @@ Where it fits:
 * Strict content checks:
   * extension <> MIME agreement
   * lightweight file signature verification for common formats
-* First-class ``MalwareScannerInterface`` support.
+* First-class ``MalwareScannerInterface`` support with explicit
+  ``MalwareScanMode`` policy.
 
 Storage notes:
 
@@ -37,7 +38,7 @@ Storage notes:
 * ``UploadSource`` materialization always uses a Pathwise-owned local staging
   file. A mounted/default filesystem temp setting therefore falls back to the
   local system temp directory for source materialization.
-* For adapter setup (S3/SFTP/FTP/custom), see ``storage-adapters``.
+* For adapter setup (S3/SFTP/FTP/custom), see :doc:`storage-adapters`.
 
 Typed Upload Sources
 --------------------
@@ -96,67 +97,35 @@ so an invalid framework upload is not materialized unnecessarily.
 Malware Scanning
 ----------------
 
-Production malware scanning uses the typed ``MalwareScannerInterface``. The
-scanner receives a ``MalwareScanRequest`` containing a Pathwise-owned local
-regular file, the actual size, and the normalized extension.
+Malware scanning is configured through ``MalwareScannerInterface`` plus an
+explicit ``MalwareScanMode``:
 
-Pathwise never passes a Flysystem URI, mounted path, symlink, or caller-owned
-file directly to the scanner. The upload is copied into a private ``0700`` scan
-directory and the scan file is forced to ``0600`` permissions. The scan copy is
-removed in a ``finally`` path after every verdict or failure.
+* ``OFF`` — never scan;
+* ``WHEN_CONFIGURED`` — default; scan only when a scanner is configured;
+* ``REQUIRED`` — reject the upload unless a scanner is configured and returns
+  ``CLEAN``.
 
 .. code-block:: php
 
-   use Infocyph\Pathwise\StreamHandler\MalwareScannerInterface;
-   use Infocyph\Pathwise\StreamHandler\MalwareScanRequest;
-   use Infocyph\Pathwise\StreamHandler\MalwareScanVerdict;
+   use Infocyph\Pathwise\StreamHandler\MalwareScanMode;
+   use Infocyph\Pathwise\StreamHandler\Scanner\ClamAvDaemonScanner;
 
-   final class ClamScanner implements MalwareScannerInterface
-   {
-       public function scan(MalwareScanRequest $request): MalwareScanVerdict
-       {
-           // Scan $request->localPath with clamd, ICAP, or another engine.
-           return MalwareScanVerdict::CLEAN;
-       }
-   }
+   $uploader->setMalwareScanner(new ClamAvDaemonScanner(
+       endpoint: 'unix:///run/clamav/clamd.ctl',
+   ));
+   $uploader->setMalwareScanMode(MalwareScanMode::REQUIRED);
 
-   $uploader->setMalwareScanner(new ClamScanner());
-   $uploader->setRequireMalwareScan(true);
+``getInfo()`` exposes ``malwareScanMode``, ``malwareScanStatus``,
+``hasMalwareScanner``, ``malwareScannerClass``, and an optional
+``malwareScannerProvider`` identifier.
 
-Only an explicit ``MalwareScanVerdict::CLEAN`` is accepted. ``MALICIOUS``,
-``SUSPICIOUS``, and ``UNKNOWN`` all reject the upload. Scanner/backend
-exceptions fail closed as ``Malware scanner failed.`` while the original
-throwable is retained as the previous exception for internal diagnostics.
+Pathwise creates a private local scan copy, scans before MIME/signature/image
+parsing, accepts only an explicit ``CLEAN`` verdict, rejects scanner mutation,
+and removes the scan copy on every path.
 
-The hardened validation order is:
-
-#. upload/error and HTTP provenance checks
-#. metadata size rejection
-#. authoritative actual-size validation
-#. extension allow/block policy
-#. materialize private local malware-scan copy
-#. malware scan
-#. MIME detection and MIME allowlist
-#. extension-to-MIME and magic-signature checks
-#. image/format-specific parsing
-#. final naming and publication
-
-This deliberately keeps attacker-controlled content away from MIME/signature
-and image parsers until the configured malware boundary has accepted it.
-
-The scan copy is immutable by contract. Pathwise verifies its size after the
-scanner returns and rejects scanner mutation. Pathwise also rechecks the source
-size around scanning and fails if the source changes during scan preparation or
-execution.
-
-When ``setRequireMalwareScan(true)`` is enabled and no scanner is configured,
-Pathwise fails before MIME detection or deeper parsing.
-
-For resumable uploads, individual chunks are not treated as independently safe
-files. Pathwise scans the fully assembled staging object during
-``finalizeChunkUpload()`` before deeper content validation and publication.
-This avoids both per-chunk scanner cost and false assurance when malicious
-structure spans chunk boundaries.
+See :doc:`malware-scanning` for the complete ClamAV daemon configuration,
+ClamAV + LMD production model, custom scanner examples, limits, failure
+semantics, and status values.
 
 Security Hardening Controls
 ---------------------------
@@ -167,8 +136,8 @@ Security Hardening Controls
   to enforce extension allow/deny policies.
 * ``setChunkLimits(int $maxChunkCount = 0, int $maxChunkSize = 0)``
   to cap chunk count and per-chunk size.
-* ``setRequireMalwareScan(bool $required = true)``
-  to reject uploads if scanner execution is required but unavailable.
+* ``setMalwareScanMode(MalwareScanMode $mode)``
+  to disable scanning, scan when configured, or require a scanner.
 * ``setStrictContentTypeValidation(bool $enabled = true)``
   to enforce extension-to-MIME agreement and signature checks.
 
@@ -232,9 +201,12 @@ Hardened chunk upload:
 
 .. code-block:: php
 
+   use Infocyph\Pathwise\StreamHandler\MalwareScanMode;
+   use Infocyph\Pathwise\StreamHandler\Scanner\ClamAvDaemonScanner;
+
    $uploader->setChunkLimits(maxChunkCount: 20, maxChunkSize: 2 * 1024 * 1024); // 2MB
-   $uploader->setRequireMalwareScan(true);
-   $uploader->setMalwareScanner(new ClamScanner());
+   $uploader->setMalwareScanner(new ClamAvDaemonScanner('tcp://127.0.0.1:3310'));
+   $uploader->setMalwareScanMode(MalwareScanMode::REQUIRED);
 
    $uploader->processChunkUpload(
        chunkFile: $_FILES['chunk'],
