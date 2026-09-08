@@ -59,6 +59,7 @@ final readonly class FileJobQueue
 
         $this->stateStore = new FileQueueStateStore($this->queueFilePath, $maxQueueBytes);
         $this->stateStore->initialize($this->encodeQueueData($this->emptyQueueData()));
+        $this->decodeQueueData($this->stateStore->read());
     }
 
     public function acknowledge(QueueReservation $reservation): void
@@ -414,10 +415,7 @@ final readonly class FileJobQueue
         return $job;
     }
 
-    /**
-     * @param 'pending'|'processing'|'failed' $bucket
-     * @return list<QueueJob>
-     */
+    /** @return list<QueueJob> */
     private function normalizeJobList(mixed $value, string $bucket): array
     {
         if (!is_array($value) || !array_is_list($value)) {
