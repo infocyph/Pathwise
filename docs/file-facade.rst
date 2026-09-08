@@ -3,18 +3,10 @@ Unified Pathwise Facade
 
 Namespace: ``Infocyph\Pathwise``
 
-Pathwise provides ``PathwiseFacade`` as a convenience facade when you want one entry
-point instead of importing many classes directly.
-
-Use this when:
-
-* you want path-bound access to file/directory/compression/read/write APIs
-* you want static gateways for upload/download/storage/policy/queue/audit/etc.
-
-Keep direct classes when:
-
-* you prefer explicit class-level imports for large codebases
-* you need very focused dependencies per module
+``PathwiseFacade`` is a **stateless convenience facade** in Pathwise 4. It is
+useful for compact direct-local operations and factory-style access to common
+workflow objects. Persistent storage topology belongs to
+``Storage\StorageContext`` instead.
 
 Path-Bound Access
 -----------------
@@ -27,8 +19,7 @@ Path-Bound Access
 
    $entry->file()->create('hello')->append("\nworld");
 
-   $reader = $entry->reader();
-   foreach ($reader->lines() as $line) {
+   foreach ($entry->reader()->lines() as $line) {
        // ...
    }
 
@@ -38,12 +29,14 @@ Path-Bound Access
 
    $metadata = $entry->metadata();
 
-Directory + Compression via Same Entry
---------------------------------------
+Path-bound methods include ``file()``, ``directory()``, ``compression()``,
+``reader()``, ``writer()``, ``exists()``, ``metadata()``, ``mimeType()`` and
+``path()``.
+
+Directory + Compression
+-----------------------
 
 .. code-block:: php
-
-   use Infocyph\Pathwise\PathwiseFacade;
 
    PathwiseFacade::at('/tmp/source')->directory()->create();
 
@@ -52,12 +45,10 @@ Directory + Compression via Same Entry
        ->compress('/tmp/source')
        ->save();
 
-Static Gateways
----------------
+Static Convenience
+------------------
 
 .. code-block:: php
-
-   use Infocyph\Pathwise\PathwiseFacade;
 
    $upload = PathwiseFacade::upload();
    $download = PathwiseFacade::download();
@@ -65,33 +56,33 @@ Static Gateways
    $queue = PathwiseFacade::queue('/tmp/jobs.json');
    $audit = PathwiseFacade::audit('/tmp/audit.jsonl');
 
-Storage from Facade
--------------------
+Other stateless helpers include:
 
-``PathwiseFacade`` delegates storage creation/mounting to ``StorageFactory``.
+* ``createFilesystem(array $config)`` — delegates to ``StorageFactory``;
+* ``retain(...)`` — retention;
+* ``index(...)``, ``duplicates(...)``, ``deduplicate(...)`` — checksum indexer;
+* ``snapshot(...)``, ``diffSnapshots(...)``, ``watch(...)`` — watcher helpers.
+
+Persistent Storage Is Not Facade State
+--------------------------------------
+
+Pathwise 4 deliberately removed facade/global storage-mount gateways. Do not
+store application topology in ``PathwiseFacade``.
 
 .. code-block:: php
 
-   use Infocyph\Pathwise\PathwiseFacade;
+   use Infocyph\Pathwise\Storage\StorageContext;
 
-   PathwiseFacade::mountStorage('assets', [
-       'driver' => 'local',
-       'root' => '/srv/storage/assets',
-   ]);
+   $storage = new StorageContext([
+       'files' => ['driver' => 'local', 'root' => '/srv/app/files'],
+   ], 'files');
 
-   // For other adapters, pass adapter/constructor config:
-   // PathwiseFacade::mountStorage('s3', ['driver' => 's3', 'adapter' => $adapter]);
+   $uploader = PathwiseFacade::upload();
+   $uploader->setStorageContext($storage);
+   $uploader->setDirectorySettings('files://uploads');
 
-Operational Tooling from Facade
--------------------------------
+Use direct module classes instead of the facade when explicit constructor/
+dependency injection makes the application architecture clearer.
 
-Available helpers:
-
-* ``PathwiseFacade::retain(...)`` -> ``RetentionManager``
-* ``PathwiseFacade::index(...)`` / ``PathwiseFacade::duplicates(...)`` / ``PathwiseFacade::deduplicate(...)`` -> ``ChecksumIndexer``
-* ``PathwiseFacade::snapshot(...)`` / ``PathwiseFacade::diffSnapshots(...)`` / ``PathwiseFacade::watch(...)`` -> ``FileWatcher``
-
-See also:
-
-* ``storage-adapters`` for adapter bootstrap
-* ``upload-processing`` and ``download-processing`` for stream workflows
+See :doc:`storage-context`, :doc:`storage-adapters`,
+:doc:`upload-processing` and :doc:`download-processing`.
