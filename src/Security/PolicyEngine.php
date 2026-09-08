@@ -20,6 +20,12 @@ final class PolicyEngine
     private array $rules = [];
 
     /**
+     * Policy evaluation is deny-by-default. Pass true only for an explicitly
+     * permissive policy where unmatched operations should be allowed.
+     */
+    public function __construct(private readonly bool $defaultAllow = false) {}
+
+    /**
      * Allow an operation matching the given pattern.
      *
      * @param string $operation The operation to allow (e.g., 'read', 'write', '*').
@@ -80,11 +86,11 @@ final class PolicyEngine
      * @param string $operation The operation to check.
      * @param string $path The path to check.
      * @param array<string, mixed> $context Additional context for condition evaluation.
-     *                                      Rules use last-match-wins precedence. Returns true when allowed.
+     *                                      Rules use last-match-wins precedence.
      */
     public function isAllowed(string $operation, string $path, array $context = []): bool
     {
-        $decision = true;
+        $decision = $this->defaultAllow;
         $normalizedPath = str_replace('\\', '/', $path);
         $caseInsensitive = PHP_OS_FAMILY === 'Windows' && !PathHelper::hasScheme($path);
         if ($caseInsensitive) {

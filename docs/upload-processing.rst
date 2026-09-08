@@ -3,134 +3,191 @@ Upload Processing
 
 Namespace: ``Infocyph\Pathwise\StreamHandler``
 
-Where it fits:
+``UploadProcessor`` is the Pathwise 4 upload pipeline for validated HTTP
+uploads, trusted application ingestion, framework-neutral upload sources, and
+resumable chunks. It is mutable configuration state; create/configure it for the
+lifecycle of one application policy rather than sharing it across unrelated
+policies.
 
-* Use this module for HTTP uploads that need validation, deterministic naming,
-  resumable chunk flow, and layered upload hardening.
+Core Entry Points
+-----------------
 
-``UploadProcessor`` supports:
+* ``processUpload(array $file)`` — PHP HTTP upload; preserves
+  ``is_uploaded_file()`` provenance.
+* ``ingestFile(array $file)`` — trusted application/CLI input using ``$_FILES``
+  shaped metadata.
+* ``ingestSource(UploadSource $source)`` — framework-neutral typed source.
+* ``processChunkUpload(...)`` — one ``$_FILES``-shaped chunk.
+* ``processChunkUploadSource(...)`` — one typed source chunk.
+* ``finalizeChunkUpload($uploadId)`` — explicitly validate and publish a
+  complete resumable upload.
 
-* HTTP upload handling through ``processUpload()`` (requires PHP's verified
-  ``is_uploaded_file()`` provenance).
-* Explicit trusted CLI/application ingestion through ``ingestFile()``.
-* Validation profiles: ``image``, ``video``, ``document``.
-* MIME and size validation with optional image dimension validation.
-* Extension allowlist/blocklist policy.
-* Naming strategies (hash/timestamp).
-* Chunked/resumable uploads:
-  * ``processChunkUpload()``
-  * ``finalizeChunkUpload()``
-* Upload ID safety validation for chunk/session identifiers.
-* Strict content checks:
-  * extension <> MIME agreement
-  * lightweight file signature verification for common formats
-* Malware scanner callback hook (optional or required).
+Typed UploadSource Ownership
+----------------------------
 
-Storage notes:
+``UploadSource`` lets frameworks cross into Pathwise without synthesizing an
+HTTP upload array themselves:
 
-* Uses Flysystem operations for chunk manifests and destination writes.
-* Supports mounted/default filesystem routing through helper resolution.
-* For adapter setup (S3/SFTP/FTP/custom), see ``storage-adapters``.
+* ``UploadSource::fromMover()`` receives a Pathwise-owned target path. Use it for
+  uploaded-file abstractions with ``moveTo()``-style APIs.
+* ``UploadSource::fromPath()`` copies a borrowed path. With ``owned: true``, the
+  source is consumed after successful staging.
+* ``UploadSource::fromStream()`` reads from the caller-owned stream's current
+  position and never closes that caller stream.
 
-Security Hardening Controls
----------------------------
-
-``UploadProcessor`` exposes explicit controls for upload policy:
-
-* ``setExtensionPolicy(array $allowedExtensions = [], array $blockedExtensions = [])``
-  to enforce extension allow/deny policies.
-* ``setChunkLimits(int $maxChunkCount = 0, int $maxChunkSize = 0)``
-  to cap chunk count and per-chunk size.
-* ``setRequireMalwareScan(bool $required = true)``
-  to reject uploads if scanner execution is required but unavailable.
-* ``setStrictContentTypeValidation(bool $enabled = true)``
-  to enforce extension-to-MIME agreement and signature checks.
-
-Chunk upload IDs are validated and must contain only:
-
-* letters/numbers
-* ``-`` and ``_``
-
-Identifiers with separators such as ``/`` or traversal patterns are rejected.
-
-Examples
---------
-
-Basic single upload:
+Every source is materialized into a private local staging directory/file before
+validation. Pathwise secures the staged file, measures its actual size, and
+removes staging state in a ``finally`` path. Cleanup failure never replaces the
+primary validation/storage/scanner failure.
 
 .. code-block:: php
 
+   use Infocyph\Pathwise\StreamHandler\UploadSource;
+
+   $source = UploadSource::fromMover(
+       mover: fn (string $target): void => $uploadedFile->moveTo($target),
+       clientFilename: $uploadedFile->getClientFilename() ?? 'upload.bin',
+       size: $uploadedFile->getSize(),
+       clientMediaType: $uploadedFile->getClientMediaType(),
+       error: $uploadedFile->getError(),
+   );
+
+   $finalPath = $uploader->ingestSource($source);
+
+A non-success upload error code is rejected before a mover is invoked.
+
+StorageContext Integration
+--------------------------
+
+Persistent runtimes should inject ``StorageContext`` directly. Do this before
+calling path-dependent configuration such as ``setDirectorySettings()``.
+
+.. code-block:: php
+
+   use Infocyph\Pathwise\Storage\StorageContext;
    use Infocyph\Pathwise\StreamHandler\UploadProcessor;
 
+   $storage = new StorageContext([
+       'objects' => ['filesystem' => $objectFilesystem],
+   ], 'objects');
+
    $uploader = new UploadProcessor();
-   $uploader->setDirectorySettings('/tmp/uploads');
-   $uploader->setValidationProfile('document');
-   $uploader->setExtensionPolicy(['pdf', 'doc', 'docx'], ['php', 'phtml', 'phar']);
-   $uploader->setStrictContentTypeValidation(true);
-
-   $finalPath = $uploader->processUpload($_FILES['file']);
-
-Resumable chunk flow:
-
-.. code-block:: php
-
-   $state = $uploader->processChunkUpload(
-       chunkFile: $_FILES['chunk'],
-       uploadId: 'session-42',
-       chunkIndex: 0,
-       totalChunks: 4,
-       originalFilename: 'video.mp4',
+   $uploader->setStorageContext($storage);
+   $uploader->setDirectorySettings(
+       uploadDir: 'objects://uploads',
+       useDateDirectories: true,
+       tempDir: sys_get_temp_dir(),
    );
 
-   if ($state->complete) {
-       $finalPath = $uploader->finalizeChunkUpload('session-42');
-   }
+Relative and ``name://`` processor paths route through that context. Direct
+absolute filesystem paths remain local. No global mount is required or created.
+Use a direct-local temporary path for efficient source staging, chunk locking,
+and workflows that depend on OS-level atomicity.
 
-``processChunkUpload()`` stores one chunk and returns ``ChunkUploadState``; it
-never publishes the final file implicitly. Call ``finalizeChunkUpload()`` only
-after ``$state->complete`` is true. Hash naming is calculated from the fully
-assembled object, so identical uploads reuse the same deterministic target.
+Validation Policy
+-----------------
 
-Trusted non-HTTP ingestion:
+Important controls include:
+
+* ``setValidationProfile('image'|'video'|'document')``;
+* ``setValidationSettings(array $allowedFileTypes, int $maxFileSize)``;
+* ``setExtensionPolicy(array $allowedExtensions = [], array $blockedExtensions = [])``;
+* ``setImageValidationSettings(int $maxImageWidth = 0, int $maxImageHeight = 0)``;
+* ``setStrictContentTypeValidation(bool $enabled = true)``;
+* ``setNamingStrategy('hash'|'timestamp')``;
+* ``setChunkLimits(int $maxChunkCount = 0, int $maxChunkSize = 0)``.
+
+The built-in blocked extension set includes executable/server-side script types.
+Strict content validation checks extension/MIME agreement plus lightweight magic
+signatures for supported formats. Image profiles can also enforce dimensions.
+The authoritative size is measured from the staged/current payload rather than
+trusting caller metadata.
+
+Malware Scanner Contract
+------------------------
+
+Pathwise 4 uses ``MalwareScannerInterface`` and an explicit ``MalwareScanMode``:
+
+* ``OFF`` — do not scan;
+* ``WHEN_CONFIGURED`` — default; scan only when a scanner exists;
+* ``REQUIRED`` — fail closed unless a scanner is configured and returns
+  ``MalwareScanVerdict::CLEAN``.
 
 .. code-block:: php
 
-   $finalPath = $uploader->ingestFile([
-       'error' => UPLOAD_ERR_OK,
-       'size' => filesize('/srv/import/report.pdf'),
-       'tmp_name' => '/srv/import/report.pdf',
-       'name' => 'report.pdf',
-   ]);
+   use Infocyph\Pathwise\StreamHandler\MalwareScanMode;
+   use Infocyph\Pathwise\StreamHandler\Scanner\ClamAvDaemonScanner;
 
-Hardened chunk upload:
+   $uploader->setMalwareScanner(new ClamAvDaemonScanner(
+       endpoint: 'unix:///run/clamav/clamd.ctl',
+   ));
+   $uploader->setMalwareScanMode(MalwareScanMode::REQUIRED);
+
+Pathwise creates a private local scan copy and scans before MIME/signature/image
+parsing. It accepts only an explicit clean verdict, checks that the scanner did
+not mutate the scan input, rechecks source size around scanning, removes the
+scan copy on every path, and maps scanner failures to stable ``UploadException``
+messages while retaining the original exception as ``previous``.
+
+See :doc:`malware-scanning` for daemon limits/provider/status details.
+
+Resumable Uploads
+-----------------
 
 .. code-block:: php
 
-   $uploader->setChunkLimits(maxChunkCount: 20, maxChunkSize: 2 * 1024 * 1024); // 2MB
-   $uploader->setRequireMalwareScan(true);
-   $uploader->setMalwareScanner(
-       fn (string $path, string $type): bool => true // return false to block
-   );
-
-   $uploader->processChunkUpload(
-       chunkFile: $_FILES['chunk'],
+   $state = $uploader->processChunkUploadSource(
+       source: $chunkSource,
        uploadId: 'session_42',
        chunkIndex: 0,
        totalChunks: 4,
        originalFilename: 'video.mp4',
    );
 
-Mounted destination example:
+   if ($state->complete) {
+       $finalPath = $uploader->finalizeChunkUpload('session_42');
+   }
+
+Upload IDs allow only letters, numbers, ``-`` and ``_`` and are length bounded.
+Chunk metadata is persisted in a manifest and must remain consistent across the
+session. ``ChunkUploadState`` exposes ``uploadId``, ``receivedChunks``,
+``totalChunks`` and ``complete``.
+
+Finalization is explicit. Pathwise assembles all chunks into a staging object,
+validates the assembled payload, publishes it according to the naming policy,
+and cleans session artifacts only after successful publication. Direct-local
+chunk storage uses a session lock; non-local adapters cannot provide the same OS
+locking semantics, so local chunk staging is the recommended production model.
+
+Hash Naming and Collision Safety
+--------------------------------
+
+Hash naming is based on the actual payload content. If the deterministic target
+already exists, Pathwise compares source/destination checksums and reuses it
+only when the content matches. Different content at the same deterministic name
+is rejected rather than overwritten.
+
+Logging
+-------
+
+``setLogger(LoggerInterface $logger)`` accepts any PSR-3 logger. Upload success
+and failure logs can include caller-supplied scalar metadata. Avoid placing
+secrets or raw untrusted payload contents in audit metadata.
+
+Example Hardened Policy
+-----------------------
 
 .. code-block:: php
 
-   use Infocyph\Pathwise\Storage\StorageFactory;
-   use Infocyph\Pathwise\StreamHandler\UploadProcessor;
-
-   StorageFactory::mount('s3', ['adapter' => $myS3Adapter]);
-
    $uploader = new UploadProcessor();
-   $uploader->setDirectorySettings('s3://uploads', false, 's3://tmp');
+   $uploader->setStorageContext($storage);
+   $uploader->setDirectorySettings('objects://uploads', tempDir: sys_get_temp_dir());
    $uploader->setValidationProfile('document');
+   $uploader->setExtensionPolicy(['pdf', 'doc', 'docx']);
+   $uploader->setStrictContentTypeValidation(true);
+   $uploader->setChunkLimits(maxChunkCount: 100, maxChunkSize: 4 * 1024 * 1024);
+   $uploader->setMalwareScanner($scanner);
+   $uploader->setMalwareScanMode(MalwareScanMode::REQUIRED);
 
-   $finalPath = $uploader->processUpload($_FILES['file']);
+See :doc:`storage-context`, :doc:`security`, and
+:doc:`performance-portability` for runtime, trust-boundary, and memory guidance.

@@ -10,6 +10,8 @@ use Infocyph\Pathwise\Exceptions\DirectoryOperationException;
 use Infocyph\Pathwise\Exceptions\NativeExecutionException;
 use Infocyph\Pathwise\Exceptions\UnsupportedStorageOperationException;
 use Infocyph\Pathwise\Native\NativeOperationsAdapter;
+use Infocyph\Pathwise\Security\ZipArchiveExtractor;
+use Infocyph\Pathwise\Security\ZipArchiveManifestEntry;
 use Infocyph\Pathwise\Security\ZipEntryValidator;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
@@ -18,14 +20,9 @@ use RecursiveIteratorIterator;
 use SplFileInfo;
 use ZipArchive;
 
+/** @phpstan-type RemoteZipEntry array{source: string, target: string, directory: bool} */
 trait DirectoryOperationsZipConcern
 {
-    /**
-     * Deletes all files and directories in the given local directory.
-     *
-     * @param string $directory The directory to delete contents of.
-     * @return bool True if the directory contents were successfully deleted, false otherwise.
-     */
     protected function deleteDirectoryContents(string $directory): bool
     {
         if (!is_dir($directory)) {
@@ -105,6 +102,7 @@ trait DirectoryOperationsZipConcern
                 if (!is_dir($parent) && !mkdir($parent, 0700, true) && !is_dir($parent)) {
                     throw new DirectoryOperationException("Unable to create ZIP staging directory: {$parent}");
                 }
+
                 FlysystemHelper::copy($this->buildPath($this->path, $relative), $stagedPath);
                 $this->assertDirectoryZipMutation(
                     $zip->addFile($stagedPath, $zipPathName),
@@ -130,6 +128,11 @@ trait DirectoryOperationsZipConcern
         foreach ($iterator as $file) {
             if (!$file instanceof SplFileInfo) {
                 continue;
+            }
+            if ($file->isLink()) {
+                throw new DirectoryOperationException(
+                    "Symbolic links are not followed during ZIP creation: {$file->getPathname()}",
+                );
             }
 
             $currentPath = PathHelper::normalize($file->getPathname());
@@ -158,43 +161,59 @@ trait DirectoryOperationsZipConcern
         }
     }
 
-    private function ensureZipEntryDirectory(string $entry): void
+    private function assertRemoteZipTarget(string $target, bool $directory): void
     {
-        $relativeDir = pathinfo($entry, PATHINFO_DIRNAME);
-        if ($relativeDir === '' || $relativeDir === '.') {
+        if ($directory) {
+            if (FlysystemHelper::fileExists($target)) {
+                throw new DirectoryOperationException("ZIP directory conflicts with an existing file: {$target}");
+            }
+
             return;
         }
 
-        $targetDir = $this->buildPath($this->path, str_replace('\\', '/', $relativeDir));
-        if (!FlysystemHelper::directoryExists($targetDir)) {
-            FlysystemHelper::createDirectory($targetDir);
+        if (FlysystemHelper::fileExists($target) || FlysystemHelper::directoryExists($target)) {
+            throw new DirectoryOperationException("Remote ZIP extraction refuses to overwrite an existing path: {$target}");
         }
     }
 
-    private function extractSingleZipEntry(ZipArchive $zip, int $index, string $entry): void
+    /** @return list<RemoteZipEntry> */
+    private function collectRemoteZipEntries(string $stage): array
     {
-        if ($entry === '') {
-            return;
+        $entries = [];
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($stage, FilesystemIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::SELF_FIRST,
+        );
+
+        foreach ($iterator as $item) {
+            if (!$item instanceof SplFileInfo) {
+                continue;
+            }
+
+            $relative = ltrim(str_replace('\\', '/', substr($item->getPathname(), strlen(rtrim($stage, '/\\')))), '/');
+            if ($relative === '') {
+                continue;
+            }
+
+            $target = $this->buildPath($this->path, $relative);
+            $directory = $item->isDir();
+            $this->assertRemoteZipTarget($target, $directory);
+            $entries[] = [
+                'source' => $item->getPathname(),
+                'target' => $target,
+                'directory' => $directory,
+            ];
         }
 
-        if (str_ends_with($entry, '/')) {
-            FlysystemHelper::createDirectory($this->buildPath($this->path, rtrim($entry, '/')));
-
-            return;
-        }
-
-        $this->ensureZipEntryDirectory($entry);
-        $contents = $zip->getFromIndex($index);
-        if (!is_string($contents)) {
-            throw new DirectoryOperationException("Unable to extract ZIP entry: {$entry}");
-        }
-
-        FlysystemHelper::write($this->buildPath($this->path, $entry), $contents);
+        return $entries;
     }
 
-    /**
-     * @param array<int, string> $validatedEntries
-     */
+    private function copyZipStageToStorage(string $stage): void
+    {
+        $this->publishRemoteZipEntries($this->collectRemoteZipEntries($stage));
+    }
+
+    /** @param array<int, ZipArchiveManifestEntry> $validatedEntries */
     private function extractZipContents(string $localSource, string $source, array $validatedEntries): void
     {
         $zip = new ZipArchive();
@@ -202,12 +221,27 @@ trait DirectoryOperationsZipConcern
             throw new DirectoryOperationException("Unable to open ZIP source: {$source}");
         }
 
+        $stage = null;
+
         try {
-            for ($i = 0; $i < $zip->numFiles; $i++) {
-                $this->extractSingleZipEntry($zip, $i, $validatedEntries[$i] ?? '');
+            if ($this->isLocalPath($this->path)) {
+                ZipArchiveExtractor::extractToLocal($zip, $validatedEntries, $this->path);
+
+                return;
             }
+
+            $stage = PathHelper::createTempDirectory('pathwise_unzip_stage_');
+            if (!is_string($stage)) {
+                throw new DirectoryOperationException('Unable to create secure ZIP extraction staging directory.');
+            }
+
+            ZipArchiveExtractor::extractToLocal($zip, $validatedEntries, $stage);
+            $this->copyZipStageToStorage($stage);
         } finally {
             $zip->close();
+            if (is_string($stage)) {
+                PathHelper::deleteDirectory($stage);
+            }
         }
     }
 
@@ -246,9 +280,7 @@ trait DirectoryOperationsZipConcern
         }
     }
 
-    /**
-     * @return array{string, bool}
-     */
+    /** @return array{string, bool} */
     private function prepareLocalZipSource(string $source): array
     {
         if ($this->isLocalPath($source) && is_file($source)) {
@@ -292,35 +324,75 @@ trait DirectoryOperationsZipConcern
         return $destination;
     }
 
+    /** @param list<RemoteZipEntry> $entries */
+    private function publishRemoteZipEntries(array $entries): void
+    {
+        $createdFiles = [];
+        $createdDirectories = [];
+
+        try {
+            foreach ($entries as $entry) {
+                $this->publishRemoteZipEntry($entry, $createdFiles, $createdDirectories);
+            }
+        } catch (\Throwable $exception) {
+            $this->rollbackRemoteZipEntries($createdFiles, $createdDirectories);
+
+            throw $exception;
+        }
+    }
+
+    /**
+     * @param RemoteZipEntry $entry
+     * @param list<string> $createdFiles
+     * @param list<string> $createdDirectories
+     */
+    private function publishRemoteZipEntry(array $entry, array &$createdFiles, array &$createdDirectories): void
+    {
+        if ($entry['directory']) {
+            if (!FlysystemHelper::directoryExists($entry['target'])) {
+                FlysystemHelper::createDirectory($entry['target']);
+                $createdDirectories[] = $entry['target'];
+            }
+
+            return;
+        }
+
+        $stream = fopen($entry['source'], 'rb');
+        if (!is_resource($stream)) {
+            throw new DirectoryOperationException("Unable to read staged ZIP entry: {$entry['source']}");
+        }
+
+        try {
+            FlysystemHelper::writeStream($entry['target'], $stream);
+            $createdFiles[] = $entry['target'];
+        } finally {
+            fclose($stream);
+        }
+    }
+
+    /**
+     * @param list<string> $createdFiles
+     * @param list<string> $createdDirectories
+     */
+    private function rollbackRemoteZipEntries(array $createdFiles, array $createdDirectories): void
+    {
+        for ($index = count($createdFiles) - 1; $index >= 0; $index--) {
+            if (FlysystemHelper::fileExists($createdFiles[$index])) {
+                FlysystemHelper::delete($createdFiles[$index]);
+            }
+        }
+        for ($index = count($createdDirectories) - 1; $index >= 0; $index--) {
+            if (FlysystemHelper::directoryExists($createdDirectories[$index])) {
+                FlysystemHelper::deleteDirectory($createdDirectories[$index]);
+            }
+        }
+    }
+
     private function tryNativeUnzip(string $localSource, string $source): bool
     {
         if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
-            if (!$this->isLocalPath($source) || !$this->isLocalPath($this->path)) {
-                throw new UnsupportedStorageOperationException('Native unzip requires local source and destination paths.');
-            }
-            if (!NativeOperationsAdapter::canUseNativeZipDecompression()) {
-                throw new NativeExecutionException('Native ZIP decompression executables are unavailable.');
-            }
-        }
-
-        if (
-            $this->executionStrategy === ExecutionStrategy::PHP
-            || !NativeOperationsAdapter::canUseNativeZipDecompression()
-            || !$this->isLocalPath($source)
-            || !$this->isLocalPath($this->path)
-        ) {
-            return false;
-        }
-
-        $native = NativeOperationsAdapter::decompressZip($localSource, $this->path);
-        if ($native->success) {
-            return true;
-        }
-
-        if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
             throw new NativeExecutionException(
-                "Native unzip failed with exit code {$native->exitCode}: " . implode("\n", $native->output),
-                $native,
+                "Native unzip of {$source} from {$localSource} is unavailable because hardened extraction requires Pathwise byte and rollback enforcement.",
             );
         }
 
@@ -367,9 +439,7 @@ trait DirectoryOperationsZipConcern
         return false;
     }
 
-    /**
-     * @return array<int, string>
-     */
+    /** @return array<int, ZipArchiveManifestEntry> */
     private function validateZipEntries(string $localSource, string $source): array
     {
         $zip = new ZipArchive();

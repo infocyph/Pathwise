@@ -6,6 +6,7 @@ namespace Infocyph\Pathwise\FileManager;
 
 use Infocyph\Pathwise\Exceptions\FileAccessException;
 use Infocyph\Pathwise\Exceptions\TransactionRollbackException;
+use Infocyph\Pathwise\Utils\PathHelper;
 
 final class FileTransactionJournal
 {
@@ -26,7 +27,7 @@ final class FileTransactionJournal
 
     public function record(string $path): void
     {
-        $path = \Infocyph\Pathwise\Utils\PathHelper::normalize($path);
+        $path = PathHelper::normalize($path);
         if (isset($this->recordedPaths[$path])) {
             return;
         }
@@ -37,14 +38,7 @@ final class FileTransactionJournal
         $owner = null;
         $group = null;
         if ($existed) {
-            $backup = tempnam(sys_get_temp_dir(), 'pathwise_tx_');
-            if ($backup === false || !copy($path, $backup)) {
-                if (is_string($backup) && is_file($backup)) {
-                    $this->unlinkSilently($backup);
-                }
-
-                throw new FileAccessException("Unable to create rollback backup for {$path}.");
-            }
+            $backup = $this->createPrivateBackup($path);
             $fileMode = fileperms($path);
             $fileOwner = fileowner($path);
             $fileGroup = filegroup($path);
@@ -95,9 +89,45 @@ final class FileTransactionJournal
         }
     }
 
-    /**
-     * @param array{path: string, existed: bool, backup: string|null, mode: int|null, owner: int|null, group: int|null} $entry
-     */
+    private function createPrivateBackup(string $path): string
+    {
+        $backup = tempnam(sys_get_temp_dir(), 'pathwise_tx_');
+        if (!is_string($backup)) {
+            throw new FileAccessException("Unable to allocate rollback backup for {$path}.");
+        }
+
+        try {
+            if (!chmod($backup, 0600) || !copy($path, $backup)) {
+                throw new FileAccessException("Unable to create rollback backup for {$path}.");
+            }
+
+            $stream = fopen($backup, 'r+b');
+            if (!is_resource($stream)) {
+                throw new FileAccessException("Unable to verify rollback backup for {$path}.");
+            }
+
+            try {
+                if (!fflush($stream)) {
+                    throw new FileAccessException("Unable to flush rollback backup for {$path}.");
+                }
+                if (function_exists('fsync') && !fsync($stream)) {
+                    throw new FileAccessException("Unable to synchronize rollback backup for {$path}.");
+                }
+            } finally {
+                fclose($stream);
+            }
+
+            return $backup;
+        } catch (\Throwable $exception) {
+            if (is_file($backup)) {
+                $this->unlinkSilently($backup);
+            }
+
+            throw $exception;
+        }
+    }
+
+    /** @param array{path: string, existed: bool, backup: string|null, mode: int|null, owner: int|null, group: int|null} $entry */
     private function restore(array $entry): void
     {
         if (!$entry['existed']) {
@@ -121,9 +151,7 @@ final class FileTransactionJournal
         $this->restoreMetadata($entry);
     }
 
-    /**
-     * @param array{path: string, existed: bool, backup: string|null, mode: int|null, owner: int|null, group: int|null} $entry
-     */
+    /** @param array{path: string, existed: bool, backup: string|null, mode: int|null, owner: int|null, group: int|null} $entry */
     private function restoreMetadata(array $entry): void
     {
         if (is_int($entry['mode']) && !chmod($entry['path'], $entry['mode'])) {

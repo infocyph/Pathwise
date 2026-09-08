@@ -6,7 +6,6 @@ namespace Infocyph\Pathwise\Queue;
 
 use Infocyph\Pathwise\Exceptions\QueueException;
 use Infocyph\Pathwise\Results\QueueProcessResult;
-
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use InvalidArgumentException;
@@ -20,10 +19,12 @@ use JsonException;
  *     priority: int,
  *     createdAt: int,
  *     reservedAt?: int,
+ *     leaseToken?: string,
  *     error?: string,
  *     failedAt?: int
  * }
  * @phpstan-type QueueState array{
+ *     version: int,
  *     pending: list<QueueJob>,
  *     processing: list<QueueJob>,
  *     failed: list<QueueJob>
@@ -31,11 +32,17 @@ use JsonException;
  */
 final readonly class FileJobQueue
 {
+    private const int ERROR_MESSAGE_BYTES = 4096;
+
+    private const int STATE_VERSION = 1;
+
+    private FileQueueStateStore $stateStore;
+
     public function __construct(
         private string $queueFilePath,
         private int $reservationTimeout = 300,
         private int $maxJobs = 10_000,
-        private int $maxQueueBytes = 16_777_216,
+        int $maxQueueBytes = 16_777_216,
         private int $maxPayloadBytes = 1_048_576,
     ) {
         if (!$this->isLocalQueuePath()) {
@@ -49,20 +56,24 @@ final readonly class FileJobQueue
         ) {
             throw new InvalidArgumentException('Queue limits and reservation timeout must be positive integers.');
         }
-        $directory = dirname($this->queueFilePath);
-        if (!FlysystemHelper::directoryExists($directory)) {
-            FlysystemHelper::createDirectory($directory);
-        }
-        $this->initializeLocalQueue();
+
+        $this->stateStore = new FileQueueStateStore($this->queueFilePath, $maxQueueBytes);
+        $this->stateStore->initialize($this->encodeQueueData($this->emptyQueueData()));
+        $this->decodeQueueData($this->stateStore->read());
+    }
+
+    public function acknowledge(QueueReservation $reservation): void
+    {
+        $this->mutateQueueData(function (array $data) use ($reservation): array {
+            $index = $this->processingIndexForLease($data, $reservation);
+            array_splice($data['processing'], $index, 1);
+
+            return [$data, null];
+        });
     }
 
     /**
-     * Add a job to the queue.
-     *
-     * @param string $type The job type.
-     * @param array<array-key, mixed> $payload The job payload data.
-     * @param int $priority The job priority (higher is more important).
-     * @return string The job ID.
+     * @param array<array-key, mixed> $payload
      */
     public function enqueue(string $type, array $payload = [], int $priority = 0): string
     {
@@ -73,22 +84,13 @@ final readonly class FileJobQueue
             throw new InvalidArgumentException('Queue payload keys must be strings.');
         }
         $payload = $this->normalizePayload($payload);
-
-        try {
-            $payloadBytes = strlen(json_encode($payload, JSON_THROW_ON_ERROR));
-        } catch (JsonException $exception) {
-            throw new QueueException('Queue payload cannot be encoded as JSON.', 0, $exception);
-        }
-        if ($payloadBytes > $this->maxPayloadBytes) {
-            throw new QueueException('Queue payload exceeds the configured size limit.');
-        }
-
-        $jobId = 'job_' . bin2hex(random_bytes(16));
+        $jobId = $this->newOpaqueId('job');
 
         return $this->mutateQueueData(function (array $data) use ($jobId, $type, $payload, $priority): array {
             if ($this->jobCount($data) >= $this->maxJobs) {
                 throw new QueueException('Queue exceeds the configured job-count limit.');
             }
+
             $data['pending'][] = [
                 'id' => $jobId,
                 'type' => $type,
@@ -96,18 +98,34 @@ final readonly class FileJobQueue
                 'priority' => $priority,
                 'createdAt' => time(),
             ];
-
-            usort($data['pending'], static fn(array $a, array $b): int => $b['priority'] <=> $a['priority']);
+            $this->sortPending($data);
 
             return [$data, $jobId];
         });
     }
 
+    public function fail(QueueReservation $reservation, \Throwable|string $failure): void
+    {
+        $message = $failure instanceof \Throwable ? $failure->getMessage() : $failure;
+        $message = trim($message) === '' ? 'Queue job failed.' : $message;
+        $message = substr($message, 0, self::ERROR_MESSAGE_BYTES);
+
+        $this->mutateQueueData(function (array $data) use ($reservation, $message): array {
+            $index = $this->processingIndexForLease($data, $reservation);
+            $job = $data['processing'][$index];
+            array_splice($data['processing'], $index, 1);
+
+            unset($job['reservedAt'], $job['leaseToken']);
+            $job['error'] = $message;
+            $job['failedAt'] = time();
+            $data['failed'][] = $job;
+
+            return [$data, null];
+        });
+    }
+
     /**
-     * Process jobs from the queue.
-     *
-     * @param callable(QueueJob): void $handler Callback to process each job.
-     * @param int $maxJobs Maximum number of jobs to process (0 for unlimited).
+     * @param callable(QueueReservation): void $handler
      */
     public function process(callable $handler, int $maxJobs = 0): QueueProcessResult
     {
@@ -120,35 +138,66 @@ final readonly class FileJobQueue
         $attempted = 0;
 
         while ($maxJobs === 0 || $attempted < $maxJobs) {
-            $job = $this->claimNextJob();
-            if ($job === null) {
+            $reservation = $this->reserve();
+            if (!$reservation instanceof QueueReservation) {
                 break;
             }
             $attempted++;
 
             try {
-                $handler($job);
-                $processed++;
-            } catch (\Throwable $e) {
-                $job['error'] = substr($e->getMessage(), 0, 4096);
-                $job['failedAt'] = time();
+                $handler($reservation);
+            } catch (\Throwable $exception) {
+                $this->fail($reservation, $exception);
                 $failed++;
+
+                continue;
             }
 
-            $this->completeJob($job);
+            $this->acknowledge($reservation);
+            $processed++;
         }
 
         return new QueueProcessResult($processed, $failed);
     }
 
+    public function release(QueueReservation $reservation): void
+    {
+        $this->mutateQueueData(function (array $data) use ($reservation): array {
+            $index = $this->processingIndexForLease($data, $reservation);
+            $job = $data['processing'][$index];
+            array_splice($data['processing'], $index, 1);
+
+            unset($job['reservedAt'], $job['leaseToken']);
+            $data['pending'][] = $job;
+            $this->sortPending($data);
+
+            return [$data, null];
+        });
+    }
+
+    public function renew(QueueReservation $reservation): QueueReservation
+    {
+        return $this->mutateQueueData(function (array $data) use ($reservation): array {
+            $index = $this->processingIndexForLease($data, $reservation);
+            $job = $data['processing'][$index];
+            $job['reservedAt'] = time();
+            $data['processing'][$index] = $job;
+
+            return [$data, $this->reservationFromJob($job)];
+        });
+    }
+
+    public function reserve(): ?QueueReservation
+    {
+        return $this->mutateQueueData($this->reserveFromQueueState(...));
+    }
+
     /**
-     * Get queue statistics.
-     *
      * @return array{pending: int, processing: int, failed: int, file: string}
      */
     public function stats(): array
     {
-        $data = $this->readQueueData();
+        $data = $this->decodeQueueData($this->stateStore->read());
 
         return [
             'pending' => count($data['pending']),
@@ -158,64 +207,41 @@ final readonly class FileJobQueue
         ];
     }
 
-    /**
-     * @param QueueState $data
-     * @return array{0: QueueState, 1: QueueJob|null}
-     */
-    private function claimFromQueueState(array $data): array
+    /** @param array<array-key, mixed> $value */
+    private function assertNoFailureState(array $value): void
     {
-        $data = $this->reclaimStaleReservations($data);
-        if ($data['pending'] === []) {
-            return [$data, null];
+        if (isset($value['error']) || isset($value['failedAt'])) {
+            throw new QueueException('Pending queue job contains failure state.');
         }
-
-        $job = array_shift($data['pending']);
-        $job['reservedAt'] = time();
-        $data['processing'][] = $job;
-
-        return [$data, $job];
     }
 
-    /**
-     * @return QueueJob|null
-     */
-    private function claimNextJob(): ?array
+    /** @param array<array-key, mixed> $value */
+    private function assertNoReservationState(array $value): void
     {
-        return $this->mutateQueueData($this->claimFromQueueState(...));
+        if (isset($value['reservedAt']) || isset($value['leaseToken'])) {
+            throw new QueueException('Non-processing queue job contains reservation state.');
+        }
     }
 
-    /**
-     * @param QueueJob $job
-     */
-    private function completeJob(array $job): void
+    /** @param QueueState $data */
+    private function assertUniqueJobIds(array $data): void
     {
-        $this->mutateQueueData(static function (array $data) use ($job): array {
-            foreach ($data['processing'] as $index => $processingJob) {
-                if ($processingJob['id'] !== $job['id']) {
-                    continue;
+        $seen = [];
+        foreach (['pending', 'processing', 'failed'] as $bucket) {
+            foreach ($data[$bucket] as $job) {
+                if (isset($seen[$job['id']])) {
+                    throw new QueueException("Queue contains duplicate job identifier: {$job['id']}");
                 }
-
-                array_splice($data['processing'], $index, 1);
-
-                break;
+                $seen[$job['id']] = true;
             }
-
-            unset($job['reservedAt']);
-            if (isset($job['error'])) {
-                $data['failed'][] = $job;
-            }
-
-            return [$data, null];
-        });
+        }
     }
 
-    /**
-     * @return QueueState
-     */
+    /** @return QueueState */
     private function decodeQueueData(string $content): array
     {
         if ($content === '') {
-            return $this->emptyQueueData();
+            throw new QueueException("Queue file is empty or truncated: {$this->queueFilePath}");
         }
 
         try {
@@ -227,66 +253,47 @@ final readonly class FileJobQueue
         if (!is_array($decoded)) {
             throw new QueueException("Queue file does not contain an object: {$this->queueFilePath}");
         }
+        if (($decoded['version'] ?? null) !== self::STATE_VERSION) {
+            throw new QueueException('Queue state version is missing or unsupported.');
+        }
+        foreach (['pending', 'processing', 'failed'] as $bucket) {
+            if (!array_key_exists($bucket, $decoded)) {
+                throw new QueueException("Queue state is missing the {$bucket} bucket.");
+            }
+        }
 
         $state = [
-            'pending' => $this->normalizeJobList($decoded['pending'] ?? []),
-            'processing' => $this->normalizeJobList($decoded['processing'] ?? []),
-            'failed' => $this->normalizeJobList($decoded['failed'] ?? []),
+            'version' => self::STATE_VERSION,
+            'pending' => $this->normalizeJobList($decoded['pending'], 'pending'),
+            'processing' => $this->normalizeJobList($decoded['processing'], 'processing'),
+            'failed' => $this->normalizeJobList($decoded['failed'], 'failed'),
         ];
         if ($this->jobCount($state) > $this->maxJobs) {
             throw new QueueException('Queue exceeds the configured job-count limit.');
         }
+        $this->assertUniqueJobIds($state);
 
         return $state;
     }
 
-    /**
-     * @return QueueState
-     */
+    /** @return QueueState */
     private function emptyQueueData(): array
     {
-        return ['pending' => [], 'processing' => [], 'failed' => []];
+        return [
+            'version' => self::STATE_VERSION,
+            'pending' => [],
+            'processing' => [],
+            'failed' => [],
+        ];
     }
 
-    /**
-     * @param QueueState $data
-     */
+    /** @param QueueState $data */
     private function encodeQueueData(array $data): string
     {
         try {
-            $encoded = json_encode($data, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+            return json_encode($data, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
         } catch (JsonException $exception) {
             throw new QueueException('Queue data cannot be encoded as JSON.', 0, $exception);
-        }
-        if (strlen($encoded) > $this->maxQueueBytes) {
-            throw new QueueException('Queue exceeds the configured byte-size limit.');
-        }
-
-        return $encoded;
-    }
-
-    private function initializeLocalQueue(): void
-    {
-        $stream = fopen($this->queueFilePath, 'c+b');
-        if (!is_resource($stream)) {
-            throw new QueueException("Unable to initialize queue file: {$this->queueFilePath}");
-        }
-
-        try {
-            if (!flock($stream, LOCK_EX)) {
-                throw new QueueException("Unable to lock queue file: {$this->queueFilePath}");
-            }
-
-            $metadata = fstat($stream);
-            if (!is_array($metadata) || $metadata['size'] !== 0) {
-                return;
-            }
-
-            $this->writeFully($stream, $this->encodeQueueData($this->emptyQueueData()));
-            fflush($stream);
-        } finally {
-            flock($stream, LOCK_UN);
-            fclose($stream);
         }
     }
 
@@ -303,115 +310,122 @@ final readonly class FileJobQueue
     }
 
     /**
+     * @param QueueJob $job
+     * @return QueueJob
+     */
+    private function leaseJob(array $job): array
+    {
+        $job['reservedAt'] = time();
+        $job['leaseToken'] = $this->newOpaqueId('lease');
+
+        return $job;
+    }
+
+    /**
      * @template T
      * @param callable(QueueState): array{0: QueueState, 1: T} $mutation
      * @return T
      */
     private function mutateQueueData(callable $mutation): mixed
     {
-        $stream = fopen($this->queueFilePath, 'c+b');
-        if (!is_resource($stream)) {
-            throw new QueueException("Unable to open queue file: {$this->queueFilePath}");
-        }
+        return $this->stateStore->mutate(function (string $content) use ($mutation): array {
+            [$data, $result] = $mutation($this->decodeQueueData($content));
 
+            return [$this->encodeQueueData($data), $result];
+        });
+    }
+
+    private function newOpaqueId(string $prefix): string
+    {
         try {
-            if (!flock($stream, LOCK_EX)) {
-                throw new QueueException("Unable to lock queue file: {$this->queueFilePath}");
-            }
-
-            rewind($stream);
-            $content = stream_get_contents($stream);
-            [$data, $result] = $mutation($this->decodeQueueData(is_string($content) ? $content : ''));
-            $encoded = $this->encodeQueueData($data);
-
-            rewind($stream);
-            if (!ftruncate($stream, 0)) {
-                throw new QueueException("Unable to truncate queue file: {$this->queueFilePath}");
-            }
-            $this->writeFully($stream, $encoded);
-            if (!fflush($stream)) {
-                throw new QueueException("Unable to flush queue file: {$this->queueFilePath}");
-            }
-
-            return $result;
-        } finally {
-            flock($stream, LOCK_UN);
-            fclose($stream);
+            return $prefix . '_' . bin2hex(random_bytes(16));
+        } catch (\Throwable $exception) {
+            throw new QueueException("Unable to generate {$prefix} identifier.", 0, $exception);
         }
     }
 
-    /** @return QueueJob */
-    private function normalizeJob(mixed $value): array
+    /**
+     * @param array<array-key, mixed> $value
+     * @return QueueJob
+     */
+    private function normalizeBaseJob(array $value): array
     {
-        if (!is_array($value)) {
-            throw new QueueException('Queue contains a malformed job.');
+        $id = $value['id'] ?? null;
+        if (!is_string($id) || preg_match('/^job_[a-f0-9]{32}$/D', $id) !== 1) {
+            throw new QueueException('Queue contains a malformed job identifier.');
         }
 
-        $id = $value['id'] ?? null;
         $type = $value['type'] ?? null;
-        $payload = $this->normalizePayload($value['payload'] ?? null);
         $priority = $value['priority'] ?? null;
         $createdAt = $value['createdAt'] ?? null;
-        if (!is_string($id) || trim($id) === '' || !is_string($type) || trim($type) === '') {
+        if (!is_string($type) || trim($type) === '' || !is_int($priority) || !is_int($createdAt) || $createdAt < 0) {
             throw new QueueException('Queue contains a malformed job.');
         }
 
-        if (!is_int($priority) || !is_int($createdAt) || $createdAt < 0) {
-            throw new QueueException('Queue contains a malformed job.');
-        }
-
-        $job = [
+        return [
             'id' => $id,
             'type' => $type,
-            'payload' => $payload,
+            'payload' => $this->normalizePayload($value['payload'] ?? null),
             'priority' => $priority,
             'createdAt' => $createdAt,
         ];
+    }
 
+    /**
+     * @param QueueJob $job
+     * @param array<array-key, mixed> $value
+     * @return QueueJob
+     */
+    private function normalizeFailedJob(array $job, array $value): array
+    {
         $error = $value['error'] ?? null;
-        if (is_string($error) && $error !== '') {
-            $job['error'] = $error;
+        $failedAt = $value['failedAt'] ?? null;
+        if (!is_string($error) || trim($error) === '' || !is_int($failedAt) || $failedAt < 1) {
+            throw new QueueException('Queue contains malformed failure state.');
+        }
+        if (strlen($error) > self::ERROR_MESSAGE_BYTES) {
+            throw new QueueException('Queue failure message exceeds the configured state limit.');
         }
 
-        $failedAt = $value['failedAt'] ?? null;
-        if ($failedAt !== null) {
-            if (!is_int($failedAt) || $failedAt < 0) {
-                throw new QueueException('Queue contains a malformed failure timestamp.');
-            }
-            $job['failedAt'] = $failedAt;
-        }
-        $reservedAt = $value['reservedAt'] ?? null;
-        if ($reservedAt !== null) {
-            if (!is_int($reservedAt) || $reservedAt < 0) {
-                throw new QueueException('Queue contains a malformed reservation timestamp.');
-            }
-            $job['reservedAt'] = $reservedAt;
-        }
+        $job['error'] = $error;
+        $job['failedAt'] = $failedAt;
 
         return $job;
     }
 
-    /**
-     * @return list<QueueJob>
-     */
-    private function normalizeJobList(mixed $value): array
+    /** @return QueueJob */
+    private function normalizeJob(mixed $value, string $bucket): array
     {
         if (!is_array($value)) {
-            throw new QueueException('Queue job list must be an array.');
+            throw new QueueException('Queue contains a malformed job.');
         }
 
-        $jobs = [];
-        foreach ($value as $rawJob) {
-            $job = $this->normalizeJob($rawJob);
-            $jobs[] = $job;
+        $job = $this->normalizeBaseJob($value);
+        if ($bucket === 'processing') {
+            return $this->normalizeProcessingJob($job, $value);
         }
 
-        return $jobs;
+        $this->assertNoReservationState($value);
+        if ($bucket === 'failed') {
+            return $this->normalizeFailedJob($job, $value);
+        }
+
+        $this->assertNoFailureState($value);
+
+        return $job;
     }
 
-    /**
-     * @return array<string, mixed>
-     */
+    /** @return list<QueueJob> */
+    private function normalizeJobList(mixed $value, string $bucket): array
+    {
+        if (!is_array($value) || !array_is_list($value)) {
+            throw new QueueException("Queue {$bucket} bucket must be a list.");
+        }
+
+        return array_map(fn(mixed $job): array => $this->normalizeJob($job, $bucket), $value);
+    }
+
+    /** @return array<string, mixed> */
     private function normalizePayload(mixed $value): array
     {
         if (!is_array($value)) {
@@ -423,7 +437,6 @@ final readonly class FileJobQueue
             if (!is_string($key)) {
                 throw new QueueException('Queue payload keys must be strings.');
             }
-
             $payload[$key] = $item;
         }
 
@@ -440,34 +453,48 @@ final readonly class FileJobQueue
     }
 
     /**
-     * @return QueueState
+     * @param QueueJob $job
+     * @param array<array-key, mixed> $value
+     * @return QueueJob
      */
-    private function readQueueData(): array
+    private function normalizeProcessingJob(array $job, array $value): array
     {
-        if (!FlysystemHelper::fileExists($this->queueFilePath)) {
-            return $this->emptyQueueData();
+        $reservedAt = $value['reservedAt'] ?? null;
+        $leaseToken = $value['leaseToken'] ?? null;
+        if (!is_int($reservedAt) || $reservedAt < 1) {
+            throw new QueueException('Queue contains a malformed reservation timestamp.');
+        }
+        if (!is_string($leaseToken) || preg_match('/^lease_[a-f0-9]{32}$/D', $leaseToken) !== 1) {
+            throw new QueueException('Queue contains a malformed reservation lease token.');
+        }
+        if (isset($value['error']) || isset($value['failedAt'])) {
+            throw new QueueException('Processing queue job contains failure state.');
         }
 
-        $stream = fopen($this->queueFilePath, 'rb');
-        if (!is_resource($stream)) {
-            throw new QueueException("Unable to open queue file: {$this->queueFilePath}");
-        }
+        $job['reservedAt'] = $reservedAt;
+        $job['leaseToken'] = $leaseToken;
 
-        try {
-            if (!flock($stream, LOCK_SH)) {
-                throw new QueueException("Unable to lock queue file: {$this->queueFilePath}");
+        return $job;
+    }
+
+    /** @param QueueState $data */
+    private function processingIndexForLease(array $data, QueueReservation $reservation): int
+    {
+        foreach ($data['processing'] as $index => $job) {
+            if ($job['id'] !== $reservation->id) {
+                continue;
+            }
+            if (($job['leaseToken'] ?? null) !== $reservation->leaseToken) {
+                throw new QueueException('Queue reservation lease is stale or no longer owned.');
+            }
+            if (($job['reservedAt'] ?? 0) <= time() - $this->reservationTimeout) {
+                throw new QueueException('Queue reservation lease is stale or no longer owned.');
             }
 
-            $content = stream_get_contents($stream);
-            if (is_string($content) && strlen($content) > $this->maxQueueBytes) {
-                throw new QueueException('Queue exceeds the configured byte-size limit.');
-            }
-
-            return $this->decodeQueueData(is_string($content) ? $content : '');
-        } finally {
-            flock($stream, LOCK_UN);
-            fclose($stream);
+            return $index;
         }
+
+        throw new QueueException('Queue reservation lease is stale or no longer owned.');
     }
 
     /**
@@ -478,37 +505,66 @@ final readonly class FileJobQueue
     {
         $cutoff = time() - $this->reservationTimeout;
         $active = [];
+
         foreach ($data['processing'] as $job) {
-            $reservedAt = $job['reservedAt'] ?? 0;
-            if ($reservedAt > $cutoff) {
+            if (($job['reservedAt'] ?? 0) > $cutoff) {
                 $active[] = $job;
 
                 continue;
             }
 
-            unset($job['reservedAt']);
+            unset($job['reservedAt'], $job['leaseToken']);
             $data['pending'][] = $job;
         }
+
         $data['processing'] = $active;
-        usort($data['pending'], static fn(array $a, array $b): int => $b['priority'] <=> $a['priority']);
+        $this->sortPending($data);
 
         return $data;
     }
 
-    private function writeFully(mixed $stream, string $contents): void
+    /** @param QueueJob $job */
+    private function reservationFromJob(array $job): QueueReservation
     {
-        if (!is_resource($stream)) {
-            throw new QueueException('Invalid queue stream.');
+        $reservedAt = $job['reservedAt'] ?? null;
+        $leaseToken = $job['leaseToken'] ?? null;
+        if (!is_int($reservedAt) || !is_string($leaseToken)) {
+            throw new QueueException('Processing queue job is missing lease ownership state.');
         }
 
-        $offset = 0;
-        $length = strlen($contents);
-        while ($offset < $length) {
-            $written = fwrite($stream, substr($contents, $offset));
-            if (!is_int($written) || $written < 1) {
-                throw new QueueException("Unable to write queue file: {$this->queueFilePath}");
-            }
-            $offset += $written;
+        return new QueueReservation(
+            id: $job['id'],
+            leaseToken: $leaseToken,
+            type: $job['type'],
+            payload: $job['payload'],
+            priority: $job['priority'],
+            createdAt: $job['createdAt'],
+            reservedAt: $reservedAt,
+            expiresAt: $reservedAt + $this->reservationTimeout,
+        );
+    }
+
+    /**
+     * @param QueueState $data
+     * @return array{0: QueueState, 1: QueueReservation|null}
+     */
+    private function reserveFromQueueState(array $data): array
+    {
+        $data = $this->reclaimStaleReservations($data);
+        if ($data['pending'] === []) {
+            return [$data, null];
         }
+
+        $job = $this->leaseJob($data['pending'][0]);
+        array_shift($data['pending']);
+        $data['processing'][] = $job;
+
+        return [$data, $this->reservationFromJob($job)];
+    }
+
+    /** @param QueueState $data */
+    private function sortPending(array &$data): void
+    {
+        usort($data['pending'], static fn(array $a, array $b): int => $b['priority'] <=> $a['priority']);
     }
 }

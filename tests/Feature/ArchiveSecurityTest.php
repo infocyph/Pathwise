@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Infocyph\Pathwise\DirectoryManager\DirectoryOperations;
+use Infocyph\Pathwise\Exceptions\CompressionException;
 use Infocyph\Pathwise\Exceptions\UnsafeArchiveEntryException;
 use Infocyph\Pathwise\FileManager\FileCompression;
 use Infocyph\Pathwise\Security\ZipEntryValidator;
@@ -78,6 +79,39 @@ test('archive validation rejects symbolic link entries', function () {
         ->toThrow(UnsafeArchiveEntryException::class, 'Symbolic-link ZIP entry');
 });
 
+test('archive validation rejects special file entries', function () {
+    $zip = new ZipArchive();
+    expect($zip->open($this->archivePath, ZipArchive::CREATE | ZipArchive::OVERWRITE))->toBeTrue();
+    $zip->addFromString('unsafe-fifo', 'payload');
+    $zip->setExternalAttributesName('unsafe-fifo', ZipArchive::OPSYS_UNIX, 0010644 << 16);
+    $zip->close();
+
+    expect(fn () => (new FileCompression($this->archivePath))->decompress($this->extractPath))
+        ->toThrow(UnsafeArchiveEntryException::class, 'Special-file ZIP entry');
+});
+
+test('archive validation rejects case conflicting entry names', function () {
+    $zip = new ZipArchive();
+    expect($zip->open($this->archivePath, ZipArchive::CREATE | ZipArchive::OVERWRITE))->toBeTrue();
+    $zip->addFromString('Report.txt', 'one');
+    $zip->addFromString('report.txt', 'two');
+    $zip->close();
+
+    expect(fn () => (new FileCompression($this->archivePath))->decompress($this->extractPath))
+        ->toThrow(UnsafeArchiveEntryException::class, 'Duplicate or case-conflicting ZIP entry');
+});
+
+test('archive validation rejects file directory conflicts', function () {
+    $zip = new ZipArchive();
+    expect($zip->open($this->archivePath, ZipArchive::CREATE | ZipArchive::OVERWRITE))->toBeTrue();
+    $zip->addFromString('node', 'file');
+    $zip->addFromString('node/child.txt', 'child');
+    $zip->close();
+
+    expect(fn () => (new DirectoryOperations($this->extractPath))->unzip($this->archivePath))
+        ->toThrow(UnsafeArchiveEntryException::class, 'nested below an archive file');
+});
+
 test('archive validation rejects extraction through an existing destination symlink', function () {
     if (PHP_OS_FAMILY === 'Windows') {
         $zip = new ZipArchive();
@@ -116,6 +150,20 @@ test('batch extraction validates unselected entries before writing selected file
         ->and(file_exists($this->extractPath . DIRECTORY_SEPARATOR . 'safe.txt'))->toBeFalse();
 });
 
+test('batch extraction rejects duplicate output targets before writing', function () {
+    $zip = new ZipArchive();
+    expect($zip->open($this->archivePath, ZipArchive::CREATE | ZipArchive::OVERWRITE))->toBeTrue();
+    $zip->addFromString('one.txt', 'one');
+    $zip->addFromString('two.txt', 'two');
+    $zip->close();
+
+    expect(fn () => (new FileCompression($this->archivePath))->batchExtractFiles(
+        ['one.txt' => 'same.txt', 'two.txt' => 'SAME.txt'],
+        $this->extractPath,
+    ))->toThrow(CompressionException::class, 'same extraction path')
+        ->and(file_exists($this->extractPath . DIRECTORY_SEPARATOR . 'same.txt'))->toBeFalse();
+});
+
 test('archive limits are checked before creating destination content', function () {
     $zip = new ZipArchive();
     expect($zip->open($this->archivePath, ZipArchive::CREATE | ZipArchive::OVERWRITE))->toBeTrue();
@@ -142,4 +190,37 @@ test('archive per-entry and compression-ratio limits reject oversized entries', 
             ->setExtractionLimits(maxCompressionRatio: 1.1)
             ->decompress($this->extractPath))
         ->toThrow(UnsafeArchiveEntryException::class);
+});
+
+test('failed local extraction restores overwritten files and removes created files', function () {
+    file_put_contents($this->extractPath . DIRECTORY_SEPARATOR . 'existing.txt', 'original');
+    file_put_contents($this->extractPath . DIRECTORY_SEPARATOR . 'blocked', 'not-a-directory');
+
+    $zip = new ZipArchive();
+    expect($zip->open($this->archivePath, ZipArchive::CREATE | ZipArchive::OVERWRITE))->toBeTrue();
+    $zip->addFromString('existing.txt', 'replacement');
+    $zip->addFromString('blocked/child.txt', 'child');
+    $zip->close();
+
+    expect(fn () => (new FileCompression($this->archivePath))->decompress($this->extractPath))
+        ->toThrow(UnsafeArchiveEntryException::class)
+        ->and(file_get_contents($this->extractPath . DIRECTORY_SEPARATOR . 'existing.txt'))->toBe('original')
+        ->and(file_exists($this->extractPath . DIRECTORY_SEPARATOR . 'blocked' . DIRECTORY_SEPARATOR . 'child.txt'))->toBeFalse();
+});
+
+test('local ZIP creation refuses to follow symbolic links', function () {
+    if (PHP_OS_FAMILY === 'Windows') {
+        expect(PHP_OS_FAMILY)->toBe('Windows');
+
+        return;
+    }
+
+    $source = $this->securityRoot . DIRECTORY_SEPARATOR . 'source';
+    $outside = $this->securityRoot . DIRECTORY_SEPARATOR . 'outside.txt';
+    mkdir($source, 0755, true);
+    file_put_contents($outside, 'outside');
+    symlink($outside, $source . DIRECTORY_SEPARATOR . 'linked.txt');
+
+    expect(fn () => (new FileCompression($this->archivePath, true))->compress($source))
+        ->toThrow(CompressionException::class, 'Symbolic links are not followed');
 });

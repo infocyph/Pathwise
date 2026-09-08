@@ -10,13 +10,14 @@ use Infocyph\Pathwise\Exceptions\FileSizeExceededException;
 use Infocyph\Pathwise\Results\DownloadPreparation;
 use Infocyph\Pathwise\Results\DownloadStreamResult;
 use Infocyph\Pathwise\Results\RangeDownloadMetadata;
+use Infocyph\Pathwise\StreamHandler\Concerns\StorageContextRoutingConcern;
 use Infocyph\Pathwise\Utils\ExtensionPolicy;
-use Infocyph\Pathwise\Utils\FlysystemHelper;
-use Infocyph\Pathwise\Utils\MetadataHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 
 class DownloadProcessor
 {
+    use StorageContextRoutingConcern;
+
     /** @var list<string> */
     private array $allowedExtensions = [];
 
@@ -56,7 +57,7 @@ class DownloadProcessor
         $normalizedPath = PathHelper::normalize($path);
         $this->validateDownloadPath($normalizedPath);
 
-        $size = FlysystemHelper::size($normalizedPath);
+        $size = $this->storageSize($normalizedPath);
         if ($this->maxDownloadSize > 0 && $size > $this->maxDownloadSize) {
             throw new FileSizeExceededException('Download exceeds configured size limit.');
         }
@@ -64,8 +65,8 @@ class DownloadProcessor
         $extension = pathinfo($normalizedPath, PATHINFO_EXTENSION);
         $this->validateExtension($extension);
 
-        $mimeType = MetadataHelper::getMimeType($normalizedPath) ?? 'application/octet-stream';
-        $lastModified = FlysystemHelper::lastModified($normalizedPath);
+        $mimeType = $this->storageMimeType($normalizedPath) ?? 'application/octet-stream';
+        $lastModified = $this->storageLastModified($normalizedPath);
         [$rangeStart, $rangeEnd, $isPartial] = $this->resolveRange($rangeHeader, $size);
         $contentLength = $rangeStart === null || $rangeEnd === null
             ? 0
@@ -203,6 +204,45 @@ class DownloadProcessor
     }
 
     /**
+     * Yield the exact prepared response range as chunks.
+     *
+     * The input stream is opened lazily when iteration starts and is closed in
+     * a finally block when iteration completes, fails, or the generator is
+     * disposed before exhaustion.
+     *
+     * @return \Generator<int, string, mixed, void>
+     */
+    public function streamChunks(DownloadPreparation $preparation): \Generator
+    {
+        $path = $this->validatePreparedDownload($preparation);
+        $remaining = $preparation->range->contentLength;
+        if ($remaining === 0) {
+            return;
+        }
+
+        $inputStream = $this->storageReadStream($path);
+        if (!is_resource($inputStream)) {
+            throw new DownloadException('Unable to open input stream for download.');
+        }
+
+        try {
+            $this->seekStreamToOffset($inputStream, $preparation->range->start ?? 0);
+
+            while ($remaining > 0) {
+                $chunk = fread($inputStream, $this->readLength($remaining));
+                if (!is_string($chunk) || $chunk === '') {
+                    throw new DownloadException('Download stream ended before the prepared range was complete.');
+                }
+
+                $remaining -= strlen($chunk);
+                yield $chunk;
+            }
+        } finally {
+            fclose($inputStream);
+        }
+    }
+
+    /**
      * Stream a secure download to a writable resource and return the manifest.
      *
      * @param string $path The file path to download.
@@ -222,33 +262,10 @@ class DownloadProcessor
         }
 
         $manifest = $this->prepareDownload($path, $downloadName, $rangeHeader);
+        $bytesSent = 0;
 
-        $inputStream = FlysystemHelper::readStream($manifest->path);
-        if (!is_resource($inputStream)) {
-            throw new DownloadException('Unable to open input stream for download.');
-        }
-
-        try {
-            $this->seekStreamToOffset($inputStream, $manifest->range->start ?? 0);
-
-            $remaining = $manifest->range->contentLength;
-            $bytesSent = 0;
-            while ($remaining > 0) {
-                $chunk = fread($inputStream, $this->readLength($remaining));
-                if (!is_string($chunk) || $chunk === '') {
-                    break;
-                }
-
-                $written = $this->writeFully($outputStream, $chunk);
-                $bytesSent += $written;
-                $remaining -= $written;
-            }
-        } finally {
-            fclose($inputStream);
-        }
-
-        if ($bytesSent !== $manifest->range->contentLength) {
-            throw new DownloadException('Incomplete download stream copy.');
+        foreach ($this->streamChunks($manifest) as $chunk) {
+            $bytesSent += $this->writeFully($outputStream, $chunk);
         }
 
         return new DownloadStreamResult($manifest, $bytesSent);
@@ -342,7 +359,7 @@ class DownloadProcessor
             return true;
         }
 
-        return array_any($this->allowedRoots, fn($root) => FlysystemHelper::isSameOrDescendant($root, $path));
+        return array_any($this->allowedRoots, fn($root) => $this->storageIsSameOrDescendant($root, $path));
     }
 
     /**
@@ -368,7 +385,6 @@ class DownloadProcessor
     /** @return array{int, int, true} */
     private function resolveExplicitRange(string $startRaw, string $endRaw, int $size): array
     {
-
         $start = (int) $startRaw;
         if ($start < 0 || $start >= $size) {
             throw new DownloadException('Invalid range header.');
@@ -496,7 +512,7 @@ class DownloadProcessor
 
     private function validateDownloadPath(string $path): void
     {
-        if (!FlysystemHelper::fileExists($path)) {
+        if (!$this->storageFileExists($path)) {
             throw new FileNotFoundException("File not found at {$path}.");
         }
 
@@ -524,6 +540,43 @@ class DownloadProcessor
             'File extension is not allowed for download.',
             'Invalid file extension for download.',
         ));
+    }
+
+    private function validatePreparedDownload(DownloadPreparation $preparation): string
+    {
+        $path = PathHelper::normalize($preparation->path);
+        $this->validateDownloadPath($path);
+        $this->validateExtension(pathinfo($path, PATHINFO_EXTENSION));
+
+        $size = $this->storageSize($path);
+        if ($this->maxDownloadSize > 0 && $size > $this->maxDownloadSize) {
+            throw new FileSizeExceededException('Download exceeds configured size limit.');
+        }
+
+        $lastModified = $this->storageLastModified($path);
+        if ($size !== $preparation->size || $lastModified !== $preparation->lastModified) {
+            throw new DownloadException('Prepared download metadata is stale.');
+        }
+
+        if ($size === 0) {
+            if (
+                $preparation->range->start !== null
+                || $preparation->range->end !== null
+                || $preparation->range->contentLength !== 0
+            ) {
+                throw new DownloadException('Prepared download range is no longer valid.');
+            }
+
+            return $path;
+        }
+
+        $start = $preparation->range->start;
+        $end = $preparation->range->end;
+        if (!is_int($start) || !is_int($end) || $start < 0 || $end >= $size) {
+            throw new DownloadException('Prepared download range is no longer valid.');
+        }
+
+        return $path;
     }
 
     private function writeFully(mixed $stream, string $payload): int

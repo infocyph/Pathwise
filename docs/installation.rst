@@ -11,7 +11,12 @@ Requirements:
 
 * PHP 8.4+
 * ``league/flysystem`` 3.x
+* ``psr/log`` 3.x for Pathwise's PSR-3 logger integration surface
 * ``ext-fileinfo``
+
+``psr/log`` supplies the PSR-3 interfaces Pathwise exposes in its production
+API; it does not install a concrete logger implementation. Applications may
+provide any PSR-3-compatible logger implementation when logging is desired.
 
 Optional extensions:
 

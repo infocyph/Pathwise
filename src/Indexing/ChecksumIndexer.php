@@ -6,7 +6,6 @@ namespace Infocyph\Pathwise\Indexing;
 
 use Infocyph\Pathwise\Exceptions\FileAccessException;
 use Infocyph\Pathwise\Results\DeduplicationResult;
-
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\FlysystemPathResolver;
 use Infocyph\Pathwise\Utils\LocalFileIterator;
@@ -14,31 +13,12 @@ use Infocyph\Pathwise\Utils\PathHelper;
 
 final class ChecksumIndexer
 {
-    /**
-     * Build a checksum index for all files in a directory.
-     *
-     * @param string $directory The directory to index.
-     * @param string $algorithm The hash algorithm to use. Defaults to 'sha256'.
-     * @return array<string, list<string>> Array mapping checksum to array of file paths.
-     */
+    /** @return array<string, list<string>> */
     public static function buildIndex(string $directory, string $algorithm = 'sha256'): array
     {
-        $directory = PathHelper::normalize($directory);
-        if (!in_array($algorithm, hash_algos(), true)) {
-            throw new \InvalidArgumentException("Unsupported checksum algorithm: {$algorithm}.");
-        }
-        if (!FlysystemHelper::directoryExists($directory)) {
-            throw new FileAccessException("Checksum index directory does not exist: {$directory}.");
-        }
-
         $index = [];
-        foreach (self::iterFiles($directory) as $path) {
-            $hash = self::hashPath($path, $algorithm);
-            if (!is_string($hash)) {
-                throw new FileAccessException("Unable to calculate checksum for: {$path}.");
-            }
-
-            $index[$hash][] = $path;
+        foreach (self::iterate($directory, $algorithm) as $entry) {
+            $index[$entry['checksum']][] = $entry['path'];
         }
 
         ksort($index);
@@ -46,12 +26,6 @@ final class ChecksumIndexer
         return $index;
     }
 
-    /**
-     * Deduplicate files by replacing duplicate entries with hard links where supported.
-     *
-     * @param string $directory The directory to deduplicate.
-     * @param string $algorithm The hash algorithm to use. Defaults to 'sha256'.
-     */
     public static function deduplicateWithHardLinks(
         string $directory,
         string $algorithm = 'sha256',
@@ -67,18 +41,41 @@ final class ChecksumIndexer
         return new DeduplicationResult($linked, $skipped);
     }
 
-    /**
-     * Find duplicate files in a directory.
-     *
-     * @param string $directory The directory to search for duplicates.
-     * @param string $algorithm The hash algorithm to use. Defaults to 'sha256'.
-     * @return array<string, list<string>> Array mapping checksum to array of duplicate file paths.
-     */
+    /** @return array<string, list<string>> */
     public static function findDuplicates(string $directory, string $algorithm = 'sha256'): array
     {
         $index = self::buildIndex($directory, $algorithm);
 
         return array_filter($index, static fn(array $paths): bool => count($paths) > 1);
+    }
+
+    /**
+     * Stream checksum/path pairs without retaining a complete index in memory.
+     *
+     * SHA-256 remains the default because this API is also used for integrity-oriented
+     * workflows; callers that only need a faster non-security fingerprint may select
+     * another algorithm explicitly.
+     *
+     * @return \Generator<int, array{checksum: string, path: string}>
+     */
+    public static function iterate(string $directory, string $algorithm = 'sha256'): \Generator
+    {
+        $directory = PathHelper::normalize($directory);
+        if (!in_array($algorithm, hash_algos(), true)) {
+            throw new \InvalidArgumentException("Unsupported checksum algorithm: {$algorithm}.");
+        }
+        if (!FlysystemHelper::directoryExists($directory)) {
+            throw new FileAccessException("Checksum index directory does not exist: {$directory}.");
+        }
+
+        foreach (self::iterFiles($directory) as $path) {
+            $hash = self::hashPath($path, $algorithm);
+            if (!is_string($hash)) {
+                throw new FileAccessException("Unable to calculate checksum for: {$path}.");
+            }
+
+            yield ['checksum' => $hash, 'path' => $path];
+        }
     }
 
     /**
@@ -225,11 +222,9 @@ final class ChecksumIndexer
 
         foreach (FlysystemHelper::listContentsListing($directory, true) as $item) {
             $relative = FlysystemPathResolver::relativePathFromItem($item, $base, 'file');
-            if ($relative === null) {
-                continue;
+            if ($relative !== null) {
+                yield PathHelper::join($directory, $relative);
             }
-
-            yield PathHelper::join($directory, $relative);
         }
     }
 
@@ -258,10 +253,8 @@ final class ChecksumIndexer
 
     private static function unlinkSilently(string $path): void
     {
-        if (!is_file($path)) {
-            return;
+        if (is_file($path)) {
+            self::runSilently(static fn(): bool => unlink($path));
         }
-
-        self::runSilently(static fn(): bool => unlink($path));
     }
 }

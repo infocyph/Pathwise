@@ -4,12 +4,11 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\StreamHandler;
 
+use Infocyph\Pathwise\Exceptions\FileSizeExceededException;
 use Infocyph\Pathwise\Exceptions\UploadException;
-
 use Infocyph\Pathwise\Results\ChunkUploadState;
 use Infocyph\Pathwise\StreamHandler\Concerns\UploadProcessorChunkConcern;
 use Infocyph\Pathwise\StreamHandler\Concerns\UploadProcessorValidationConcern;
-use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use Psr\Log\LoggerInterface;
 
@@ -39,7 +38,10 @@ use Psr\Log\LoggerInterface;
  *     namingStrategy: string,
  *     validationProfile: string|null,
  *     hasMalwareScanner: bool,
- *     requireMalwareScan: bool,
+ *     malwareScannerClass: string|null,
+ *     malwareScannerProvider: string|null,
+ *     malwareScanMode: string,
+ *     malwareScanStatus: string,
  *     strictContentTypeValidation: bool
  * }
  */
@@ -86,7 +88,9 @@ class UploadProcessor
 
     private LoggerInterface $logger;
 
-    private mixed $malwareScanner = null;
+    private MalwareScanMode $malwareScanMode = MalwareScanMode::WHEN_CONFIGURED;
+
+    private ?MalwareScannerInterface $malwareScanner = null;
 
     private int $maxChunkCount = 0;
 
@@ -99,8 +103,6 @@ class UploadProcessor
     private int $maxImageWidth = 0;
 
     private string $namingStrategy = 'hash';
-
-    private bool $requireMalwareScan = false;
 
     private bool $strictContentTypeValidation = true;
 
@@ -144,8 +146,8 @@ class UploadProcessor
                 $this->validateFinalizedUpload($stagingPath);
                 $destination = $this->finalizeIncomingFile($stagingPath, $extension);
             } catch (\Throwable $exception) {
-                if (FlysystemHelper::fileExists($stagingPath)) {
-                    FlysystemHelper::delete($stagingPath);
+                if ($this->storageFileExists($stagingPath)) {
+                    $this->storageDelete($stagingPath);
                 }
 
                 throw $exception;
@@ -176,8 +178,11 @@ class UploadProcessor
             'maxChunkSize' => $this->maxChunkSize,
             'namingStrategy' => $this->namingStrategy,
             'validationProfile' => $this->validationProfile,
-            'hasMalwareScanner' => is_callable($this->malwareScanner),
-            'requireMalwareScan' => $this->requireMalwareScan,
+            'hasMalwareScanner' => $this->malwareScanner !== null,
+            'malwareScannerClass' => $this->malwareScanner !== null ? $this->malwareScanner::class : null,
+            'malwareScannerProvider' => $this->malwareScannerProvider(),
+            'malwareScanMode' => $this->malwareScanMode->value,
+            'malwareScanStatus' => $this->malwareScanStatus()->value,
             'strictContentTypeValidation' => $this->strictContentTypeValidation,
         ];
     }
@@ -204,6 +209,24 @@ class UploadProcessor
     }
 
     /**
+     * Ingest a framework-neutral source through a Pathwise-owned local staging file.
+     *
+     * @param array<string, scalar|null> $metadata Explicit audit metadata for the log entry.
+     */
+    public function ingestSource(UploadSource $source, array $metadata = []): string
+    {
+        $this->assertUploadDirectoryConfigured();
+        $this->assertSourceReady($source);
+        $materialization = $source->materialize($this->tempDir);
+
+        try {
+            return $this->processIncomingFile($materialization->toFileArray(), false, $metadata);
+        } finally {
+            $materialization->cleanup();
+        }
+    }
+
+    /**
      * Process an upload chunk and persist resumable state.
      *
      * @param array<string, mixed> $chunkFile The chunk file data from $_FILES.
@@ -220,9 +243,7 @@ class UploadProcessor
         int $totalChunks,
         string $originalFilename,
     ): ChunkUploadState {
-        if (!isset($this->uploadDir) || $this->uploadDir === '') {
-            throw new UploadException('Upload directory is not set.');
-        }
+        $this->assertUploadDirectoryConfigured();
         $chunkFile = $this->validateFile($chunkFile);
         $this->validateChunkUploadRequest($chunkFile, $uploadId, $chunkIndex, $totalChunks, $originalFilename);
 
@@ -234,8 +255,8 @@ class UploadProcessor
             $originalFilename,
         ): ChunkUploadState {
             $chunkDirectory = $this->getChunkDirectory($uploadId);
-            if (!FlysystemHelper::directoryExists($chunkDirectory)) {
-                FlysystemHelper::createDirectory($chunkDirectory);
+            if (!$this->storageDirectoryExists($chunkDirectory)) {
+                $this->storageCreateDirectory($chunkDirectory);
             }
 
             /** @var ChunkManifest $manifest */
@@ -259,6 +280,33 @@ class UploadProcessor
                 complete: count($received) === $totalChunks,
             );
         });
+    }
+
+    /**
+     * Process a framework-neutral upload source as one resumable chunk.
+     */
+    public function processChunkUploadSource(
+        UploadSource $source,
+        string $uploadId,
+        int $chunkIndex,
+        int $totalChunks,
+        string $originalFilename,
+    ): ChunkUploadState {
+        $this->assertUploadDirectoryConfigured();
+        $this->assertSourceReady($source);
+        $materialization = $source->materialize($this->tempDir);
+
+        try {
+            return $this->processChunkUpload(
+                $materialization->toFileArray(),
+                $uploadId,
+                $chunkIndex,
+                $totalChunks,
+                $originalFilename,
+            );
+        } finally {
+            $materialization->cleanup();
+        }
     }
 
     /**
@@ -348,13 +396,17 @@ class UploadProcessor
     }
 
     /**
-     * Configure an optional malware scanner callback.
-     *
-     * Signature: fn(string $filePath, string $mimeType): bool
-     *
-     * @param callable $scanner The malware scanner callback.
+     * Configure malware scan policy.
      */
-    public function setMalwareScanner(callable $scanner): void
+    public function setMalwareScanMode(MalwareScanMode $mode): void
+    {
+        $this->malwareScanMode = $mode;
+    }
+
+    /**
+     * Configure or clear the malware scanner used before content parsing.
+     */
+    public function setMalwareScanner(?MalwareScannerInterface $scanner): void
     {
         $this->malwareScanner = $scanner;
     }
@@ -371,16 +423,6 @@ class UploadProcessor
             throw new UploadException("Invalid naming strategy: $namingStrategy.");
         }
         $this->namingStrategy = $namingStrategy;
-    }
-
-    /**
-     * Require malware scanning before upload acceptance.
-     *
-     * @param bool $required If true, require malware scanning.
-     */
-    public function setRequireMalwareScan(bool $required = true): void
-    {
-        $this->requireMalwareScan = $required;
     }
 
     /**
@@ -429,6 +471,23 @@ class UploadProcessor
         $this->validationProfile = null;
     }
 
+    private function assertSourceReady(UploadSource $source): void
+    {
+        match ($source->error) {
+            UPLOAD_ERR_OK => null,
+            UPLOAD_ERR_NO_FILE => throw new UploadException('No file sent.'),
+            UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => throw new FileSizeExceededException('Exceeded file size limit.'),
+            default => throw new UploadException('Unknown errors.'),
+        };
+    }
+
+    private function assertUploadDirectoryConfigured(): void
+    {
+        if (!isset($this->uploadDir) || $this->uploadDir === '') {
+            throw new UploadException('Upload directory is not set.');
+        }
+    }
+
     /**
      * Generate a unique file name based on the strategy and caller info.
      */
@@ -437,7 +496,7 @@ class UploadProcessor
         $identifier = match ($this->namingStrategy) {
             'timestamp' => sprintf('%d_%s', time(), bin2hex(random_bytes(8))),
             default => $dataSource !== null
-                ? FlysystemHelper::checksum($dataSource, 'sha256')
+                ? $this->storageChecksum($dataSource, 'sha256')
                 : bin2hex(random_bytes(32)),
         };
         if (!is_string($identifier)) {
@@ -451,6 +510,30 @@ class UploadProcessor
             : sprintf('upload_%s', $identifier);
     }
 
+    private function malwareScannerProvider(): ?string
+    {
+        if (!$this->malwareScanner instanceof MalwareScannerProviderInterface) {
+            return null;
+        }
+
+        $provider = trim($this->malwareScanner->providerId());
+
+        return $provider !== '' ? $provider : null;
+    }
+
+    private function malwareScanStatus(): MalwareScanStatus
+    {
+        return match ($this->malwareScanMode) {
+            MalwareScanMode::OFF => MalwareScanStatus::DISABLED,
+            MalwareScanMode::REQUIRED => $this->malwareScanner === null
+                ? MalwareScanStatus::REQUIRED_UNCONFIGURED
+                : MalwareScanStatus::REQUIRED_READY,
+            MalwareScanMode::WHEN_CONFIGURED => $this->malwareScanner === null
+                ? MalwareScanStatus::UNCONFIGURED
+                : MalwareScanStatus::CONFIGURED,
+        };
+    }
+
     /**
      * @param array<string, mixed> $file
      * @param array<string, scalar|null> $metadata
@@ -460,9 +543,7 @@ class UploadProcessor
         $logFileName = is_string($file['name'] ?? null) ? $file['name'] : null;
 
         try {
-            if (!isset($this->uploadDir) || $this->uploadDir === '') {
-                throw new UploadException('Upload directory is not set.');
-            }
+            $this->assertUploadDirectoryConfigured();
 
             $file = $this->validateFile($file);
             $tmpName = $file['tmp_name'];
@@ -470,7 +551,7 @@ class UploadProcessor
                 throw new UploadException('File is not a valid HTTP upload.');
             }
             $extension = pathinfo($file['name'], PATHINFO_EXTENSION);
-            $fileType = $this->validateUploadedPayload($tmpName, $extension, false);
+            $fileType = $this->validateUploadedPayload($tmpName, $extension);
 
             $destination = $this->finalizeIncomingFile($tmpName, $extension);
             $fileName = basename($destination);

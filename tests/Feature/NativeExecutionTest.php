@@ -6,6 +6,9 @@ use Infocyph\Pathwise\Core\ExecutionStrategy;
 use Infocyph\Pathwise\Exceptions\NativeExecutionException;
 use Infocyph\Pathwise\Exceptions\UnsupportedStorageOperationException;
 use Infocyph\Pathwise\FileManager\FileOperations;
+use Infocyph\Pathwise\Native\NativeCommandRunner;
+use Infocyph\Pathwise\Native\NativeExecutionFailure;
+use Infocyph\Pathwise\Native\NativeExecutionLimits;
 use Infocyph\Pathwise\Native\NativeOperationsAdapter;
 use Infocyph\Pathwise\Results\NativeExecutionResult;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
@@ -50,7 +53,182 @@ test('native adapters return typed execution results', function () {
 
     expect($result)->toBeInstanceOf(NativeExecutionResult::class)
         ->and($result->exitCode)->toBeInt()
-        ->and($result->output)->toBeArray();
+        ->and($result->output)->toBeArray()
+        ->and($result->stdout)->toBeArray()
+        ->and($result->stderr)->toBeArray();
+});
+
+test('bounded native execution is capability based instead of emulated', function () {
+    if (PHP_OS_FAMILY === 'Windows') {
+        $result = NativeCommandRunner::run([PHP_BINARY, '-r', 'echo "unused";']);
+
+        expect(NativeCommandRunner::supportsBoundedExecution())->toBeFalse()
+            ->and($result->success)->toBeFalse()
+            ->and($result->failure)->toBe(NativeExecutionFailure::UNSUPPORTED)
+            ->and(NativeOperationsAdapter::canUseNativeFileCopy())->toBeFalse()
+            ->and(NativeOperationsAdapter::canUseNativeDirectoryCopy())->toBeFalse()
+            ->and(NativeOperationsAdapter::canUseNativeSearch())->toBeFalse()
+            ->and(NativeOperationsAdapter::canUseNativeZipCompression())->toBeFalse()
+            ->and(NativeOperationsAdapter::canUseNativeZipDecompression())->toBeFalse();
+
+        return;
+    }
+
+    expect(NativeCommandRunner::supportsBoundedExecution())->toBeTrue();
+});
+
+test('native command runner captures stdout and stderr without shell execution', function () {
+    if (!NativeCommandRunner::supportsBoundedExecution()) {
+        expect(NativeCommandRunner::run([PHP_BINARY, '-r', 'echo "unused";'])->failure)
+            ->toBe(NativeExecutionFailure::UNSUPPORTED);
+
+        return;
+    }
+
+    $result = NativeCommandRunner::run([
+        PHP_BINARY,
+        '-r',
+        'fwrite(STDOUT, "out\\n"); fwrite(STDERR, "err\\n");',
+    ]);
+
+    expect($result->success)->toBeTrue()
+        ->and($result->failure)->toBeNull()
+        ->and($result->exitCode)->toBe(0)
+        ->and($result->stdout)->toBe(['out'])
+        ->and($result->stderr)->toBe(['err'])
+        ->and($result->output)->toBe(['out', 'err']);
+});
+
+test('native command runner terminates commands that exceed the deadline', function () {
+    if (!NativeCommandRunner::supportsBoundedExecution()) {
+        expect(NativeCommandRunner::run([PHP_BINARY, '-r', 'echo "unused";'])->failure)
+            ->toBe(NativeExecutionFailure::UNSUPPORTED);
+
+        return;
+    }
+
+    $started = microtime(true);
+    $result = NativeCommandRunner::run(
+        [PHP_BINARY, '-r', 'usleep(5000000);'],
+        limits: new NativeExecutionLimits(
+            timeoutSeconds: 0.10,
+            terminationGraceSeconds: 0.10,
+            pollIntervalMicroseconds: 1_000,
+        ),
+    );
+    $elapsed = microtime(true) - $started;
+
+    expect($result->success)->toBeFalse()
+        ->and($result->failure)->toBe(NativeExecutionFailure::TIMEOUT)
+        ->and($result->exitCode)->toBe(124)
+        ->and($elapsed)->toBeLessThan(2.0);
+});
+
+test('native command runner bounds stdout', function () {
+    if (!NativeCommandRunner::supportsBoundedExecution()) {
+        expect(NativeCommandRunner::run([PHP_BINARY, '-r', 'echo "unused";'])->failure)
+            ->toBe(NativeExecutionFailure::UNSUPPORTED);
+
+        return;
+    }
+
+    $result = NativeCommandRunner::run(
+        [PHP_BINARY, '-r', 'fwrite(STDOUT, str_repeat("x", 8192));'],
+        limits: new NativeExecutionLimits(
+            stdoutBytes: 1_024,
+            stderrBytes: 1_024,
+            terminationGraceSeconds: 0.10,
+            pollIntervalMicroseconds: 1_000,
+        ),
+    );
+
+    expect($result->success)->toBeFalse()
+        ->and($result->failure)->toBe(NativeExecutionFailure::STDOUT_LIMIT)
+        ->and($result->exitCode)->toBe(125)
+        ->and(strlen(implode("\n", $result->stdout)))->toBeLessThanOrEqual(1_024);
+});
+
+test('native command runner bounds stderr', function () {
+    if (!NativeCommandRunner::supportsBoundedExecution()) {
+        expect(NativeCommandRunner::run([PHP_BINARY, '-r', 'echo "unused";'])->failure)
+            ->toBe(NativeExecutionFailure::UNSUPPORTED);
+
+        return;
+    }
+
+    $result = NativeCommandRunner::run(
+        [PHP_BINARY, '-r', 'fwrite(STDERR, str_repeat("e", 8192));'],
+        limits: new NativeExecutionLimits(
+            stdoutBytes: 1_024,
+            stderrBytes: 1_024,
+            terminationGraceSeconds: 0.10,
+            pollIntervalMicroseconds: 1_000,
+        ),
+    );
+
+    expect($result->success)->toBeFalse()
+        ->and($result->failure)->toBe(NativeExecutionFailure::STDERR_LIMIT)
+        ->and($result->exitCode)->toBe(125)
+        ->and(strlen(implode("\n", $result->stderr)))->toBeLessThanOrEqual(1_024);
+});
+
+test('native command runner drains stdout and stderr concurrently without deadlock', function () {
+    if (!NativeCommandRunner::supportsBoundedExecution()) {
+        expect(NativeCommandRunner::run([PHP_BINARY, '-r', 'echo "unused";'])->failure)
+            ->toBe(NativeExecutionFailure::UNSUPPORTED);
+
+        return;
+    }
+
+    $script = <<<'PHP'
+for ($i = 0; $i < 32; $i++) {
+    fwrite(STDOUT, str_repeat('o', 4096));
+    fwrite(STDERR, str_repeat('e', 4096));
+}
+PHP;
+
+    $result = NativeCommandRunner::run(
+        [PHP_BINARY, '-r', $script],
+        limits: new NativeExecutionLimits(
+            stdoutBytes: 262_144,
+            stderrBytes: 262_144,
+            timeoutSeconds: 5.0,
+            pollIntervalMicroseconds: 1_000,
+        ),
+    );
+
+    expect($result->success)->toBeTrue()
+        ->and($result->failure)->toBeNull()
+        ->and(strlen(implode("\n", $result->stdout)))->toBe(131_072)
+        ->and(strlen(implode("\n", $result->stderr)))->toBe(131_072);
+});
+
+test('native command runner exposes non-zero exit codes as typed failures', function () {
+    if (!NativeCommandRunner::supportsBoundedExecution()) {
+        expect(NativeCommandRunner::run([PHP_BINARY, '-r', 'echo "unused";'])->failure)
+            ->toBe(NativeExecutionFailure::UNSUPPORTED);
+
+        return;
+    }
+
+    $result = NativeCommandRunner::run([PHP_BINARY, '-r', 'exit(7);']);
+
+    expect($result->success)->toBeFalse()
+        ->and($result->failure)->toBe(NativeExecutionFailure::EXIT_CODE)
+        ->and($result->exitCode)->toBe(7);
+});
+
+test('native execution limits reject invalid bounds', function () {
+    expect(fn () => new NativeExecutionLimits(timeoutSeconds: 0.0))
+        ->toThrow(InvalidArgumentException::class)
+        ->and(fn () => new NativeExecutionLimits(stdoutBytes: 0))
+        ->toThrow(InvalidArgumentException::class)
+        ->and(fn () => new NativeExecutionLimits(stderrBytes: 0))
+        ->toThrow(InvalidArgumentException::class)
+        ->and(fn () => new NativeExecutionLimits(terminationGraceSeconds: 0.0))
+        ->toThrow(InvalidArgumentException::class)
+        ->and(fn () => new NativeExecutionLimits(pollIntervalMicroseconds: 0))
+        ->toThrow(InvalidArgumentException::class);
 });
 
 test('forced native file operations reject mounted paths', function () {

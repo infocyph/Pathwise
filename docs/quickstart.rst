@@ -1,14 +1,15 @@
 Quickstart
 ==========
 
-This quickstart shows the fastest way to understand what Pathwise can do.
+This page shows the recommended Pathwise 4 entry points. Persistent storage
+configuration is instance-scoped; the facade remains stateless convenience.
 
 1) Install
------------
+----------
 
 .. code-block:: bash
 
-   composer require infocyph/pathwise
+   composer require infocyph/pathwise:^4.0
 
 2) Basic File Lifecycle
 -----------------------
@@ -24,24 +25,35 @@ This quickstart shows the fastest way to understand what Pathwise can do.
 
    $content = $file->read();
 
-3) Mount a Storage and Use Scheme Paths
----------------------------------------
+3) Create an Instance-Scoped Storage Context
+--------------------------------------------
 
 .. code-block:: php
 
-   use Infocyph\Pathwise\Storage\StorageFactory;
-   use Infocyph\Pathwise\Utils\FlysystemHelper;
+   use Infocyph\Pathwise\Storage\StorageContext;
 
-   StorageFactory::mount('assets', [
-       'driver' => 'local',
-       'root' => '/srv/storage/assets',
-   ]);
+   $storage = new StorageContext([
+       'assets' => [
+           'driver' => 'local',
+           'root' => '/srv/storage/assets',
+       ],
+       'archive' => [
+           'driver' => 'local',
+           'root' => '/srv/storage/archive',
+       ],
+   ], 'assets');
 
-   FlysystemHelper::write('assets://reports/a.txt', "hello\n");
-   $text = FlysystemHelper::read('assets://reports/a.txt');
+   [$filesystem, $location] = $storage->resolve('reports/a.txt');
+   $filesystem->write($location, "hello\n");
 
-4) Directory Sync with Diff Report
-----------------------------------
+   [$archive, $archivePath] = $storage->resolve('archive://2026/a.txt');
+   $archive->write($archivePath, "archived\n");
+
+No global mount is registered. Two contexts may safely reuse the same logical
+filesystem names with different roots/operators.
+
+4) Directory Sync with a Typed Report
+-------------------------------------
 
 .. code-block:: php
 
@@ -50,52 +62,81 @@ This quickstart shows the fastest way to understand what Pathwise can do.
    $source = new DirectoryOperations('/tmp/source');
    $report = $source->syncTo('/tmp/backup', deleteOrphans: true);
 
-   // $report has created/updated/deleted entries
+   foreach ($report->created as $path) {
+       // newly-created entry
+   }
 
-5) Upload Validation and Chunk Finalization
--------------------------------------------
+5) Framework-Neutral Upload
+---------------------------
 
 .. code-block:: php
 
    use Infocyph\Pathwise\StreamHandler\UploadProcessor;
+   use Infocyph\Pathwise\StreamHandler\UploadSource;
 
    $uploader = new UploadProcessor();
-   $uploader->setDirectorySettings('/tmp/uploads');
+   $uploader->setStorageContext($storage);
+   $uploader->setDirectorySettings('assets://uploads', tempDir: sys_get_temp_dir());
    $uploader->setValidationProfile('document');
 
-   // Single upload:
-   // $finalPath = $uploader->processUpload($_FILES['file']);
+   $source = UploadSource::fromStream(
+       stream: $inputStream,
+       clientFilename: 'report.pdf',
+       size: $knownSize,
+       clientMediaType: 'application/pdf',
+   );
 
-   // Chunked:
-   $state = $uploader->processChunkUpload(
-       chunkFile: $_FILES['chunk'],
+   $finalPath = $uploader->ingestSource($source);
+
+For a real PHP HTTP upload, ``processUpload($_FILES['file'])`` preserves the
+``is_uploaded_file()`` provenance check. ``UploadSource`` is the preferred
+framework-neutral bridge for uploaded-file abstractions, streams, and paths.
+
+6) Resumable Chunk Upload
+-------------------------
+
+.. code-block:: php
+
+   $state = $uploader->processChunkUploadSource(
+       source: $chunkSource,
        uploadId: 'session-42',
        chunkIndex: 0,
        totalChunks: 3,
        originalFilename: 'video.mp4',
    );
 
-   if ($state['isComplete']) {
+   if ($state->complete) {
        $finalPath = $uploader->finalizeChunkUpload('session-42');
    }
 
-6) Compression with Filters + Progress
---------------------------------------
+``ChunkUploadState`` is a typed result; final publication happens only through
+``finalizeChunkUpload()``.
+
+7) Prepare and Stream a Download
+--------------------------------
 
 .. code-block:: php
 
-   use Infocyph\Pathwise\FileManager\FileCompression;
+   use Infocyph\Pathwise\StreamHandler\DownloadProcessor;
 
-   $zip = new FileCompression('/tmp/out.zip', true);
-   $zip->setGlobPatterns(includePatterns: ['*.txt'], excludePatterns: ['*.tmp'])
-       ->setProgressCallback(function (array $event): void {
-           // operation, path, current, total
-       })
-       ->compress('/tmp/source')
-       ->save();
+   $downloads = new DownloadProcessor();
+   $downloads->setStorageContext($storage);
+   $downloads->setAllowedRoots(['assets://downloads']);
 
-7) Observability and Guardrails
--------------------------------
+   $prepared = $downloads->prepareDownload(
+       path: 'assets://downloads/video.mp4',
+       rangeHeader: $_SERVER['HTTP_RANGE'] ?? null,
+   );
+
+   foreach ($downloads->streamChunks($prepared) as $chunk) {
+       echo $chunk;
+   }
+
+Use ``$prepared->status``, ``$prepared->headers`` and ``$prepared->range`` when
+bridging the metadata to an HTTP framework.
+
+8) Observability and Policy
+---------------------------
 
 .. code-block:: php
 
@@ -113,3 +154,6 @@ This quickstart shows the fastest way to understand what Pathwise can do.
        ->setPolicyEngine($policy)
        ->setAuditTrail($audit)
        ->create('hello');
+
+Read :doc:`storage-context`, :doc:`upload-processing`,
+:doc:`download-processing`, :doc:`security`, and :doc:`migration-4.0` next.

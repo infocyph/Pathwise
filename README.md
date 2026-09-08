@@ -1,127 +1,157 @@
 # Pathwise
 
-[![Security & Standards](https://github.com/infocyph/Pathwise/actions/workflows/security-standards.yml/badge.svg)](https://github.com/infocyph/Pathwise/actions/workflows/security-standards.yml)
-![Packagist Downloads](https://img.shields.io/packagist/dt/infocyph/Pathwise?color=green\&link=https%3A%2F%2Fpackagist.org%2Fpackages%2Finfocyph%2FPathwise)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-![Packagist Version](https://img.shields.io/packagist/v/infocyph/Pathwise)
-![Packagist PHP Version](https://img.shields.io/packagist/dependency-v/infocyph/Pathwise/php)
-![GitHub Code Size](https://img.shields.io/github/languages/code-size/infocyph/Pathwise)
-[![Documentation](https://img.shields.io/badge/Documentation-Pathwise-blue?logo=readthedocs&logoColor=white)](https://docs.infocyph.com/projects/Pathwise/en/latest/)
+Pathwise 4 is a framework-neutral PHP 8.4+ filesystem toolkit built on Flysystem 3. It combines safe local file operations with instance-scoped storage topology, hardened upload/download pipelines, archive controls, file-backed queueing, observability, retention, indexing, policy enforcement, and bounded native execution.
 
-High-level PHP filesystem workflows powered by Flysystem, including safe I/O, uploads, downloads, archives, directory synchronization, retention, policy enforcement, auditing and storage adapters.
+## Requirements
 
-Pathwise 3.0 requires PHP 8.4 or newer. It is a direct breaking release: reader and writer methods are explicit, complex operations return readonly result objects, and unsupported mounted-storage operations fail with focused exceptions.
+- PHP `>=8.4`
+- `ext-fileinfo`
+- `league/flysystem ^3.35.2`
+- `psr/log ^3.0.2`
 
-## Installation
+ZIP, POSIX ownership, XML parsing, and remote Flysystem adapters are optional capabilities. Install only the extensions/adapters your application uses.
 
 ```bash
-composer require infocyph/pathwise
+composer require infocyph/pathwise:^4.0
 ```
 
-`ext-fileinfo` is required. ZIP and XML features check for `ext-zip`, `ext-xmlreader`, and `ext-simplexml` at runtime and report a clear `MissingExtensionException` when unavailable.
+## Storage topology
 
-## Quick start
+Use `StorageContext` for applications, workers, long-lived runtimes, or any process that can host more than one storage topology. Contexts do not register process-global mounts.
 
 ```php
-use Infocyph\Pathwise\FileManager\FileOperations;
-use Infocyph\Pathwise\FileManager\SafeFileReader;
-use Infocyph\Pathwise\FileManager\SafeFileWriter;
+use Infocyph\Pathwise\Storage\StorageContext;
 
-$file = new FileOperations('/tmp/example.txt');
-$file->create('hello')->append("\nworld");
+$storage = new StorageContext([
+    'primary' => ['driver' => 'local', 'root' => '/srv/app/storage'],
+    'archive' => ['driver' => 'local', 'root' => '/srv/app/archive'],
+], 'primary');
 
-foreach ((new SafeFileReader('/tmp/example.txt'))->lines() as $line) {
-    echo $line;
-}
+[$filesystem, $location] = $storage->resolve('archive://reports/q1.txt');
+$filesystem->write($location, "ready\n");
 
-$writer = new SafeFileWriter('/tmp/events.json');
-$writer->writeJson(['status' => 'ready']);
-$writer->close();
+$local = $storage->localPath('documents/readme.txt');
 ```
 
-The reader exposes `lines()`, `characters()`, `chunks()`, `csv()`, `jsonLines()`, `jsonArray()`, `fixedWidth()`, `xmlElements()`, `serializedValues()`, and `matchingLines()`. The writer exposes the corresponding `write*` methods. There is no runtime `__call()` dispatch and no global helper-function autoloading.
+`StorageFactory::createFilesystem()` remains the stateless constructor for built-in/official Flysystem adapters. Custom driver factories belong to a `StorageContext`, not a global registry.
 
-## Storage model
+## File and directory operations
 
 ```php
-use Infocyph\Pathwise\Storage\StorageFactory;
-use Infocyph\Pathwise\Utils\FlysystemHelper;
+use Infocyph\Pathwise\PathwiseFacade;
 
-StorageFactory::mount('assets', [
-    'driver' => 'local',
-    'root' => '/srv/storage/assets',
-]);
+$file = PathwiseFacade::at('/tmp/example.txt')->file();
+$file->create("v1\n")->append("v2\n");
 
-FlysystemHelper::write('assets://reports/a.txt', 'hello');
+$report = PathwiseFacade::at('/tmp/source')
+    ->directory()
+    ->syncTo('/tmp/backup', deleteOrphans: true);
 ```
 
-Storage-neutral reads, writes, copies, streams, uploads, downloads, ZIP staging, retention, and synchronization accept local, default-Flysystem, and mounted scheme paths where the adapter supplies the required capability. POSIX modes/ownership, native processes, shell searching, direct locks/handles, and transactions are local-filesystem-only and throw `UnsupportedStorageOperationException` for mounted paths.
+The facade is stateless convenience. Persistent storage topology belongs to `StorageContext`.
 
-Local `append()` uses native append mode. Mounted stores must opt into `appendEmulated()`, which visibly represents a complete object replacement. Local transactions use a structured, disk-backed rollback journal and reject nesting.
-
-See the `storage capability contract` in the documentation for the compatibility matrix, atomicity, locking, sync, native execution, archive security, and performance characteristics.
-
-## Synchronization and result types
+## Framework-neutral uploads
 
 ```php
-use Infocyph\Pathwise\Core\SyncComparison;
-use Infocyph\Pathwise\DirectoryManager\DirectoryOperations;
+use Infocyph\Pathwise\StreamHandler\MalwareScanMode;
+use Infocyph\Pathwise\StreamHandler\UploadProcessor;
+use Infocyph\Pathwise\StreamHandler\UploadSource;
 
-$report = (new DirectoryOperations('/srv/source'))->syncTo(
-    '/srv/target',
-    deleteOrphans: true,
-    comparison: SyncComparison::SIZE_AND_MODIFIED_TIME,
+$uploader = new UploadProcessor();
+$uploader->setStorageContext($storage);
+$uploader->setDirectorySettings('primary://uploads', tempDir: sys_get_temp_dir());
+$uploader->setValidationProfile('document');
+$uploader->setMalwareScanMode(MalwareScanMode::REQUIRED);
+$uploader->setMalwareScanner($scanner);
+
+$source = UploadSource::fromMover(
+    mover: fn (string $target): void => $uploadedFile->moveTo($target),
+    clientFilename: $uploadedFile->getClientFilename() ?? 'upload.bin',
+    size: $uploadedFile->getSize(),
+    clientMediaType: $uploadedFile->getClientMediaType(),
+    error: $uploadedFile->getError(),
 );
+
+$path = $uploader->ingestSource($source);
 ```
 
-`syncTo()` returns a readonly `SyncReport`. Download preparation/ranges, chunk uploads, queue processing, native execution, retention, deduplication, and file watching likewise return dedicated readonly result objects rather than significant associative arrays.
+Pathwise owns the staging file created for `UploadSource`, cleans it on success/failure, scans before content parsing, and fails closed when malware scanning is required.
 
-## Secure archives
+## Secure downloads and ranges
 
-Every extraction path validates every ZIP member before writing. Absolute paths, Windows drive paths, null bytes, traversal segments, symbolic-link entries, extraction-root escapes, and existing destination-symlink breakouts are rejected with `UnsafeArchiveEntryException`. Default entry-count, per-entry size, total uncompressed-size, and compression-ratio limits mitigate ZIP bombs and can be configured explicitly.
+```php
+use Infocyph\Pathwise\StreamHandler\DownloadProcessor;
 
-`FileJobQueue` is direct-local-only and intended for bounded, lightweight single-host workloads—not as a remote or distributed broker.
+$downloads = new DownloadProcessor();
+$downloads->setStorageContext($storage);
+$downloads->setAllowedRoots(['primary://downloads']);
 
-## Auditing
+$prepared = $downloads->prepareDownload(
+    'primary://downloads/video.mp4',
+    rangeHeader: $_SERVER['HTTP_RANGE'] ?? null,
+);
 
-`AuditTrail` accepts a local JSONL path or an `AuditSink`. `LocalJsonlAuditSink` uses locked append. `PartitionedAuditSink` writes one object per event and is suitable for mounted object stores. `CallbackAuditSink` integrates application loggers. Remote audit append is never silently emulated by reading and rewriting a log object.
+foreach ($downloads->streamChunks($prepared) as $chunk) {
+    echo $chunk;
+}
+```
 
-## Native execution
+`DownloadPreparation` carries status/headers/range metadata. `streamChunks()` revalidates the preparation, reads exactly the prepared range, and closes the source stream even when iteration ends early.
 
-`ExecutionStrategy::PHP` always uses PHP, `AUTO` may use an available native executable and fall back, and `NATIVE` either completes natively or throws `NativeExecutionException`. Native execution accepts local paths only; commands are executed as argument arrays without a shell, and execution results retain command, output, and exit code.
+## Durable local file queue
 
-## Security
+```php
+use Infocyph\Pathwise\Queue\FileJobQueue;
 
-Do not disclose suspected vulnerabilities in a public issue, discussion or pull request. Review the
-[security policy](SECURITY.md), then use [GitHub private vulnerability reporting](https://github.com/infocyph/Pathwise/security/advisories/new)
-to contact the maintainers confidentially.
+$queue = new FileJobQueue('/var/lib/app/jobs.json');
+$queue->enqueue('thumbnail', ['id' => 'asset-42']);
 
-Pathwise is protected by [PHPForge](https://github.com/infocyph/PHPForge), an automated quality and security gate covering
-tests, static and taint analysis, dependency auditing, architecture checks, and release readiness. Automated controls reduce
-risk but do not replace responsible disclosure or manual review.
+$reservation = $queue->reserve();
+if ($reservation !== null) {
+    // Work with $reservation->payload, renew long jobs when required.
+    $queue->acknowledge($reservation);
+}
+```
 
----
+The queue is intentionally direct-local: it uses typed opaque leases, stale-worker rejection, strict versioned state, locking, and crash-safe persistence. It is not a distributed broker.
 
-<div align="center">
-  <sub><strong>Made with ❤️ for the PHP community</strong></sub><br />
-  <sub><a href="LICENSE">MIT Licensed</a></sub><br />
-  <a href="https://docs.infocyph.com/projects/Pathwise/en/latest/">Documentation</a> •
-  <a href="SECURITY.md">Security</a> •
-  <a href="CODE_OF_CONDUCT.md">Code of Conduct</a> •
-  <a href="CONTRIBUTING.md">Contributing</a><br />
-  <span title="Issue templates" aria-label="Issue templates">🗂️</span>
-  <a href="https://github.com/infocyph/Pathwise/issues/new?template=bug_report.yml">Bug</a> •
-  <a href="https://github.com/infocyph/Pathwise/issues/new?template=feature_request.yml">Feature</a> •
-  <a href="https://github.com/infocyph/Pathwise/issues/new?template=docs_improvement.yml">Documentation</a> •
-  <a href="https://github.com/infocyph/Pathwise/issues/new?template=question.yml">Question</a> •
-  <a href="https://github.com/infocyph/Pathwise/issues/new?template=ci_failure.yml">CI failure</a><br />
-  <span title="Pull request templates" aria-label="Pull request templates">🔀</span>
-  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=PULL_REQUEST_TEMPLATE.md">General</a> •
-  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=bug_fix.md">Bug fix</a> •
-  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=feature.md">Feature</a> •
-  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=refactor.md">Refactor</a> •
-  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=performance.md">Performance</a> •
-  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=security_reliability.md">Security &amp; reliability</a> •
-  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=documentation.md">Documentation</a> •
-  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=maintenance.md">Maintenance</a>
-</div>
+## Security model
+
+Pathwise 4 includes explicit controls for:
+
+- extension/MIME/signature validation and optional malware scanning;
+- path/root restrictions, hidden-file blocking, safe symlink management;
+- ZIP manifest validation, traversal/collision/special-entry rejection and extraction limits;
+- bounded native commands with timeout/output ceilings and deterministic cleanup;
+- safe serialization boundaries that do not instantiate untrusted objects;
+- queue state size/payload/job limits and lease ownership;
+- policy enforcement, audit sinks, retention, indexing, and watcher workloads.
+
+Security-sensitive behavior is fail-closed where a configured capability is required. Adapter/native/metadata capabilities remain explicit rather than silently emulated.
+
+## Documentation
+
+The Sphinx documentation is the canonical user guide and is built in CI with warnings treated as errors. Start with:
+
+- `docs/quickstart.rst`
+- `docs/storage-context.rst`
+- `docs/upload-processing.rst`
+- `docs/download-processing.rst`
+- `docs/security.rst`
+- `docs/migration-4.0.rst`
+- `docs/api-reference.rst`
+- `docs/performance-portability.rst`
+
+## Development
+
+```bash
+composer install
+composer ic:test:code
+composer ic:qa
+```
+
+The release matrix covers PHP 8.4/8.5, stable and lowest dependencies, Windows, optional adapter contracts, static analysis/quality gates, clean install, documentation, and release workloads.
+
+## License
+
+MIT

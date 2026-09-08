@@ -3,36 +3,60 @@ Retention
 
 Namespace: ``Infocyph\Pathwise\Retention``
 
-``RetentionManager`` applies cleanup policies to directories.
+``RetentionManager`` evaluates deterministic count/age cleanup policy for a
+directory and returns the typed ``RetentionResult`` with ``deleted`` and
+``kept`` lists.
 
-Brief capabilities:
+Capabilities
+------------
 
-* Keep only latest N files.
-* Delete files older than configured age threshold.
-* Combine count-based and age-based pruning.
-* Return a readonly ``RetentionResult`` with ``deleted`` and ``kept`` lists.
-* Use ``mtime`` for adapter-backed storage; ``ctime`` is a direct-local-only
-  capability and is rejected for mounted paths.
+* ``preview()`` returns the exact decision without mutating storage;
+* ``apply()`` uses the same decision engine and then deletes the selected files;
+* ``keepLast`` preserves the newest N entries according to the selected sort;
+* ``maxAgeDays`` removes entries older than the calculated cutoff;
+* count and age rules combine with OR semantics for deletion;
+* ties are resolved deterministically by path;
+* ``mtime`` works for direct-local and adapter-backed listings;
+* ``ctime`` is a direct-local-only capability and is rejected for
+  adapter-backed storage.
 
-Use cases:
+Preview First
+-------------
 
-* Rotating backups/log exports.
-* Enforcing disk usage windows for generated artifacts.
-
-Example
--------
+Use ``preview()`` when an operator/application should inspect or audit the exact
+cleanup set before mutation:
 
 .. code-block:: php
 
    use Infocyph\Pathwise\Retention\RetentionManager;
 
-   $report = RetentionManager::apply(
+   $preview = RetentionManager::preview(
        directory: '/tmp/backups',
        keepLast: 7,
        maxAgeDays: 30,
        sortBy: 'mtime',
    );
 
-   foreach ($report->deleted as $deletedPath) {
-       // Record or report the deleted path.
+   foreach ($preview->deleted as $candidate) {
+       // Report the candidate before applying the same policy.
    }
+
+   $result = RetentionManager::apply(
+       directory: '/tmp/backups',
+       keepLast: 7,
+       maxAgeDays: 30,
+       sortBy: 'mtime',
+   );
+
+The filesystem may of course change between preview and apply. Pathwise
+therefore guarantees policy parity, not a distributed snapshot/isolation
+transaction across those two calls.
+
+Scaling
+-------
+
+Retention must collect and sort the candidate file set to make deterministic
+newest/age decisions. Memory therefore grows with the number of entries in the
+selected directory tree. For very large object stores, partition retention
+workloads by prefix/time bucket instead of treating one unbounded namespace as a
+single retention set. See :doc:`performance-portability`.

@@ -119,16 +119,22 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
     }
 
     /**
-     * Enable or disable atomic write mode.
+     * Enable or disable atomic local replacement mode.
      *
-     * @param bool $enabled If true, enable atomic writes.
-     * @return self This instance for method chaining.
-     * @throws FileAccessException If atomic mode is enabled in append mode.
+     * Atomic mode writes to a temporary sibling and publishes it with one local
+     * filesystem rename. It is deliberately unavailable for append mode and for
+     * adapter-backed paths because Pathwise cannot promise adapter-level atomic
+     * replacement semantics.
+     *
+     * @throws FileAccessException If atomic mode cannot be guaranteed.
      */
     public function enableAtomicWrite(bool $enabled = true): self
     {
         if ($enabled && $this->append) {
             throw new FileAccessException('Atomic write mode is not supported in append mode.');
+        }
+        if ($enabled && $this->isRemoteTarget()) {
+            throw new FileAccessException('Atomic write mode requires a direct-local filesystem path.');
         }
 
         $this->atomicWriteEnabled = $enabled;
@@ -405,10 +411,6 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
 
     private function createAtomicTempFilePath(): string
     {
-        if ($this->isRemoteTarget()) {
-            return $this->createLocalTempFile('pathwise_writer_atomic_');
-        }
-
         $directory = dirname($this->filename);
         $prefix = basename($this->filename) . '.tmp_';
         $tempFile = tempnam($directory, $prefix);
@@ -441,28 +443,8 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
             return;
         }
 
-        if ($this->isRemoteTarget()) {
-            if ($this->localWorkingPath === null) {
-                $this->localWorkingPath = $this->createLocalTempFile('pathwise_writer_sync_');
-                $this->cleanupLocalWorkingPath = true;
-            }
-            if (!$this->runSilently(fn(): bool => rename($this->atomicTempFilePath, $this->localWorkingPath))) {
-                if (!$this->runSilently(fn(): bool => copy($this->atomicTempFilePath, $this->localWorkingPath))) {
-                    throw new FileAccessException("Failed to finalize atomic write for {$this->filename}");
-                }
-                $this->unlinkPathSilently($this->atomicTempFilePath);
-            }
-            $this->syncBackOnClose = true;
-            $this->atomicTempFilePath = null;
-
-            return;
-        }
-
         if (!$this->runSilently(fn(): bool => rename($this->atomicTempFilePath, $this->filename))) {
-            if (!$this->runSilently(fn(): bool => copy($this->atomicTempFilePath, $this->filename))) {
-                throw new FileAccessException("Failed to finalize atomic write for {$this->filename}");
-            }
-            $this->unlinkPathSilently($this->atomicTempFilePath);
+            throw new FileAccessException("Failed to atomically replace {$this->filename}");
         }
 
         $this->atomicTempFilePath = null;
@@ -492,7 +474,7 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
     /**
      * Initializes the internal state of the SafeFileWriter.
      *
-     * This function is called internally whenever a write operation is requested.
+     * This function is called internally whenever a file operation is requested.
      * It checks if the internal state has already been initialized, and if not,
      * initializes it. It checks if the file is writable, creating it if it does
      * not exist. Otherwise, it throws a FileAccessException.
