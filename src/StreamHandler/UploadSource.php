@@ -138,6 +138,7 @@ final readonly class UploadSource
             if (is_link($target) || !is_file($target)) {
                 throw new UploadException('Upload source did not produce a regular staging file.');
             }
+            self::secureStagingFile($target);
 
             clearstatcache(true, $target);
             $size = filesize($target);
@@ -245,6 +246,13 @@ final readonly class UploadSource
             return $operation();
         } finally {
             restore_error_handler();
+        }
+    }
+
+    private static function secureStagingFile(string $path): void
+    {
+        if (!self::runSilently(static fn(): bool => chmod($path, 0600))) {
+            throw new UploadException('Unable to secure upload staging file.');
         }
     }
 
