@@ -5,6 +5,20 @@ declare(strict_types=1);
 use Infocyph\Pathwise\Exceptions\PolicyViolationException;
 use Infocyph\Pathwise\Security\PolicyEngine;
 
+test('it denies unmatched operations by default', function () {
+    $policy = new PolicyEngine();
+
+    expect($policy->isAllowed('read', '/tmp/file.txt'))->toBeFalse()
+        ->and(fn () => $policy->assertAllowed('read', '/tmp/file.txt'))
+        ->toThrow(PolicyViolationException::class);
+});
+
+test('it allows explicitly permissive default policy', function () {
+    $policy = new PolicyEngine(defaultAllow: true);
+
+    expect($policy->isAllowed('read', '/tmp/file.txt'))->toBeTrue();
+});
+
 test('it applies allow and deny rules with last match winning', function () {
     $policy = new PolicyEngine();
     $policy->deny('*', '*');
