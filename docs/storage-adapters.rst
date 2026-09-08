@@ -1,145 +1,131 @@
 Storage Adapters
 ================
 
-Pathwise is built on Flysystem 3, so you can use **any Flysystem adapter**
-as soon as its package is installed and mounted.
+Pathwise 4 uses Flysystem 3 for storage-neutral I/O while keeping storage
+topology explicit. There are two complementary APIs:
 
-Use ``Infocyph\Pathwise\Storage\StorageFactory`` to standardize setup.
+* ``StorageFactory`` is a stateless filesystem constructor and driver metadata
+  helper.
+* ``StorageContext`` owns named filesystems, default selection, lazy operator
+  instances, logical paths, and custom driver factories for one runtime.
 
-What ``StorageFactory`` Supports
---------------------------------
+There is no process-global custom-driver registry in ``StorageFactory`` and no
+``StorageFactory::mount()``/``mountMany()`` topology API in Pathwise 4.
 
-``StorageFactory::createFilesystem(array $config)`` accepts:
+StorageFactory
+--------------
 
-* local driver config: ``['driver' => 'local', 'root' => '/srv/storage']``
-* prebuilt filesystem: ``['filesystem' => $filesystemOperator]``
-* adapter instance: ``['adapter' => $adapter, 'options' => [...]]``
-* custom named drivers registered at runtime.
+``StorageFactory::createFilesystem(array $config)`` accepts exactly one storage
+construction mode:
 
-``StorageFactory::mount(string $name, array $config)`` creates and mounts in one step.
+* local driver configuration, for example
+  ``['driver' => 'local', 'root' => '/srv/storage']``;
+* a prebuilt ``FilesystemOperator`` through ``['filesystem' => $operator]``;
+* a prebuilt ``FilesystemAdapter`` through ``['adapter' => $adapter]``;
+* an official driver plus positional adapter constructor arguments.
 
-``StorageFactory::mountMany(array $mounts)`` mounts multiple storages at once.
-
-Driver config modes:
-
-* direct adapter object:
-  ``['driver' => 'aws-s3', 'adapter' => $adapter]``
-* constructor arguments for official adapter classes:
-  ``['driver' => 'aws-s3', 'constructor' => [$client, $bucket, $prefix]]``
-
-``StorageFactory`` also exposes:
-
-* ``StorageFactory::officialDrivers()`` for official driver metadata.
-* ``StorageFactory::suggestedPackage($driver)`` for install guidance.
-
-Official Adapter Coverage
--------------------------
-
-The following official Flysystem adapters are mapped by driver key:
-
-* ``local`` -> ``league/flysystem-local`` -> ``League\Flysystem\Local\LocalFilesystemAdapter``
-* ``ftp`` -> ``league/flysystem-ftp`` -> ``League\Flysystem\Ftp\FtpAdapter``
-* ``inmemory`` (alias: ``in-memory``) -> ``league/flysystem-memory`` -> ``League\Flysystem\InMemory\InMemoryFilesystemAdapter``
-* ``read-only`` (alias: ``readonly``) -> ``league/flysystem-read-only`` -> ``League\Flysystem\ReadOnly\ReadOnlyFilesystemAdapter``
-* ``path-prefixing`` (alias: ``path-prefix``) -> ``league/flysystem-path-prefixing`` -> ``League\Flysystem\PathPrefixing\PathPrefixedAdapter``
-* ``aws-s3`` (aliases: ``s3``, ``aws``) -> ``league/flysystem-aws-s3-v3`` -> ``League\Flysystem\AwsS3V3\AwsS3V3Adapter``
-* ``async-aws-s3`` -> ``league/flysystem-async-aws-s3`` -> ``League\Flysystem\AsyncAwsS3\AsyncAwsS3Adapter``
-* ``azure-blob-storage`` (alias: ``azure``) -> ``league/flysystem-azure-blob-storage`` -> ``League\Flysystem\AzureBlobStorage\AzureBlobStorageAdapter``
-* ``google-cloud-storage`` (alias: ``gcs``) -> ``league/flysystem-google-cloud-storage`` -> ``League\Flysystem\GoogleCloudStorage\GoogleCloudStorageAdapter``
-* ``mongodb-gridfs`` (alias: ``gridfs``) -> ``league/flysystem-gridfs`` -> ``League\Flysystem\GridFS\GridFSAdapter``
-* ``sftp-v2`` (alias: ``sftp2``) -> ``league/flysystem-sftp-v2`` -> ``League\Flysystem\PhpseclibV2\SftpAdapter``
-* ``sftp-v3`` (alias: ``sftp3``) -> ``league/flysystem-sftp-v3`` -> ``League\Flysystem\PhpseclibV3\SftpAdapter``
-* ``webdav`` -> ``league/flysystem-webdav`` -> ``League\Flysystem\WebDAV\WebDAVAdapter``
-* ``ziparchive`` (alias: ``zip``) -> ``league/flysystem-ziparchive`` -> ``League\Flysystem\ZipArchive\ZipArchiveAdapter``
-
-If a package is missing, ``StorageFactory`` throws an install hint with the package name.
-
-Basic Local Example
--------------------
+Ambiguous combinations are rejected.
 
 .. code-block:: php
 
    use Infocyph\Pathwise\Storage\StorageFactory;
-   use Infocyph\Pathwise\Utils\FlysystemHelper;
 
-   StorageFactory::mount('assets', [
+   $filesystem = StorageFactory::createFilesystem([
        'driver' => 'local',
-       'root' => '/srv/storage/assets',
+       'root' => '/srv/storage',
    ]);
 
-   FlysystemHelper::write('assets://images/logo.txt', 'ok');
+   $filesystem->write('reports/a.txt', "hello\n");
 
-Any Adapter Example (S3)
+The metadata helpers are:
+
+* ``StorageFactory::officialDrivers()``
+* ``StorageFactory::isOfficialDriver($driver)``
+* ``StorageFactory::suggestedPackage($driver)``
+
+Official Drivers
+----------------
+
+Pathwise maps these Flysystem driver keys:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Driver
+     - Package
+   * - ``local``
+     - ``league/flysystem-local``
+   * - ``ftp``
+     - ``league/flysystem-ftp``
+   * - ``inmemory``
+     - ``league/flysystem-memory``
+   * - ``read-only``
+     - ``league/flysystem-read-only``
+   * - ``path-prefixing``
+     - ``league/flysystem-path-prefixing``
+   * - ``aws-s3``
+     - ``league/flysystem-aws-s3-v3``
+   * - ``async-aws-s3``
+     - ``league/flysystem-async-aws-s3``
+   * - ``azure-blob-storage``
+     - ``league/flysystem-azure-blob-storage``
+   * - ``google-cloud-storage``
+     - ``league/flysystem-google-cloud-storage``
+   * - ``mongodb-gridfs``
+     - ``league/flysystem-gridfs``
+   * - ``sftp-v2``
+     - ``league/flysystem-sftp-v2``
+   * - ``sftp-v3``
+     - ``league/flysystem-sftp-v3``
+   * - ``webdav``
+     - ``league/flysystem-webdav``
+   * - ``ziparchive``
+     - ``league/flysystem-ziparchive``
+
+Aliases such as ``s3``/``aws``, ``memory``, ``readonly``, ``gcs``, ``azure``,
+``sftp2``, ``sftp3`` and ``zip`` normalize to the canonical driver names.
+Optional adapter packages stay optional. If a selected adapter class is not
+installed, Pathwise returns an explicit install/configuration error rather than
+silently falling back.
+
+Prebuilt Adapter Example
 ------------------------
-
-Install adapter package first (example):
-
-.. code-block:: bash
-
-   composer require league/flysystem-aws-s3-v3 aws/aws-sdk-php
-
-Then pass the adapter directly:
 
 .. code-block:: php
 
+   use Aws\S3\S3Client;
    use Infocyph\Pathwise\Storage\StorageFactory;
    use League\Flysystem\AwsS3V3\AwsS3V3Adapter;
-   use Aws\S3\S3Client;
 
    $client = new S3Client([
        'version' => 'latest',
        'region' => 'us-east-1',
-       'credentials' => [
-           'key' => getenv('AWS_ACCESS_KEY_ID'),
-           'secret' => getenv('AWS_SECRET_ACCESS_KEY'),
-       ],
    ]);
 
    $adapter = new AwsS3V3Adapter($client, 'my-bucket', 'app-prefix');
 
-   StorageFactory::mount('s3', [
+   $filesystem = StorageFactory::createFilesystem([
        'adapter' => $adapter,
    ]);
 
-   // Storage-neutral workflows can now address s3://uploads/a.pdf.
-   // Native processes, direct locks, POSIX metadata, and transactions remain local-only.
+Official Constructor Mode
+-------------------------
 
-Constructor mode example (official drivers):
+When the adapter package is installed, official drivers may receive positional
+constructor arguments:
 
 .. code-block:: php
 
-   StorageFactory::mount('s3', [
-       'driver' => 's3',
+   $filesystem = StorageFactory::createFilesystem([
+       'driver' => 'aws-s3',
        'constructor' => [$client, 'my-bucket', 'app-prefix'],
    ]);
 
-Read-only/path-prefix wrappers (official adapters):
+For complex adapters, constructing the adapter in application/bootstrap code
+and passing ``adapter`` or ``filesystem`` is often clearer and easier to test.
 
-.. code-block:: php
-
-   use League\Flysystem\Local\LocalFilesystemAdapter;
-
-   StorageFactory::mount('readonly', [
-       'driver' => 'read-only',
-       'constructor' => [new LocalFilesystemAdapter('/srv/storage')],
-   ]);
-
-   StorageFactory::mount('prefixed', [
-       'driver' => 'path-prefixing',
-       'constructor' => [new LocalFilesystemAdapter('/srv/storage'), 'tenant-a'],
-   ]);
-
-Instance-scoped Storage Contexts
---------------------------------
-
-Use ``StorageContext`` when storage topology belongs to an application,
-generation, worker host, or other long-lived runtime that must not mutate
-Pathwise's process-global convenience mounts.
-
-Each context owns its named filesystem configurations, default selection,
-lazily-created ``FilesystemOperator`` instances, and optional custom driver
-factories. Two contexts can safely reuse the same logical filesystem names with
-different operators or roots.
+StorageContext: Recommended Runtime Model
+-----------------------------------------
 
 .. code-block:: php
 
@@ -150,26 +136,21 @@ different operators or roots.
            'driver' => 'local',
            'root' => '/srv/app/storage',
        ],
-       'archive' => [
-           'driver' => 'local',
-           'root' => '/srv/app/archive',
+       'objects' => [
+           'filesystem' => $s3Filesystem,
        ],
    ], 'primary');
 
-   [$filesystem, $location] = $storage->resolve('archive://reports/q1.pdf');
-   $contents = $filesystem->read($location);
+   [$filesystem, $location] = $storage->resolve('objects://uploads/a.pdf');
+   $filesystem->write($location, $contents);
 
-   $defaultFilesystem = $storage->filesystem();
-   $logicalPath = $storage->path('documents/readme.txt');
-   $localPath = $storage->localPath('documents/readme.txt');
+Relative logical paths select the context default. ``name://path`` selects a
+configured filesystem. Absolute filesystem paths are deliberately not accepted
+as logical context paths; use ``localPath()`` when a local context disk must be
+exposed to a native/local-only capability.
 
-``StorageContext`` does not register process-global mounts. Relative paths use
-the context default; ``name://path`` selects an explicitly configured
-filesystem. Absolute logical paths, null bytes, and parent-directory traversal
-are rejected.
-
-Context-specific custom drivers are supplied to the context itself and do not
-fall through to ``StorageFactory``'s global custom-driver registry:
+Custom Drivers Are Context-Scoped
+---------------------------------
 
 .. code-block:: php
 
@@ -191,61 +172,40 @@ fall through to ``StorageFactory``'s global custom-driver registry:
        ],
    );
 
-Use the static ``StorageFactory``/``FlysystemHelper`` mount model for simple
-standalone scripts where process-global convenience state is intentional. Prefer
-``StorageContext`` for persistent or multi-application runtime integration.
+Custom factories are isolated to that context. Two applications in the same
+process can reuse ``tenant`` and ``tenant-local`` without cross-talk.
 
-Custom Driver Registration
---------------------------
+Processor Integration
+---------------------
 
-If you want environment-driven config, register a custom driver once:
+``UploadProcessor`` and ``DownloadProcessor`` accept a context directly:
 
 .. code-block:: php
 
-   use Infocyph\Pathwise\Storage\StorageFactory;
-   use League\Flysystem\Filesystem;
-   use League\Flysystem\Local\LocalFilesystemAdapter;
+   $uploader->setStorageContext($storage);
+   $uploader->setDirectorySettings('objects://uploads', tempDir: sys_get_temp_dir());
 
-   StorageFactory::registerDriver('tenant-local', function (array $config): Filesystem {
-       $tenant = (string) ($config['tenant'] ?? 'default');
-       $root = '/srv/tenants/' . $tenant;
+   $downloads->setStorageContext($storage);
+   $downloads->setAllowedRoots(['objects://downloads']);
 
-       return new Filesystem(new LocalFilesystemAdapter($root));
-   });
+Configure the context **before** path-dependent processor settings. Processors
+do not register global mounts. Direct absolute paths remain local; context
+relative/scheme paths route through the configured context.
 
-   StorageFactory::mount('tenant', [
-       'driver' => 'tenant-local',
-       'tenant' => 'acme',
-   ]);
+Local-Only Capabilities
+-----------------------
 
-   // tenant://docs/report.txt
+Some Pathwise features deliberately require a direct local path because they
+need OS primitives that remote object stores cannot provide safely:
 
-Facade Gateways
----------------
+* file queue locking/durable state;
+* native processes;
+* POSIX/Windows ownership operations;
+* local transactions and native atomic rename semantics;
+* safe symbolic-link creation/removal.
 
-Use ``PathwiseFacade::createFilesystem()``, ``mountStorage()``, and
-``mountStorages()`` when a static gateway is preferable. Pathwise 3.0 does not
-autoload global helper functions.
+Do not emulate these capabilities on object storage. Keep a local working area
+when a workflow needs them, then move the resulting artifact through Flysystem.
 
-Processor Integration Notes
----------------------------
-
-``UploadProcessor`` and ``DownloadProcessor`` already work with mounted paths.
-
-Examples:
-
-* upload destination: ``$uploader->setDirectorySettings('s3://uploads')``
-* chunk temp dir on mounted storage: ``$uploader->setDirectorySettings('s3://uploads', false, 's3://tmp')``
-* download root restriction for mounted storage:
-  ``$downloads->setAllowedRoots(['s3://uploads'])``
-
-Recommended Operational Pattern
--------------------------------
-
-For remote object stores, common production setup is:
-
-* receive chunks on fast local temp storage
-* finalize and write merged object to remote mount
-
-This reduces object churn and upload latency compared with writing every chunk
-as a separate remote object.
+See :doc:`storage-context`, :doc:`storage-contracts`, and
+:doc:`performance-portability` for the complete runtime and capability model.
