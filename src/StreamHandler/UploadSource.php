@@ -152,8 +152,9 @@ final readonly class UploadSource
 
     public function materialize(?string $preferredTempDirectory = null): UploadMaterialization
     {
-        $directory = self::materializationDirectory($preferredTempDirectory);
-        $target = self::allocateTarget($directory);
+        $root = self::materializationRoot($preferredTempDirectory);
+        $directory = self::allocateStagingDirectory($root);
+        $target = PathHelper::join($directory, 'payload');
 
         try {
             ($this->materializer)($target);
@@ -173,9 +174,11 @@ final readonly class UploadSource
                 clientFilename: $this->clientFilename,
                 clientMediaType: $this->clientMediaType,
                 error: $this->error,
+                cleanupDirectory: $directory,
             );
         } catch (\Throwable $exception) {
             self::unlinkSilently($target);
+            self::removeDirectorySilently($directory);
 
             if ($exception instanceof UploadException) {
                 throw $exception;
@@ -185,19 +188,19 @@ final readonly class UploadSource
         }
     }
 
-    private static function allocateTarget(string $directory): string
+    private static function allocateStagingDirectory(string $root): string
     {
         for ($attempt = 0; $attempt < 5; $attempt++) {
-            $target = PathHelper::join($directory, 'pathwise-upload-' . bin2hex(random_bytes(16)));
-            if (!file_exists($target) && !is_link($target)) {
-                return $target;
+            $directory = PathHelper::join($root, 'pathwise-upload-' . bin2hex(random_bytes(16)));
+            if (self::runSilently(static fn(): bool => mkdir($directory, 0700))) {
+                return $directory;
             }
         }
 
-        throw new UploadException('Unable to allocate upload staging file.');
+        throw new UploadException('Unable to allocate upload staging directory.');
     }
 
-    private static function materializationDirectory(?string $preferred): string
+    private static function materializationRoot(?string $preferred): string
     {
         if ($preferred === null || trim($preferred) === '') {
             return self::systemTempDirectory();
@@ -228,6 +231,26 @@ final readonly class UploadSource
         }
     }
 
+    private static function removeDirectorySilently(string $directory): void
+    {
+        if (!is_dir($directory) || is_link($directory)) {
+            return;
+        }
+
+        self::runSilently(static fn(): bool => rmdir($directory));
+    }
+
+    private static function runSilently(callable $operation): mixed
+    {
+        set_error_handler(static fn(): bool => true);
+
+        try {
+            return $operation();
+        } finally {
+            restore_error_handler();
+        }
+    }
+
     private static function systemTempDirectory(): string
     {
         $directory = PathHelper::toAbsolutePath(sys_get_temp_dir());
@@ -242,12 +265,6 @@ final readonly class UploadSource
             return;
         }
 
-        set_error_handler(static fn(): bool => true);
-
-        try {
-            unlink($path);
-        } finally {
-            restore_error_handler();
-        }
+        self::runSilently(static fn(): bool => unlink($path));
     }
 }

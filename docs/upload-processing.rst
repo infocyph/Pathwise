@@ -13,12 +13,16 @@ Where it fits:
 * HTTP upload handling through ``processUpload()`` (requires PHP's verified
   ``is_uploaded_file()`` provenance).
 * Explicit trusted CLI/application ingestion through ``ingestFile()``.
+* Framework-neutral typed ingestion through ``UploadSource`` and
+  ``ingestSource()``.
+* Typed chunk ingestion through ``processChunkUploadSource()``.
 * Validation profiles: ``image``, ``video``, ``document``.
 * MIME and size validation with optional image dimension validation.
 * Extension allowlist/blocklist policy.
 * Naming strategies (hash/timestamp).
 * Chunked/resumable uploads:
   * ``processChunkUpload()``
+  * ``processChunkUploadSource()``
   * ``finalizeChunkUpload()``
 * Upload ID safety validation for chunk/session identifiers.
 * Strict content checks:
@@ -30,7 +34,64 @@ Storage notes:
 
 * Uses Flysystem operations for chunk manifests and destination writes.
 * Supports mounted/default filesystem routing through helper resolution.
+* ``UploadSource`` materialization always uses a Pathwise-owned local staging
+  file. A mounted/default filesystem temp setting therefore falls back to the
+  local system temp directory for source materialization.
 * For adapter setup (S3/SFTP/FTP/custom), see ``storage-adapters``.
+
+Typed Upload Sources
+--------------------
+
+Use ``UploadSource`` when a framework, PSR-style uploaded-file object, stream,
+or application path should enter the Pathwise upload pipeline without first
+being converted to a synthetic ``$_FILES`` array by the application layer.
+
+Supported source forms:
+
+* ``UploadSource::fromMover()`` for framework-owned ``moveTo()`` style APIs.
+* ``UploadSource::fromPath()`` for borrowed or explicitly owned paths.
+* ``UploadSource::fromStream()`` for caller-owned readable streams.
+
+Pathwise materializes each source into a private local staging file before
+validation. The materialized file size is authoritative; optional source size
+metadata is advisory and never replaces the actual staged size check. Staging
+files are removed in a ``finally`` path after success or failure.
+
+A borrowed path is copied and remains untouched. An owned path is consumed once
+its staging copy succeeds, even when later validation rejects the upload. A
+caller-owned stream is read from its current position and is never closed by
+Pathwise.
+
+Framework mover example:
+
+.. code-block:: php
+
+   use Infocyph\Pathwise\StreamHandler\UploadSource;
+
+   $source = UploadSource::fromMover(
+       mover: fn (string $target): void => $uploadedFile->moveTo($target),
+       clientFilename: $uploadedFile->getClientFilename() ?? 'upload.bin',
+       size: $uploadedFile->getSize(),
+       clientMediaType: $uploadedFile->getClientMediaType(),
+       error: $uploadedFile->getError(),
+   );
+
+   $finalPath = $uploader->ingestSource($source);
+
+Typed chunk example:
+
+.. code-block:: php
+
+   $state = $uploader->processChunkUploadSource(
+       source: $source,
+       uploadId: 'session-42',
+       chunkIndex: 0,
+       totalChunks: 4,
+       originalFilename: 'video.mp4',
+   );
+
+Non-success upload error codes are rejected before a mover callback is invoked,
+so an invalid framework upload is not materialized unnecessarily.
 
 Security Hardening Controls
 ---------------------------

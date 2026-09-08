@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\StreamHandler;
 
+use Infocyph\Pathwise\Exceptions\FileSizeExceededException;
 use Infocyph\Pathwise\Exceptions\UploadException;
-
 use Infocyph\Pathwise\Results\ChunkUploadState;
 use Infocyph\Pathwise\StreamHandler\Concerns\UploadProcessorChunkConcern;
 use Infocyph\Pathwise\StreamHandler\Concerns\UploadProcessorValidationConcern;
@@ -204,6 +204,24 @@ class UploadProcessor
     }
 
     /**
+     * Ingest a framework-neutral source through a Pathwise-owned local staging file.
+     *
+     * @param array<string, scalar|null> $metadata Explicit audit metadata for the log entry.
+     */
+    public function ingestSource(UploadSource $source, array $metadata = []): string
+    {
+        $this->assertUploadDirectoryConfigured();
+        $this->assertSourceReady($source);
+        $materialization = $source->materialize($this->tempDir);
+
+        try {
+            return $this->processIncomingFile($materialization->toFileArray(), false, $metadata);
+        } finally {
+            $materialization->cleanup();
+        }
+    }
+
+    /**
      * Process an upload chunk and persist resumable state.
      *
      * @param array<string, mixed> $chunkFile The chunk file data from $_FILES.
@@ -220,9 +238,7 @@ class UploadProcessor
         int $totalChunks,
         string $originalFilename,
     ): ChunkUploadState {
-        if (!isset($this->uploadDir) || $this->uploadDir === '') {
-            throw new UploadException('Upload directory is not set.');
-        }
+        $this->assertUploadDirectoryConfigured();
         $chunkFile = $this->validateFile($chunkFile);
         $this->validateChunkUploadRequest($chunkFile, $uploadId, $chunkIndex, $totalChunks, $originalFilename);
 
@@ -259,6 +275,33 @@ class UploadProcessor
                 complete: count($received) === $totalChunks,
             );
         });
+    }
+
+    /**
+     * Process a framework-neutral upload source as one resumable chunk.
+     */
+    public function processChunkUploadSource(
+        UploadSource $source,
+        string $uploadId,
+        int $chunkIndex,
+        int $totalChunks,
+        string $originalFilename,
+    ): ChunkUploadState {
+        $this->assertUploadDirectoryConfigured();
+        $this->assertSourceReady($source);
+        $materialization = $source->materialize($this->tempDir);
+
+        try {
+            return $this->processChunkUpload(
+                $materialization->toFileArray(),
+                $uploadId,
+                $chunkIndex,
+                $totalChunks,
+                $originalFilename,
+            );
+        } finally {
+            $materialization->cleanup();
+        }
     }
 
     /**
@@ -429,6 +472,23 @@ class UploadProcessor
         $this->validationProfile = null;
     }
 
+    private function assertSourceReady(UploadSource $source): void
+    {
+        match ($source->error) {
+            UPLOAD_ERR_OK => null,
+            UPLOAD_ERR_NO_FILE => throw new UploadException('No file sent.'),
+            UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => throw new FileSizeExceededException('Exceeded file size limit.'),
+            default => throw new UploadException('Unknown errors.'),
+        };
+    }
+
+    private function assertUploadDirectoryConfigured(): void
+    {
+        if (!isset($this->uploadDir) || $this->uploadDir === '') {
+            throw new UploadException('Upload directory is not set.');
+        }
+    }
+
     /**
      * Generate a unique file name based on the strategy and caller info.
      */
@@ -460,9 +520,7 @@ class UploadProcessor
         $logFileName = is_string($file['name'] ?? null) ? $file['name'] : null;
 
         try {
-            if (!isset($this->uploadDir) || $this->uploadDir === '') {
-                throw new UploadException('Upload directory is not set.');
-            }
+            $this->assertUploadDirectoryConfigured();
 
             $file = $this->validateFile($file);
             $tmpName = $file['tmp_name'];

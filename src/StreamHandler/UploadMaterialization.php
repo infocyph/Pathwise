@@ -21,6 +21,7 @@ final readonly class UploadMaterialization
         public string $clientFilename,
         public ?string $clientMediaType = null,
         public int $error = UPLOAD_ERR_OK,
+        private ?string $cleanupDirectory = null,
     ) {
         if ($path === '' || str_contains($path, "\0")) {
             throw new UploadException('Invalid materialized upload path.');
@@ -31,20 +32,21 @@ final readonly class UploadMaterialization
         if ($clientFilename === '' || str_contains($clientFilename, "\0")) {
             throw new UploadException('Invalid upload client filename.');
         }
+        if (
+            $cleanupDirectory !== null
+            && ($cleanupDirectory === '' || str_contains($cleanupDirectory, "\0"))
+        ) {
+            throw new UploadException('Invalid upload staging directory.');
+        }
     }
 
     public function cleanup(): void
     {
-        if (!is_file($this->path) && !is_link($this->path)) {
-            return;
-        }
+        self::unlinkSilently($this->path);
 
-        set_error_handler(static fn(): bool => true);
-
-        try {
-            unlink($this->path);
-        } finally {
-            restore_error_handler();
+        $directory = $this->cleanupDirectory;
+        if ($directory !== null && is_dir($directory) && !is_link($directory)) {
+            self::runSilently(static fn(): bool => rmdir($directory));
         }
     }
 
@@ -66,5 +68,25 @@ final readonly class UploadMaterialization
             'name' => $this->clientFilename,
             'type' => $this->clientMediaType,
         ];
+    }
+
+    private static function runSilently(callable $operation): mixed
+    {
+        set_error_handler(static fn(): bool => true);
+
+        try {
+            return $operation();
+        } finally {
+            restore_error_handler();
+        }
+    }
+
+    private static function unlinkSilently(string $path): void
+    {
+        if (!is_file($path) && !is_link($path)) {
+            return;
+        }
+
+        self::runSilently(static fn(): bool => unlink($path));
     }
 }
