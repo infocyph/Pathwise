@@ -65,6 +65,34 @@ test('it ingests framework mover sources and cleans Pathwise staging', function 
         ->and($remaining === false ? [] : $remaining)->toBe([]);
 });
 
+test('materialized upload state uses private permissions', function (): void {
+    if (PHP_OS_FAMILY === 'Windows') {
+        expect(true)->toBeTrue();
+
+        return;
+    }
+
+    $source = UploadSource::fromMover(
+        static function (string $target): void {
+            file_put_contents($target, 'private-content');
+        },
+        clientFilename: 'private.txt',
+    );
+    $materialized = $source->materialize($this->stagingDir);
+
+    try {
+        $directoryMode = fileperms(dirname($materialized->path));
+        $fileMode = fileperms($materialized->path);
+
+        expect($directoryMode)->toBeInt()
+            ->and($directoryMode & 0777)->toBe(0700)
+            ->and($fileMode)->toBeInt()
+            ->and($fileMode & 0777)->toBe(0600);
+    } finally {
+        $materialized->cleanup();
+    }
+});
+
 test('it cleans materialized sources when upload validation fails', function (): void {
     $stagedPath = null;
     $source = UploadSource::fromMover(
