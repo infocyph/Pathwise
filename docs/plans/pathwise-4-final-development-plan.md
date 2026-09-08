@@ -32,7 +32,7 @@ Legend:
 - `[ ]` pending;
 - `[!]` blocked by an external prerequisite or release dependency.
 
-Current active batch: **Batch 8 — security defaults and truthful filesystem guarantees; 8.3 private-state permissions acceptance is in progress**.
+Current active batch: **Batch 9 — bounded native execution**.
 
 | Area | Status | Tracking note |
 | --- | --- | --- |
@@ -50,16 +50,16 @@ Current active batch: **Batch 8 — security defaults and truthful filesystem gu
 | Batch 7.5 — scanner acceptance suite | [X] | Malware-mode, staging, mutation, chunk-finalization, and deterministic fake-clamd protocol/error/timeout/limit coverage pass all required CI gates. |
 | Batch 8.1 — deny-by-default policy engine | [X] | Empty policies deny, explicit permissive default remains opt-in, and deterministic last-match semantics are covered. |
 | Batch 8.2 — truthful atomic-write semantics | [X] | Local same-directory rename is the only atomic guarantee; adapter-backed atomic mode is rejected and staged remote writes remain explicitly non-atomic. |
-| Batch 8.3 — private Pathwise-owned local state | [~] | Scanner staging was already private; upload staging, local/partitioned audit state, and queue state are hardened to private defaults with POSIX acceptance tests. Final branch CI acceptance is in progress. |
-| Batch 8 — security defaults / atomic guarantees / permissions | [~] | 8.1 and 8.2 are complete; closes when 8.3 permission acceptance is fully green. |
-| Batch 9 — bounded native execution | [ ] | Pending. |
+| Batch 8.3 — private Pathwise-owned local state | [X] | Scanner/upload staging, queue state, local JSONL audit state, and partitioned audit objects use private defaults where Pathwise owns creation; POSIX permission acceptance and cross-platform semantics are CI-green. |
+| Batch 8 — security defaults / atomic guarantees / permissions | [X] | All three sub-batches are complete; acceptance passed Windows PHP 8.4/8.5, optional adapters, stable+lowest QA, PHPStan/Psalm, and clean install. |
+| Batch 9 — bounded native execution | [~] | Active: audit the existing runner and replace unbounded process/output behavior with deadline, output caps, non-deadlocking pipe polling, and deterministic termination/cleanup. |
 | Batch 10 — file queue lease correctness/durability | [ ] | Pending. |
 | Batch 11 — archive/parser hardening | [ ] | Pending. |
 | Batch 12 — static/global-state cleanup | [ ] | Pending major-version cleanup. |
 | Batch 13 — observability/retention/indexing/watcher review | [ ] | Pending whole-library subsystem audit. |
 | Batch 14 — complete Pathwise 4 documentation | [ ] | Release blocker; starts after public APIs are stable, with feature docs added earlier when useful. |
 | Batch 15 — performance/stress/release gates | [ ] | Final acceptance only after functional/security batches stabilize. |
-| Pathwise 4.0 release | [!] | Blocked until Batches 8–15 and all release gates pass. |
+| Pathwise 4.0 release | [!] | Blocked until Batches 9–15 and all release gates pass. |
 | Foundation 3 / Point 26.5 consumption | [!] | Blocked until Pathwise 4.0 is released; Foundation then raises its floor and removes duplicated generic filesystem mechanics. |
 
 Tracker maintenance rule: update this table whenever a batch starts, closes, is split, or gains a release-blocking finding. A batch is marked `[X]` only after its implementation and relevant acceptance checks are complete; writing code alone is not enough.
@@ -147,7 +147,7 @@ Already implemented:
 
 # Pathwise 4 implementation batches
 
-## Batch 7 — malware policy modes and scanner providers
+## Batch 7 — malware policy modes and scanner providers — complete
 
 ### 7.1 Replace the old required-scanner boolean with an explicit mode
 
@@ -228,7 +228,7 @@ Must cover:
 
 ---
 
-## Batch 8 — security defaults and truthful filesystem guarantees
+## Batch 8 — security defaults and truthful filesystem guarantees — complete
 
 ### 8.1 Policy engine deny-by-default
 
@@ -560,15 +560,14 @@ Foundation should then:
 
 # Work order from this point
 
-1. **Batch 8** — finish private-state permission acceptance and close the security-default/atomic batch.
-2. **Batch 9** — bounded native execution.
-3. **Batch 10** — queue lease/durability repair.
-4. **Batch 11** — archive/parser hardening.
-5. **Batch 12** — global/static API cleanup.
-6. **Batch 13** — remaining subsystem audit/hardening.
-7. **Batch 14** — complete documentation rebuild and migration guide.
-8. **Batch 15** — benchmarks/stress/final release gates.
-9. Release Pathwise 4.0, then complete Foundation Point 26.5 against the released floor.
+1. **Batch 9** — bounded native execution.
+2. **Batch 10** — queue lease/durability repair.
+3. **Batch 11** — archive/parser hardening.
+4. **Batch 12** — global/static API cleanup.
+5. **Batch 13** — remaining subsystem audit/hardening.
+6. **Batch 14** — complete documentation rebuild and migration guide.
+7. **Batch 15** — benchmarks/stress/final release gates.
+8. Release Pathwise 4.0, then complete Foundation Point 26.5 against the released floor.
 
 ## Push discipline
 
