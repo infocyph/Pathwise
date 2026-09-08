@@ -32,23 +32,26 @@ Legend:
 - `[ ]` pending;
 - `[!]` blocked by an external prerequisite or release dependency.
 
-Current active batch: **Batch 7 — malware policy modes and scanner providers**.
+Current active batch: **Batch 8 — security defaults and truthful filesystem guarantees; 8.3 private-state permissions acceptance is in progress**.
 
 | Area | Status | Tracking note |
 | --- | --- | --- |
 | Plan freeze / Pathwise 4 scope | [X] | Major-release scope, ownership rules, work order, documentation gate, and release gates are frozen in this file. |
 | Batch 1 — instance-scoped storage context | [X] | `StorageContext` and per-instance storage/driver resolution are implemented. |
 | Batch 2 — typed upload-source ownership | [X] | `UploadSource` materialization and cleanup ownership are implemented. |
-| Batch 3 — hardened malware boundary | [X] | Typed request/verdict contract, private staging, fail-closed verdicts, mutation detection, and chunk-finalization scanning are implemented; provider/mode expansion is tracked in Batch 7. |
+| Batch 3 — hardened malware boundary | [X] | Typed request/verdict contract, private staging, fail-closed verdicts, mutation detection, and chunk-finalization scanning are implemented. |
 | Batch 4 — prepared range-aware download streaming | [X] | Range-aware iterable streaming and deterministic resource closure are implemented. |
 | Batch 5 — generic safe symlink management | [X] | Generic root-contained link create/status/remove behavior is implemented. |
 | Batch 6 — production PSR-3 dependency | [X] | `psr/log ^3.0.2` is a direct production dependency. |
-| Batch 7.1 — malware scan modes/status | [~] | `OFF`, `WHEN_CONFIGURED`, and `REQUIRED` behavior is implemented; final status/provider diagnostics and QA closure remain. |
-| Batch 7.2 — ClamAV daemon adapter | [~] | INSTREAM adapter exists; stream-size bounding, protocol tests, static-analysis/style cleanup, and final CI closure are in progress. |
-| Batch 7.3 — LMD integration guidance | [ ] | Document the preferred ClamAV + LMD host deployment without root/sudo coupling in request workers. |
-| Batch 7.4 — other scanner engines | [~] | Core typed scanner contract is already generic; provider examples/documentation remain. |
-| Batch 7.5 — scanner acceptance suite | [~] | Core malware boundary tests pass; deterministic fake-clamd protocol/error/timeout/limit coverage is being completed. |
-| Batch 8 — security defaults / atomic guarantees / permissions | [ ] | Starts after Batch 7 closes. |
+| Batch 7.1 — malware scan modes/status | [X] | `OFF`, `WHEN_CONFIGURED`, and `REQUIRED`, typed provider diagnostics, and status introspection are implemented and accepted. |
+| Batch 7.2 — ClamAV daemon adapter | [X] | Bounded INSTREAM adapter, Unix/TCP endpoints, stream/response limits, timeout handling, and protocol behavior are implemented and CI-green. |
+| Batch 7.3 — LMD integration guidance | [X] | Preferred ClamAV + LMD host deployment and no-root/no-sudo request-worker guidance are documented. |
+| Batch 7.4 — other scanner engines | [X] | The generic typed scanner contract and custom/other-engine integration guidance are complete without vendor coupling. |
+| Batch 7.5 — scanner acceptance suite | [X] | Malware-mode, staging, mutation, chunk-finalization, and deterministic fake-clamd protocol/error/timeout/limit coverage pass all required CI gates. |
+| Batch 8.1 — deny-by-default policy engine | [X] | Empty policies deny, explicit permissive default remains opt-in, and deterministic last-match semantics are covered. |
+| Batch 8.2 — truthful atomic-write semantics | [X] | Local same-directory rename is the only atomic guarantee; adapter-backed atomic mode is rejected and staged remote writes remain explicitly non-atomic. |
+| Batch 8.3 — private Pathwise-owned local state | [~] | Scanner staging was already private; upload staging, local/partitioned audit state, and queue state are hardened to private defaults with POSIX acceptance tests. Final branch CI acceptance is in progress. |
+| Batch 8 — security defaults / atomic guarantees / permissions | [~] | 8.1 and 8.2 are complete; closes when 8.3 permission acceptance is fully green. |
 | Batch 9 — bounded native execution | [ ] | Pending. |
 | Batch 10 — file queue lease correctness/durability | [ ] | Pending. |
 | Batch 11 — archive/parser hardening | [ ] | Pending. |
@@ -56,7 +59,7 @@ Current active batch: **Batch 7 — malware policy modes and scanner providers**
 | Batch 13 — observability/retention/indexing/watcher review | [ ] | Pending whole-library subsystem audit. |
 | Batch 14 — complete Pathwise 4 documentation | [ ] | Release blocker; starts after public APIs are stable, with feature docs added earlier when useful. |
 | Batch 15 — performance/stress/release gates | [ ] | Final acceptance only after functional/security batches stabilize. |
-| Pathwise 4.0 release | [!] | Blocked until Batches 7–15 and all release gates pass. |
+| Pathwise 4.0 release | [!] | Blocked until Batches 8–15 and all release gates pass. |
 | Foundation 3 / Point 26.5 consumption | [!] | Blocked until Pathwise 4.0 is released; Foundation then raises its floor and removes duplicated generic filesystem mechanics. |
 
 Tracker maintenance rule: update this table whenever a batch starts, closes, is split, or gains a release-blocking finding. A batch is marked `[X]` only after its implementation and relevant acceptance checks are complete; writing code alone is not enough.
@@ -557,16 +560,15 @@ Foundation should then:
 
 # Work order from this point
 
-1. **Batch 7** — finish scan modes, ClamAV adapter, LMD integration docs/tests.
-2. **Batch 8** — policy default + atomic semantics + private-state permissions.
-3. **Batch 9** — bounded native execution.
-4. **Batch 10** — queue lease/durability repair.
-5. **Batch 11** — archive/parser hardening.
-6. **Batch 12** — global/static API cleanup.
-7. **Batch 13** — remaining subsystem audit/hardening.
-8. **Batch 14** — complete documentation rebuild and migration guide.
-9. **Batch 15** — benchmarks/stress/final release gates.
-10. Release Pathwise 4.0, then complete Foundation Point 26.5 against the released floor.
+1. **Batch 8** — finish private-state permission acceptance and close the security-default/atomic batch.
+2. **Batch 9** — bounded native execution.
+3. **Batch 10** — queue lease/durability repair.
+4. **Batch 11** — archive/parser hardening.
+5. **Batch 12** — global/static API cleanup.
+6. **Batch 13** — remaining subsystem audit/hardening.
+7. **Batch 14** — complete documentation rebuild and migration guide.
+8. **Batch 15** — benchmarks/stress/final release gates.
+9. Release Pathwise 4.0, then complete Foundation Point 26.5 against the released floor.
 
 ## Push discipline
 
