@@ -1,5 +1,14 @@
 # Pathwise
 
+[![Security & Standards](https://github.com/infocyph/Pathwise/actions/workflows/security-standards.yml/badge.svg)](https://github.com/infocyph/Pathwise/actions/workflows/security-standards.yml)
+![Packagist Downloads](https://img.shields.io/packagist/dt/infocyph/Pathwise?color=green\&link=https%3A%2F%2Fpackagist.org%2Fpackages%2Finfocyph%2Fpathwise)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+![Packagist Version](https://img.shields.io/packagist/v/infocyph/pathwise)
+![Packagist PHP Version](https://img.shields.io/packagist/dependency-v/infocyph/pathwise/php)
+![GitHub Code Size](https://img.shields.io/github/languages/code-size/infocyph/Pathwise)
+[![Documentation](https://img.shields.io/badge/Documentation-Pathwise-blue?logo=readthedocs&logoColor=white)](https://docs.infocyph.com/projects/Pathwise/)
+
+
 Pathwise 4 is a framework-neutral PHP 8.4+ filesystem toolkit built on Flysystem 3. It combines safe local file operations with instance-scoped storage topology, hardened upload/download pipelines, archive controls, file-backed queueing, observability, retention, indexing, policy enforcement, and bounded native execution.
 
 ## Requirements
@@ -129,29 +138,36 @@ Pathwise 4 includes explicit controls for:
 
 Security-sensitive behavior is fail-closed where a configured capability is required. Adapter/native/metadata capabilities remain explicit rather than silently emulated.
 
-## Documentation
 
-The Sphinx documentation is the canonical user guide and is built in CI with warnings treated as errors. Start with:
+## Security
 
-- `docs/quickstart.rst`
-- `docs/storage-context.rst`
-- `docs/upload-processing.rst`
-- `docs/download-processing.rst`
-- `docs/security.rst`
-- `docs/migration-4.0.rst`
-- `docs/api-reference.rst`
-- `docs/performance-portability.rst`
+Do not disclose suspected vulnerabilities in a public issue, discussion or pull request. Follow [SECURITY.md](SECURITY.md) and use [GitHub private vulnerability reporting](https://github.com/infocyph/Pathwise/security/advisories/new).
 
-## Development
+Pathwise is protected by [PHPForge](https://github.com/infocyph/PHPForge), which provides automated tests, static and taint analysis, dependency auditing, architecture checks and release-readiness gates. Automated controls do not replace responsible disclosure or manual review.
 
-```bash
-composer install
-composer ic:test:code
-composer ic:qa
-```
 
-The release matrix covers PHP 8.4/8.5, stable and lowest dependencies, Windows, optional adapter contracts, static analysis/quality gates, clean install, documentation, and release workloads.
+---
 
-## License
-
-MIT
+<div align="center">
+  <sub><strong>Made with ❤️ for the PHP community</strong></sub><br />
+  <sub><a href="LICENSE">MIT Licensed</a></sub><br />
+  <a href="https://docs.infocyph.com/projects/Pathwise/">Documentation</a> •
+  <a href="SECURITY.md">Security</a> •
+  <a href="CODE_OF_CONDUCT.md">Code of Conduct</a> •
+  <a href="CONTRIBUTING.md">Contributing</a><br />
+  <span title="Issue templates" aria-label="Issue templates">🗂️</span>
+  <a href="https://github.com/infocyph/Pathwise/issues/new?template=bug_report.yml">Bug</a> •
+  <a href="https://github.com/infocyph/Pathwise/issues/new?template=feature_request.yml">Feature</a> •
+  <a href="https://github.com/infocyph/Pathwise/issues/new?template=docs_improvement.yml">Documentation</a> •
+  <a href="https://github.com/infocyph/Pathwise/issues/new?template=question.yml">Question</a> •
+  <a href="https://github.com/infocyph/Pathwise/issues/new?template=ci_failure.yml">CI failure</a><br />
+  <span title="Pull request templates" aria-label="Pull request templates">🔀</span>
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=PULL_REQUEST_TEMPLATE.md">General</a> •
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=bug_fix.md">Bug fix</a> •
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=feature.md">Feature</a> •
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=refactor.md">Refactor</a> •
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=performance.md">Performance</a> •
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=security_reliability.md">Security &amp; reliability</a> •
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=documentation.md">Documentation</a> •
+  <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=maintenance.md">Maintenance</a>
+</div>
