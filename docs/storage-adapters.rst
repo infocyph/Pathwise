@@ -129,6 +129,72 @@ Read-only/path-prefix wrappers (official adapters):
        'constructor' => [new LocalFilesystemAdapter('/srv/storage'), 'tenant-a'],
    ]);
 
+Instance-scoped Storage Contexts
+--------------------------------
+
+Use ``StorageContext`` when storage topology belongs to an application,
+generation, worker host, or other long-lived runtime that must not mutate
+Pathwise's process-global convenience mounts.
+
+Each context owns its named filesystem configurations, default selection,
+lazily-created ``FilesystemOperator`` instances, and optional custom driver
+factories. Two contexts can safely reuse the same logical filesystem names with
+different operators or roots.
+
+.. code-block:: php
+
+   use Infocyph\Pathwise\Storage\StorageContext;
+
+   $storage = new StorageContext([
+       'primary' => [
+           'driver' => 'local',
+           'root' => '/srv/app/storage',
+       ],
+       'archive' => [
+           'driver' => 'local',
+           'root' => '/srv/app/archive',
+       ],
+   ], 'primary');
+
+   [$filesystem, $location] = $storage->resolve('archive://reports/q1.pdf');
+   $contents = $filesystem->read($location);
+
+   $defaultFilesystem = $storage->filesystem();
+   $logicalPath = $storage->path('documents/readme.txt');
+   $localPath = $storage->localPath('documents/readme.txt');
+
+``StorageContext`` does not register process-global mounts. Relative paths use
+the context default; ``name://path`` selects an explicitly configured
+filesystem. Absolute logical paths, null bytes, and parent-directory traversal
+are rejected.
+
+Context-specific custom drivers are supplied to the context itself and do not
+fall through to ``StorageFactory``'s global custom-driver registry:
+
+.. code-block:: php
+
+   use Infocyph\Pathwise\Storage\StorageContext;
+   use League\Flysystem\Filesystem;
+   use League\Flysystem\Local\LocalFilesystemAdapter;
+
+   $storage = new StorageContext(
+       ['tenant' => ['driver' => 'tenant-local', 'tenant' => 'acme']],
+       'tenant',
+       [
+           'tenant-local' => static function (array $config): Filesystem {
+               $tenant = (string) ($config['tenant'] ?? 'default');
+
+               return new Filesystem(
+                   new LocalFilesystemAdapter('/srv/tenants/' . $tenant),
+               );
+           },
+       ],
+   );
+
+Use the static ``StorageFactory``/``FlysystemHelper`` mount model for simple
+standalone scripts where process-global convenience state is intentional. Prefer
+``StorageContext`` for persistent or multi-application runtime integration.
+
 Custom Driver Registration
 --------------------------
 
