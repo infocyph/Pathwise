@@ -6,16 +6,17 @@ namespace Infocyph\Pathwise\StreamHandler\Concerns;
 
 use Infocyph\Pathwise\Storage\StorageContext;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
+use Infocyph\Pathwise\Utils\MetadataHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use League\Flysystem\FilesystemOperator;
 
 /**
  * Route processor storage I/O through an optional instance-scoped context.
  *
- * Absolute paths remain direct-local. With a context configured, relative paths
- * use its default filesystem and scheme paths must name one of its filesystems.
- * Without a context, existing FlysystemHelper routing remains available for
- * low-level/standalone use.
+ * Direct absolute filesystem paths remain local. With a context configured,
+ * relative paths use its default filesystem and scheme paths must name one of
+ * its configured filesystems. Without a context, the existing FlysystemHelper
+ * routing remains available for low-level and standalone use.
  */
 trait StorageContextRoutingConcern
 {
@@ -113,9 +114,9 @@ trait StorageContextRoutingConcern
 
     private function storageDirectLocalPath(string $path): ?string
     {
-        if ($this->storageContext !== null && !PathHelper::isAbsolute($path)) {
+        if ($this->storageUsesContext($path)) {
             try {
-                return $this->storageContext->localPath($path);
+                return $this->storageContext?->localPath($path);
             } catch (\InvalidArgumentException) {
                 return null;
             }
@@ -149,10 +150,29 @@ trait StorageContextRoutingConcern
 
     private function storageIsSameOrDescendant(string $root, string $path): bool
     {
-        return FlysystemHelper::isSameOrDescendant(
-            $this->storageComparablePath($root),
-            $this->storageComparablePath($path),
-        );
+        $rootUsesContext = $this->storageUsesContext($root);
+        $pathUsesContext = $this->storageUsesContext($path);
+        if ($rootUsesContext !== $pathUsesContext) {
+            return false;
+        }
+
+        if (!$rootUsesContext) {
+            return FlysystemHelper::isSameOrDescendant($root, $path);
+        }
+
+        $rootResolution = $this->storageContext?->resolve($root);
+        $pathResolution = $this->storageContext?->resolve($path);
+        if ($rootResolution === null || $pathResolution === null || $rootResolution[0] !== $pathResolution[0]) {
+            return false;
+        }
+
+        $rootLocation = trim(str_replace('\\', '/', $rootResolution[1]), '/');
+        $pathLocation = trim(str_replace('\\', '/', $pathResolution[1]), '/');
+        if ($rootLocation === '') {
+            return true;
+        }
+
+        return $pathLocation === $rootLocation || str_starts_with($pathLocation, $rootLocation . '/');
     }
 
     private function storageLastModified(string $path): int
@@ -168,7 +188,7 @@ trait StorageContextRoutingConcern
     {
         $resolved = $this->storageResolution($path);
         if ($resolved === null) {
-            return \Infocyph\Pathwise\Utils\MetadataHelper::getMimeType($path);
+            return MetadataHelper::getMimeType($path);
         }
 
         try {
@@ -234,22 +254,19 @@ trait StorageContextRoutingConcern
         $resolved[0]->writeStream($resolved[1], $stream);
     }
 
-    private function storageComparablePath(string $path): string
-    {
-        if ($this->storageContext === null || PathHelper::isAbsolute($path)) {
-            return PathHelper::normalize($path);
-        }
-
-        return $this->storageContext->path($path);
-    }
-
     /** @return array{FilesystemOperator, string}|null */
     private function storageResolution(string $path): ?array
     {
-        if ($this->storageContext === null || PathHelper::isAbsolute($path)) {
+        if (!$this->storageUsesContext($path)) {
             return null;
         }
 
-        return $this->storageContext->resolve($path);
+        return $this->storageContext?->resolve($path);
+    }
+
+    private function storageUsesContext(string $path): bool
+    {
+        return $this->storageContext !== null
+            && (PathHelper::hasScheme($path) || !PathHelper::isAbsolute($path));
     }
 }
