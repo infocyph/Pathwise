@@ -86,7 +86,7 @@ class UploadProcessor
 
     private LoggerInterface $logger;
 
-    private mixed $malwareScanner = null;
+    private ?MalwareScannerInterface $malwareScanner = null;
 
     private int $maxChunkCount = 0;
 
@@ -176,7 +176,7 @@ class UploadProcessor
             'maxChunkSize' => $this->maxChunkSize,
             'namingStrategy' => $this->namingStrategy,
             'validationProfile' => $this->validationProfile,
-            'hasMalwareScanner' => is_callable($this->malwareScanner),
+            'hasMalwareScanner' => $this->malwareScanner !== null,
             'requireMalwareScan' => $this->requireMalwareScan,
             'strictContentTypeValidation' => $this->strictContentTypeValidation,
         ];
@@ -391,13 +391,9 @@ class UploadProcessor
     }
 
     /**
-     * Configure an optional malware scanner callback.
-     *
-     * Signature: fn(string $filePath, string $mimeType): bool
-     *
-     * @param callable $scanner The malware scanner callback.
+     * Configure the malware scanner used before content parsing.
      */
-    public function setMalwareScanner(callable $scanner): void
+    public function setMalwareScanner(MalwareScannerInterface $scanner): void
     {
         $this->malwareScanner = $scanner;
     }
@@ -528,7 +524,7 @@ class UploadProcessor
                 throw new UploadException('File is not a valid HTTP upload.');
             }
             $extension = pathinfo($file['name'], PATHINFO_EXTENSION);
-            $fileType = $this->validateUploadedPayload($tmpName, $extension, false);
+            $fileType = $this->validateUploadedPayload($tmpName, $extension);
 
             $destination = $this->finalizeIncomingFile($tmpName, $extension);
             $fileName = basename($destination);
