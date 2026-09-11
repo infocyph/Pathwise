@@ -296,7 +296,7 @@ Keep the extension boundary narrow:
 - [ ] `ext-posix` remains optional for ownership/identity metadata features.
 - [ ] Do not add `posix_kill`, `posix_setsid`, process-group manipulation, privilege dropping or process lifecycle management to Pathwise.
 - [ ] Do not use `posix_setuid()` / `posix_setgid()` as an upload-security mechanism.
-- [ ] Process/session/privilege APIs belong to the future process-runtime library/Foundation supervisor.
+- [ ] Process/session/privilege APIs belong to Runwire/Foundation supervisor.
 - [ ] Review `PermissionsHelper` documentation so installing `ext-posix` is not described as granting Pathwise process-control responsibilities.
 
 This prevents Pathwise from colliding with the planned low-level process library or Omnibus worker orchestration.
@@ -482,7 +482,7 @@ Update Pathwise docs to include:
 - [ ] archive extraction boundaries;
 - [ ] built-in malware scanners never spawn privileged shell processes;
 - [ ] `ext-posix` is ownership metadata support, not process-control ownership;
-- [ ] integration boundary with a future process-runtime library;
+- [ ] integration boundary with a Runwire;
 - [ ] examples showing stored upload IDs/paths passed as **data**, never raw shell commands.
 
 ---
@@ -500,9 +500,9 @@ Foundation responsibilities:
 - [ ] never treat `UploadResult` as executable-code authorization;
 - [ ] store/reference uploaded artifacts by application-owned IDs rather than accepting arbitrary later filesystem paths;
 - [ ] authorize any transition from stored artifact to process input separately;
-- [ ] if an artifact is intentionally fed to a process, use the future process-runtime library with a predeclared operation/executable profile—not a user-supplied command.
+- [ ] if an artifact is intentionally fed to a process, use Runwire with a predeclared operation/executable profile—not a user-supplied command.
 
-ReqShield validates the surrounding request fields; Pathwise validates/materializes the file; Foundation authorizes use; the process library controls execution.
+ReqShield validates the surrounding request fields; Pathwise validates/materializes the file; Foundation authorizes use; Runwire controls execution.
 
 ```text
 ReqShield
@@ -514,7 +514,7 @@ Pathwise
 Foundation
    -> authorization/capability selection
 
-Process runtime (only if deliberately needed)
+Runwire (only if deliberately needed)
    -> controlled execution
 ```
 
@@ -537,13 +537,13 @@ Do not add to Pathwise in this pass:
 - ReqShield-style scalar/request validation;
 - Omnibus worker/process orchestration.
 
-A Runwire 1.0 sits beside/below Foundation/Omnibus and may consume Pathwise path-containment primitives where useful. It does not belong inside Pathwise.
+Runwire 1.0 sits beside/below Foundation/Omnibus and may consume Pathwise path-containment primitives where useful. It does not belong inside Pathwise.
 
 ---
 
 ## 20. Implementation order
 
-1. Freeze the Pathwise/ReqShield/Foundation/process-library ownership boundary in docs/tests.
+1. Freeze the Pathwise/ReqShield/Foundation/Runwire ownership boundary in docs/tests.
 2. Audit current upload/root/symlink/publication code and identify duplicated containment checks.
 3. Introduce the minimal strict untrusted-data upload policy/profile using existing `UploadProcessor` mechanics.
 4. Centralize canonical root containment for security-sensitive local operations.
@@ -572,14 +572,16 @@ Pathwise 4.1 runtime-security hardening is complete when:
 - Pathwise never claims uploaded content is safe to execute;
 - `ext-posix` remains limited to ownership/identity filesystem helpers, not process control;
 - Foundation can rely on Pathwise for filesystem/upload boundaries without duplicating them;
-- process execution/sandbox/privilege concerns remain cleanly owned by Foundation plus the future process-runtime library/OS;
+- process execution/sandbox/privilege concerns remain cleanly owned by Foundation plus Runwire/OS;
 - QA and representative performance gates remain green.
 
 ---
 
-# Runwire execution boundary
+---
 
-# 1. Final ownership boundary
+## 22. Runwire execution boundary
+
+### 22.1 Final ownership boundary
 
 ## Pathwise owns
 
@@ -621,7 +623,7 @@ Hard invariant:
 
 ---
 
-# 2. No Runwire production dependency
+### 22.2 No Runwire production dependency
 
 Do not add:
 
@@ -643,7 +645,7 @@ Runwire may be used as a **development/reference integration** only if Pathwise 
 
 ---
 
-# 3. External malware scanner composition
+### 22.3 External malware scanner composition
 
 Pathwise already owns `MalwareScannerInterface` / scanner-mode semantics. Preserve that abstraction.
 
@@ -675,7 +677,7 @@ Do **not** move Runwire `ProcessRunner`, executable allowlists or process policy
 
 ---
 
-# 4. Scanner path trust
+### 22.4 Scanner path trust
 
 When an executable scanner is composed externally, distinguish two paths:
 
@@ -705,9 +707,9 @@ Pathwise is responsible for the staged artifact's filesystem boundary. Runwire i
 
 ---
 
-# 5. Uploads remain data-only by default
+### 22.5 Uploads remain data-only by default
 
-Strengthen the parent-plan invariant with the named runtime:
+Strengthen the existing Pathwise invariant with the named runtime:
 
 ```text
 upload
@@ -733,9 +735,9 @@ Pathwise must never call `include`, `require`, `eval`, `exec`, `system`, `shell_
 
 ---
 
-# 6. `noexec` / non-executable metadata remains defense-in-depth
+### 22.6 `noexec` / non-executable metadata remains defense-in-depth
 
-Keep the parent plan's distinction:
+Keep earlier sections of this plan's distinction:
 
 - filesystem permission/non-executable policy reduces accidental direct execution;
 - `noexec` mounts are useful deployment defense-in-depth;
@@ -747,7 +749,7 @@ Therefore the primary invariant is architectural:
 
 ---
 
-# 7. `ext-posix` scope remains narrow in Pathwise
+### 22.7 `ext-posix` scope remains narrow in Pathwise
 
 Do not expand Pathwise's optional POSIX usage merely because Runwire exists.
 
@@ -771,7 +773,7 @@ If Pathwise needs to compare UID/GID metadata for safe filesystem ownership chec
 
 ---
 
-# 8. Archive extraction boundary
+### 22.8 Archive extraction boundary
 
 Runwire does not change Pathwise archive responsibilities.
 
@@ -792,7 +794,7 @@ If an external archive utility is ever used for a specialized format, it must be
 
 ---
 
-# 9. ReqShield + Foundation + Pathwise + Runwire chain
+### 22.9 ReqShield + Foundation + Pathwise + Runwire chain
 
 For a privileged operation using a user-selected stored artifact, use this ownership chain:
 
@@ -819,7 +821,7 @@ No layer should collapse this into raw shell text.
 
 ---
 
-# 10. Runwire server uploads
+### 22.10 Runwire server uploads
 
 Foundation's native Runwire server does not change Pathwise ownership.
 
@@ -841,11 +843,11 @@ Avoid whole-body copies merely to adapt between Runwire/Webrick/Pathwise; preser
 
 ---
 
-# 11. Effective Pathwise changes
+### 22.11 Effective Pathwise changes
 
 The Runwire decision does **not** require a new Pathwise process API.
 
-The effective Pathwise 4.1 work remains the work already defined in the parent plan:
+The effective Pathwise 4.1 work remains the work already defined in earlier sections of this plan:
 
 - untrusted-data profile;
 - canonical root containment;
@@ -865,7 +867,7 @@ Add only these Runwire-specific clarifications/tests if useful:
 
 ---
 
-# 12. Tests
+### 22.12 Tests
 
 Add/retain tests proving:
 
@@ -881,12 +883,12 @@ Do not add tests that assert a blacklist of strings such as `exec(` inside file 
 
 ---
 
-# 13. Documentation wording to normalize
+### 22.13 Documentation wording to normalize
 
 In final Pathwise 4.1 docs, replace generic wording such as:
 
 ```text
-future process-runtime library
+Runwire
 process-security library
 ProcessGuard
 ```
@@ -903,7 +905,7 @@ Still describe Runwire as an **external sibling/lower runtime** rather than a Pa
 
 ---
 
-# 14. Completion gate addendum
+### 22.14 Runwire boundary completion gate
 
 Pathwise 4.1 runtime-boundary acceptance additionally requires:
 
@@ -916,4 +918,4 @@ Pathwise 4.1 runtime-boundary acceptance additionally requires:
 - [ ] Runwire-native Foundation HTTP uploads still flow Webrick → Foundation → Pathwise rather than bypassing Pathwise;
 - [ ] tests do not rely on dangerous-function/content blacklists.
 
-All other parent-plan completion criteria remain unchanged.
+All other Pathwise 4.1 completion criteria above remain unchanged.
