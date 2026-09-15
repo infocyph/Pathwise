@@ -264,9 +264,7 @@ class UploadProcessor
         );
     }
 
-    /**
-     * Process a framework-neutral upload source as one resumable chunk.
-     */
+    /** Process a framework-neutral upload source as one resumable chunk. */
     public function processChunkUploadSource(
         UploadSource $source,
         string $uploadId,
@@ -356,11 +354,7 @@ class UploadProcessor
         $this->maxImageHeight = $maxImageHeight;
     }
 
-    /**
-     * Set the logger for upload operations.
-     *
-     * @param LoggerInterface $logger The logger instance.
-     */
+    /** Set the logger for upload operations. */
     public function setLogger(LoggerInterface $logger): void
     {
         $this->logger = $logger;
@@ -495,6 +489,81 @@ class UploadProcessor
         };
     }
 
+    private function persistMaterializedChunk(
+        UploadMaterialization $materialization,
+        string $uploadId,
+        int $chunkIndex,
+        int $totalChunks,
+        string $originalFilename,
+    ): ChunkUploadState {
+        return $this->withChunkSessionLock($uploadId, function () use (
+            $materialization,
+            $uploadId,
+            $chunkIndex,
+            $totalChunks,
+            $originalFilename,
+        ): ChunkUploadState {
+            $chunkDirectory = $this->getChunkDirectory($uploadId);
+            if (!$this->storageDirectoryExists($chunkDirectory)) {
+                $this->storageCreateDirectory($chunkDirectory);
+            }
+
+            /** @var ChunkManifest $manifest */
+            $manifest = $this->loadChunkManifest($uploadId) ?? [
+                'uploadId' => $uploadId,
+                'originalFilename' => $originalFilename,
+                'totalChunks' => $totalChunks,
+                'createdAt' => time(),
+            ];
+            $this->assertChunkManifestIdentity($manifest, $uploadId, $originalFilename, $totalChunks);
+            $this->saveChunkManifest($uploadId, $manifest);
+
+            $materialization->assertUnchanged();
+            $chunkPath = PathHelper::join($chunkDirectory, sprintf('chunk_%06d.part', $chunkIndex));
+            $this->moveIncomingFile($materialization->path, $chunkPath);
+            $received = $this->receivedChunkMap($chunkDirectory, $totalChunks);
+
+            return new ChunkUploadState(
+                uploadId: $uploadId,
+                receivedChunks: count($received),
+                totalChunks: $totalChunks,
+                complete: count($received) === $totalChunks,
+            );
+        });
+    }
+
+    /** @param null|callable(): void $afterPersist */
+    private function processChunkSource(
+        UploadSource $source,
+        string $uploadId,
+        int $chunkIndex,
+        int $totalChunks,
+        string $originalFilename,
+        ?callable $afterPersist = null,
+    ): ChunkUploadState {
+        $materialization = $source->materialize($this->tempDir);
+
+        try {
+            $materialization->assertUnchanged();
+            $chunkFile = $this->validateFile($materialization->toFileArray());
+            $this->validateChunkUploadRequest($chunkFile, $uploadId, $chunkIndex, $totalChunks, $originalFilename);
+            $result = $this->persistMaterializedChunk(
+                $materialization,
+                $uploadId,
+                $chunkIndex,
+                $totalChunks,
+                $originalFilename,
+            );
+            if ($afterPersist !== null) {
+                $afterPersist();
+            }
+
+            return $result;
+        } finally {
+            $materialization->cleanup();
+        }
+    }
+
     /**
      * @param array<string, mixed> $file
      * @param array<string, scalar|null> $metadata
@@ -538,7 +607,22 @@ class UploadProcessor
         );
     }
 
-    /** @param null|callable(): void $afterPersist */
+    /** @return array{string, string} */
+    private function processMaterializedUpload(UploadMaterialization $materialization): array
+    {
+        $materialization->assertUnchanged();
+        $extension = pathinfo($materialization->clientFilename, PATHINFO_EXTENSION);
+        $fileType = $this->validateUploadedPayload($materialization->path, $extension);
+        $materialization->assertUnchanged();
+        $destination = $this->finalizeIncomingFile($materialization->path, $extension);
+
+        return [$destination, $fileType];
+    }
+
+    /**
+     * @param array<string, scalar|null> $metadata
+     * @param null|callable(): void $afterPersist
+     */
     private function processSource(UploadSource $source, array $metadata, ?callable $afterPersist = null): string
     {
         $materialization = null;
@@ -573,92 +657,5 @@ class UploadProcessor
         } finally {
             $materialization?->cleanup();
         }
-    }
-
-    /** @return array{string, string} */
-    private function processMaterializedUpload(UploadMaterialization $materialization): array
-    {
-        $materialization->assertUnchanged();
-        $extension = pathinfo($materialization->clientFilename, PATHINFO_EXTENSION);
-        $fileType = $this->validateUploadedPayload($materialization->path, $extension);
-        $materialization->assertUnchanged();
-        $destination = $this->finalizeIncomingFile($materialization->path, $extension);
-
-        return [$destination, $fileType];
-    }
-
-    /** @param null|callable(): void $afterPersist */
-    private function processChunkSource(
-        UploadSource $source,
-        string $uploadId,
-        int $chunkIndex,
-        int $totalChunks,
-        string $originalFilename,
-        ?callable $afterPersist = null,
-    ): ChunkUploadState {
-        $materialization = $source->materialize($this->tempDir);
-
-        try {
-            $materialization->assertUnchanged();
-            $chunkFile = $this->validateFile($materialization->toFileArray());
-            $this->validateChunkUploadRequest($chunkFile, $uploadId, $chunkIndex, $totalChunks, $originalFilename);
-            $result = $this->persistMaterializedChunk(
-                $materialization,
-                $uploadId,
-                $chunkIndex,
-                $totalChunks,
-                $originalFilename,
-            );
-            if ($afterPersist !== null) {
-                $afterPersist();
-            }
-
-            return $result;
-        } finally {
-            $materialization->cleanup();
-        }
-    }
-
-    private function persistMaterializedChunk(
-        UploadMaterialization $materialization,
-        string $uploadId,
-        int $chunkIndex,
-        int $totalChunks,
-        string $originalFilename,
-    ): ChunkUploadState {
-        return $this->withChunkSessionLock($uploadId, function () use (
-            $materialization,
-            $uploadId,
-            $chunkIndex,
-            $totalChunks,
-            $originalFilename,
-        ): ChunkUploadState {
-            $chunkDirectory = $this->getChunkDirectory($uploadId);
-            if (!$this->storageDirectoryExists($chunkDirectory)) {
-                $this->storageCreateDirectory($chunkDirectory);
-            }
-
-            /** @var ChunkManifest $manifest */
-            $manifest = $this->loadChunkManifest($uploadId) ?? [
-                'uploadId' => $uploadId,
-                'originalFilename' => $originalFilename,
-                'totalChunks' => $totalChunks,
-                'createdAt' => time(),
-            ];
-            $this->assertChunkManifestIdentity($manifest, $uploadId, $originalFilename, $totalChunks);
-            $this->saveChunkManifest($uploadId, $manifest);
-
-            $materialization->assertUnchanged();
-            $chunkPath = PathHelper::join($chunkDirectory, sprintf('chunk_%06d.part', $chunkIndex));
-            $this->moveIncomingFile($materialization->path, $chunkPath);
-            $received = $this->receivedChunkMap($chunkDirectory, $totalChunks);
-
-            return new ChunkUploadState(
-                uploadId: $uploadId,
-                receivedChunks: count($received),
-                totalChunks: $totalChunks,
-                complete: count($received) === $totalChunks,
-            );
-        });
     }
 }
