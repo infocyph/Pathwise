@@ -63,6 +63,15 @@ trait UploadPublicationConcern
         $sourceResolution[0]->move($sourceResolution[1], $destinationResolution[1]);
     }
 
+    private function publicationChecksum(string $path): ?string
+    {
+        try {
+            return $this->storageChecksum($path, 'sha256');
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
     private function publishAdapterUpload(string $source, string $destination): void
     {
         $temporary = $destination . '.pathwise-upload-' . bin2hex(random_bytes(16)) . '.tmp';
@@ -78,8 +87,8 @@ trait UploadPublicationConcern
                 throw new UploadException('Upload changed during controlled publication.');
             }
 
-            $sourceChecksum = $this->storageChecksum($source, 'sha256');
-            $temporaryChecksum = $this->storageChecksum($temporary, 'sha256');
+            $sourceChecksum = $this->publicationChecksum($source);
+            $temporaryChecksum = $this->publicationChecksum($temporary);
             if (
                 is_string($sourceChecksum)
                 && is_string($temporaryChecksum)
