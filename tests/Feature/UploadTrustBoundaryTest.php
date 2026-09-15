@@ -59,10 +59,10 @@ test('strict chunk flow refuses unlimited limits reintroduced by the caller', fu
 
     expect(fn () => $processor->processChunkUpload([
         'error' => UPLOAD_ERR_OK,
-        'size' => filesize($source),
+        'size' => 1,
         'tmp_name' => $source,
         'name' => 'chunk.part',
-    ], 'strict_session', 0, 1, 'merged.txt'))
+    ], 'strict_session', 0, 1, 'assembled.txt'))
         ->toThrow(UploadException::class, 'finite chunk count and size limits');
 });
 
@@ -93,6 +93,29 @@ test('strict local publication produces a non executable private file', function
     expect($mode)->toBeInt()
         ->and($mode & 0777)->toBe(0600)
         ->and(is_executable($destination))->toBeFalse();
+});
+
+test('strict publication never uses the client filename as the destination path', function (): void {
+    $processor = new UploadProcessor();
+    $processor->setDirectorySettings($this->uploadRoot, false, $this->stagingRoot);
+    $processor->setTrustProfile(UploadTrustProfile::UNTRUSTED_DATA);
+    $processor->setValidationSettings(['text/plain'], 1024 * 1024);
+
+    $source = PathHelper::join($this->sourceRoot, 'source.txt');
+    file_put_contents($source, 'server-controlled-name');
+    $clientFilename = '$(touch-owned); user report.txt';
+
+    $destination = $processor->ingestFile([
+        'error' => UPLOAD_ERR_OK,
+        'size' => filesize($source),
+        'tmp_name' => $source,
+        'name' => $clientFilename,
+    ]);
+
+    expect(basename($destination))->not->toBe($clientFilename)
+        ->and(basename($destination))->not->toContain('touch-owned', 'user report')
+        ->and(pathinfo($destination, PATHINFO_EXTENSION))->toBe('txt')
+        ->and(file_get_contents($destination))->toBe('server-controlled-name');
 });
 
 test('publication rejects a date directory symlink that escapes the upload root', function (): void {
