@@ -34,15 +34,6 @@ final class PublicFileResolver
             throw new DownloadException('Public-file path escaped the trusted root.');
         }
 
-        $size = filesize($canonical);
-        $lastModified = filemtime($canonical);
-        if (!is_int($size) || !is_int($lastModified)) {
-            throw new DownloadException('Unable to read public-file metadata.');
-        }
-
-        $mimeType = new finfo(FILEINFO_MIME_TYPE)->file($canonical);
-        $mimeType = is_string($mimeType) && $mimeType !== '' ? $mimeType : 'application/octet-stream';
-
         clearstatcache(true, $candidate);
         $rechecked = realpath($candidate);
         if (
@@ -53,9 +44,22 @@ final class PublicFileResolver
         ) {
             throw new DownloadException('Public file changed during trust resolution.');
         }
+        if ($symlinkPolicy === PublicFileSymlinkPolicy::REJECT && $this->containsSymbolicLink($root, $relative)) {
+            throw new DownloadException('Public-file resolution rejected a symbolic link.');
+        }
+
+        clearstatcache(true, $rechecked);
+        $size = filesize($rechecked);
+        $lastModified = filemtime($rechecked);
+        if (!is_int($size) || !is_int($lastModified)) {
+            throw new DownloadException('Unable to read public-file metadata.');
+        }
+
+        $mimeType = new finfo(FILEINFO_MIME_TYPE)->file($rechecked);
+        $mimeType = is_string($mimeType) && $mimeType !== '' ? $mimeType : 'application/octet-stream';
 
         return new PublicFileResolution(
-            path: $canonical,
+            path: $rechecked,
             relativePath: $relative,
             mimeType: $mimeType,
             size: $size,

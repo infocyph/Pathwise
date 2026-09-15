@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Infocyph\Pathwise\Exceptions\DownloadException;
+use Infocyph\Pathwise\StreamHandler\DownloadProcessor;
 use Infocyph\Pathwise\StreamHandler\PublicFileResolver;
 use Infocyph\Pathwise\StreamHandler\PublicFileSymlinkPolicy;
 
@@ -49,6 +50,20 @@ test('public resolver returns canonical trusted metadata for a relative file', f
         ->and($resolution->size)->toBe(strlen('public-data'))
         ->and($resolution->lastModified)->toBeGreaterThan(0)
         ->and($resolution->mimeType)->not->toBe('');
+});
+
+test('resolved public artifact composes with download preparation without reparsing a request path', function (): void {
+    $resolution = (new PublicFileResolver())->resolve($this->publicRoot, 'assets/app.txt');
+    $prepared = (new DownloadProcessor())->prepareDownload(
+        $resolution->path,
+        rangeHeader: 'bytes=0-5',
+    );
+
+    expect($prepared->path)->toBe($resolution->path)
+        ->and($prepared->size)->toBe($resolution->size)
+        ->and($prepared->lastModified)->toBe($resolution->lastModified)
+        ->and($prepared->status)->toBe(206)
+        ->and($prepared->range->length)->toBe(6);
 });
 
 test('public resolver rejects traversal and absolute candidates', function (): void {
