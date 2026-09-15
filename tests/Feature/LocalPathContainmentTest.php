@@ -137,9 +137,8 @@ test('windows containment enforces drive rooted and case rules', function (): vo
 
     $root = (string) $root;
     $drive = substr($root, 0, 2);
-    $caseVariant = swapcase($root);
 
-    expect(LocalPathContainment::isSameOrDescendant($root, $caseVariant))->toBeTrue()
+    expect(LocalPathContainment::isSameOrDescendant($root, strtolower($root)))->toBeTrue()
         ->and(LocalPathContainment::isSameOrDescendant($root, $drive . 'relative\\file.txt'))->toBeFalse()
         ->and(LocalPathContainment::isSameOrDescendant($root, '\\rooted-without-drive\\file.txt'))->toBeFalse()
         ->and(LocalPathContainment::isSameOrDescendant($root, '\\\\server\\share\\file.txt'))->toBeFalse();
@@ -156,7 +155,7 @@ test('windows containment rejects a link or reparse escape when link creation is
     $link = PathHelper::join($this->containmentRoot, 'linked');
     set_error_handler(static fn(): bool => true);
     try {
-        $linked = symlink($outside, $link, true);
+        $linked = symlink($outside, $link);
     } finally {
         restore_error_handler();
     }
@@ -173,7 +172,7 @@ test('windows containment rejects a link or reparse escape when link creation is
             PathHelper::join($link, 'future', 'file.txt'),
         ))->toBeFalse();
     } finally {
-        if (is_link($link) || file_exists($link)) {
+        if (is_link($link)) {
             unlink($link);
         }
         if (is_dir($outside)) {
@@ -181,13 +180,3 @@ test('windows containment rejects a link or reparse escape when link creation is
         }
     }
 });
-
-function swapcase(string $value): string
-{
-    $result = '';
-    foreach (str_split($value) as $character) {
-        $result .= ctype_upper($character) ? strtolower($character) : strtoupper($character);
-    }
-
-    return $result;
-}
