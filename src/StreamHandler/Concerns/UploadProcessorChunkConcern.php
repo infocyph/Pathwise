@@ -82,9 +82,7 @@ trait UploadProcessorChunkConcern
         return PathHelper::join($this->getChunkDirectory($uploadId), 'manifest.json');
     }
 
-    /**
-     * @return ChunkManifest|null
-     */
+    /** @return ChunkManifest|null */
     private function loadChunkManifest(string $uploadId): ?array
     {
         $path = $this->getChunkManifestPath($uploadId);
@@ -141,6 +139,7 @@ trait UploadProcessorChunkConcern
 
             rewind($output);
             $this->storageWriteStream($destination, $output);
+            $this->secureUploadStagingFile($destination);
         } finally {
             fclose($output);
         }
@@ -170,9 +169,7 @@ trait UploadProcessorChunkConcern
         return $chunkPath;
     }
 
-    /**
-     * @return array{0: ChunkManifest, 1: int}
-     */
+    /** @return array{0: ChunkManifest, 1: int} */
     private function resolveCompleteChunkState(string $uploadId): array
     {
         $manifest = $this->loadChunkManifest($uploadId);
@@ -193,12 +190,11 @@ trait UploadProcessorChunkConcern
         return [$manifest, $totalChunks];
     }
 
-    /**
-     * @param ChunkManifest $manifest
-     */
+    /** @param ChunkManifest $manifest */
     private function saveChunkManifest(string $uploadId, array $manifest): void
     {
         $path = $this->getChunkManifestPath($uploadId);
+        $this->secureUploadStagingDirectory($this->getChunkDirectory($uploadId));
 
         try {
             $json = json_encode($manifest, JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR);
@@ -207,13 +203,14 @@ trait UploadProcessorChunkConcern
         }
 
         $this->storageWrite($path, $json);
+        $this->secureUploadStagingFile($path);
     }
 
-    /**
-     * @param UploadInput $chunkFile
-     */
+    /** @param UploadInput $chunkFile */
     private function validateChunkLimits(array $chunkFile, int $totalChunks): void
     {
+        $this->assertStrictChunkLimitsConfigured();
+
         if ($this->maxChunkCount > 0 && $totalChunks > $this->maxChunkCount) {
             throw new UploadException('Total chunks exceed configured limit.');
         }
@@ -224,9 +221,7 @@ trait UploadProcessorChunkConcern
         }
     }
 
-    /**
-     * @param UploadInput $chunkFile
-     */
+    /** @param UploadInput $chunkFile */
     private function validateChunkUploadRequest(array $chunkFile, string $uploadId, int $chunkIndex, int $totalChunks, string $originalFilename): void
     {
         $this->validateUploadId($uploadId);

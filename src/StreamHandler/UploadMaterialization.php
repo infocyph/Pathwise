@@ -21,6 +21,7 @@ final readonly class UploadMaterialization
         public string $clientFilename,
         public ?string $clientMediaType = null,
         public int $error = UPLOAD_ERR_OK,
+        public string $sha256 = '',
         private ?string $cleanupDirectory = null,
     ) {
         if ($path === '' || str_contains($path, "\0")) {
@@ -32,11 +33,28 @@ final readonly class UploadMaterialization
         if ($clientFilename === '' || str_contains($clientFilename, "\0")) {
             throw new UploadException('Invalid upload client filename.');
         }
+        if ($sha256 === '' || preg_match('/^[a-f0-9]{64}$/D', $sha256) !== 1) {
+            throw new UploadException('Invalid materialized upload digest.');
+        }
         if (
             $cleanupDirectory !== null
             && ($cleanupDirectory === '' || str_contains($cleanupDirectory, "\0"))
         ) {
             throw new UploadException('Invalid upload staging directory.');
+        }
+    }
+
+    public function assertUnchanged(): void
+    {
+        clearstatcache(true, $this->path);
+        if (is_link($this->path) || !is_file($this->path)) {
+            throw new UploadException('Materialized upload changed before publication.');
+        }
+
+        $size = filesize($this->path);
+        $digest = hash_file('sha256', $this->path);
+        if (!is_int($size) || !is_string($digest) || $size !== $this->size || !hash_equals($this->sha256, $digest)) {
+            throw new UploadException('Materialized upload changed before publication.');
         }
     }
 

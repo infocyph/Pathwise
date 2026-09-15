@@ -4,20 +4,23 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\Benchmarks;
 
+use Infocyph\Pathwise\Core\ExecutionStrategy;
 use Infocyph\Pathwise\FileManager\FileCompression;
+use Infocyph\Pathwise\FileManager\FileOperations;
 use Infocyph\Pathwise\FileManager\SafeFileWriter;
 use Infocyph\Pathwise\Indexing\ChecksumIndexer;
-use Infocyph\Pathwise\Native\NativeCommandRunner;
-use Infocyph\Pathwise\Native\NativeExecutionLimits;
 use Infocyph\Pathwise\Queue\FileJobQueue;
+use Infocyph\Pathwise\Security\LocalPathContainment;
 use Infocyph\Pathwise\Storage\StorageContext;
 use Infocyph\Pathwise\StreamHandler\DownloadProcessor;
 use Infocyph\Pathwise\StreamHandler\MalwareScanMode;
 use Infocyph\Pathwise\StreamHandler\MalwareScannerInterface;
 use Infocyph\Pathwise\StreamHandler\MalwareScanRequest;
 use Infocyph\Pathwise\StreamHandler\MalwareScanVerdict;
+use Infocyph\Pathwise\StreamHandler\PublicFileResolver;
 use Infocyph\Pathwise\StreamHandler\UploadProcessor;
 use Infocyph\Pathwise\StreamHandler\UploadSource;
+use Infocyph\Pathwise\StreamHandler\UploadTrustProfile;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use League\Flysystem\Filesystem;
@@ -142,6 +145,16 @@ final class Pathwise4ReleaseBench
         $writer->close();
     }
 
+    public function benchCanonicalContainmentHighCardinality(): void
+    {
+        for ($index = 0; $index < 1_000; $index++) {
+            $candidate = PathHelper::join($this->baseDirectory, "tenant-{$index}/artifact.txt");
+            if (!LocalPathContainment::isSameOrDescendant($this->baseDirectory, $candidate)) {
+                throw new \RuntimeException('Canonical containment benchmark rejected an in-root candidate.');
+            }
+        }
+    }
+
     public function benchChecksumIteration500Files(): void
     {
         $count = 0;
@@ -184,9 +197,9 @@ final class Pathwise4ReleaseBench
     public function benchMalwareStagingWithoutExternalEngine(): void
     {
         $uploader = new UploadProcessor();
+        $uploader->setTrustProfile(UploadTrustProfile::UNTRUSTED_DATA);
         $uploader->setDirectorySettings($this->uploadDirectory, false, $this->uploadTempDirectory);
         $uploader->setExtensionPolicy(['txt']);
-        $uploader->setStrictContentTypeValidation(false);
         $uploader->setValidationSettings([], 4_194_304);
         $uploader->setMalwareScanMode(MalwareScanMode::REQUIRED);
         $uploader->setMalwareScanner(new class implements MalwareScannerInterface {
@@ -208,25 +221,26 @@ final class Pathwise4ReleaseBench
         ));
     }
 
-    public function benchNativeRunnerBoundedOverhead(): void
+    public function benchPersistentHighCardinalityNormalization(): void
     {
-        if (!NativeCommandRunner::supportsBoundedExecution()) {
-            return;
+        $last = '';
+        for ($index = 0; $index < 10_000; $index++) {
+            $last = PathHelper::normalize("tenant/{$index}/../object-{$index}/artifact.txt");
         }
 
-        $result = NativeCommandRunner::run(
-            [PHP_BINARY, '-r', 'fwrite(STDOUT, "ok");'],
-            limits: new NativeExecutionLimits(
-                timeoutSeconds: 5.0,
-                stdoutBytes: 65_536,
-                stderrBytes: 65_536,
-                terminationGraceSeconds: 0.25,
-                pollIntervalMicroseconds: 1_000,
-            ),
-        );
+        if (!str_contains($last, 'object-9999')) {
+            throw new \RuntimeException('Persistent normalization benchmark returned an unexpected result.');
+        }
+    }
 
-        if (!$result->success) {
-            throw new \RuntimeException('Release native-runner benchmark failed.');
+    public function benchPublicFileResolution(): void
+    {
+        $resolver = new PublicFileResolver();
+        for ($index = 0; $index < 100; $index++) {
+            $resolution = $resolver->resolve($this->baseDirectory, 'payload.txt');
+            if ($resolution->size <= 0) {
+                throw new \RuntimeException('Public-file resolution benchmark returned invalid metadata.');
+            }
         }
     }
 
@@ -258,6 +272,34 @@ final class Pathwise4ReleaseBench
                 throw new \RuntimeException('StorageContext hot resolution returned an unexpected result.');
             }
         }
+    }
+
+    public function benchStrictUploadValidationAndPublication(): void
+    {
+        $uploader = new UploadProcessor();
+        $uploader->setTrustProfile(UploadTrustProfile::UNTRUSTED_DATA);
+        $uploader->setDirectorySettings($this->uploadDirectory, false, $this->uploadTempDirectory);
+        $uploader->setExtensionPolicy(['txt']);
+        $uploader->setValidationSettings([], 4_194_304);
+        $uploader->setMalwareScanMode(MalwareScanMode::OFF);
+        $uploader->ingestSource(UploadSource::fromPath(
+            $this->payloadFile,
+            'payload.txt',
+            filesize($this->payloadFile) ?: null,
+            'text/plain',
+        ));
+    }
+
+    public function benchTrustedAutoFileCopy(): void
+    {
+        $destination = PathHelper::join($this->baseDirectory, 'auto-copy-' . bin2hex(random_bytes(4)) . '.bin');
+        (new FileOperations($this->largeFile))->setExecutionStrategy(ExecutionStrategy::AUTO)->copy($destination);
+    }
+
+    public function benchTrustedPhpFileCopy(): void
+    {
+        $destination = PathHelper::join($this->baseDirectory, 'php-copy-' . bin2hex(random_bytes(4)) . '.bin');
+        (new FileOperations($this->largeFile))->setExecutionStrategy(ExecutionStrategy::PHP)->copy($destination);
     }
 
     public function benchUploadStreamMaterialization(): void

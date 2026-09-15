@@ -9,7 +9,7 @@
 [![Documentation](https://img.shields.io/badge/Documentation-Pathwise-blue?logo=readthedocs&logoColor=white)](https://docs.infocyph.com/projects/Pathwise/)
 
 
-Pathwise 4 is a framework-neutral PHP 8.4+ filesystem toolkit built on Flysystem 3. It combines safe local file operations with instance-scoped storage topology, hardened upload/download pipelines, archive controls, file-backed queueing, observability, retention, indexing, policy enforcement, and bounded native execution.
+Pathwise 4 is a framework-neutral PHP 8.4+ filesystem toolkit built on Flysystem 3. It combines safe local file operations with instance-scoped storage topology, hardened upload/download pipelines, archive controls, file-backed queueing, observability, retention, indexing, policy enforcement, and bounded trusted-local native filesystem acceleration.
 
 ## Requirements
 
@@ -65,9 +65,11 @@ The facade is stateless convenience. Persistent storage topology belongs to `Sto
 use Infocyph\Pathwise\StreamHandler\MalwareScanMode;
 use Infocyph\Pathwise\StreamHandler\UploadProcessor;
 use Infocyph\Pathwise\StreamHandler\UploadSource;
+use Infocyph\Pathwise\StreamHandler\UploadTrustProfile;
 
 $uploader = new UploadProcessor();
 $uploader->setStorageContext($storage);
+$uploader->setTrustProfile(UploadTrustProfile::UNTRUSTED_DATA);
 $uploader->setDirectorySettings('primary://uploads', tempDir: sys_get_temp_dir());
 $uploader->setValidationProfile('document');
 $uploader->setMalwareScanMode(MalwareScanMode::REQUIRED);
@@ -84,7 +86,25 @@ $source = UploadSource::fromMover(
 $path = $uploader->ingestSource($source);
 ```
 
-Pathwise owns the staging file created for `UploadSource`, cleans it on success/failure, scans before content parsing, and fails closed when malware scanning is required.
+The strict untrusted-data profile uses private bounded staging, server-generated naming, content checks, controlled publication, and restrictive local permissions. Scanner policy remains explicit: `REQUIRED` fails closed. The client filename is metadata only and never becomes the authoritative destination path.
+
+## Trusted public/static files
+
+Do not map a raw URL directly to disk. Let application/Webrick policy choose the public root and candidate name, then resolve that relative candidate through Pathwise:
+
+```php
+use Infocyph\Pathwise\StreamHandler\PublicFileResolver;
+
+$asset = (new PublicFileResolver())->resolve(
+    '/srv/app/public',
+    'assets/app.css',
+);
+
+// $asset->path is canonically contained and can now feed DownloadProcessor
+// or an already-authorized response/file writer.
+```
+
+Traversal/root escape fails closed and symlink policy is explicit. Route eligibility, dotfile policy, HTTP caching/ranges, and transport remain Webrick/application concerns.
 
 ## Secure downloads and ranges
 
@@ -128,15 +148,17 @@ The queue is intentionally direct-local: it uses typed opaque leases, stale-work
 
 Pathwise 4 includes explicit controls for:
 
-- extension/MIME/signature validation and optional malware scanning;
-- path/root restrictions, hidden-file blocking, safe symlink management;
-- ZIP manifest validation, traversal/collision/special-entry rejection and extraction limits;
-- bounded native commands with timeout/output ceilings and deterministic cleanup;
+- canonical path/root containment and explicit public-root resolution;
+- private upload staging, extension/MIME/signature validation, controlled publication and optional/required malware scanning;
+- ZIP manifest validation, traversal/collision/special-entry rejection, path/name/depth bounds and extraction resource limits;
+- trusted direct-local native filesystem acceleration with shell-free argv, timeout/output ceilings and deterministic cleanup;
 - safe serialization boundaries that do not instantiate untrusted objects;
 - queue state size/payload/job limits and lease ownership;
 - policy enforcement, audit sinks, retention, indexing, and watcher workloads.
 
-Security-sensitive behavior is fail-closed where a configured capability is required. Adapter/native/metadata capabilities remain explicit rather than silently emulated.
+Generic application use of `NativeCommandRunner` is deprecated in 4.1; Foundation/application process work belongs to Runwire. Pathwise has no production dependency on Runwire, Webrick, Foundation, InterMix, or ReqShield.
+
+Security-sensitive behavior is fail-closed where a configured capability is required. Local/remote capabilities remain explicit rather than silently emulated. Pathwise makes filesystem artifacts safe to treat as **data according to policy**; it does not make arbitrary uploaded/source/binary content safe to execute. See the documentation's **Trust Boundaries and Persistent Runtimes** guide for the full ownership model.
 
 
 ## Security

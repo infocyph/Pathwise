@@ -180,3 +180,29 @@ test('it rejects absolute logical paths consistently across platforms', function
     'windows drive relative' => 'C:outside.txt',
     'UNC path' => '\\\\server\\share.txt',
 ]);
+
+test('local context paths fail closed when an existing symlink escapes the configured root', function (): void {
+    if (PHP_OS_FAMILY === 'Windows') {
+        expect(PHP_OS_FAMILY)->toBe('Windows');
+
+        return;
+    }
+
+    $root = storageContextTempDirectory('pathwise_context_root_');
+    $outside = storageContextTempDirectory('pathwise_context_outside_');
+    $link = PathHelper::join($root, 'escape');
+
+    try {
+        symlink($outside, $link);
+        $context = new StorageContext(['local' => ['driver' => 'local', 'root' => $root]], 'local');
+
+        expect(fn () => $context->localPath('escape/future.txt'))
+            ->toThrow(InvalidArgumentException::class, 'must remain inside local root');
+    } finally {
+        if (is_link($link)) {
+            unlink($link);
+        }
+        FlysystemHelper::deleteDirectory($root);
+        FlysystemHelper::deleteDirectory($outside);
+    }
+});
