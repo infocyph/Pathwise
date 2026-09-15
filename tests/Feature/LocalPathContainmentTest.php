@@ -63,6 +63,24 @@ test('canonical containment rejects storage schemes and null bytes', function ()
         ->and(LocalPathContainment::isSameOrDescendant($this->allowedRoot, "file\0.txt"))->toBeFalse();
 });
 
+test('canonical containment preserves symlink traversal semantics before resolving dot segments', function (): void {
+    if (PHP_OS_FAMILY === 'Windows') {
+        expect(PHP_OS_FAMILY)->toBe('Windows');
+
+        return;
+    }
+
+    $outsideNested = $this->outsideRoot . DIRECTORY_SEPARATOR . 'nested';
+    mkdir($outsideNested, 0700);
+    $link = $this->allowedRoot . DIRECTORY_SEPARATOR . 'escape';
+    symlink($outsideNested, $link);
+
+    expect(LocalPathContainment::isSameOrDescendant(
+        $this->allowedRoot,
+        $link . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'future.txt',
+    ))->toBeFalse();
+});
+
 test('canonical containment resolves an existing symlink parent before checking a future target', function (): void {
     if (PHP_OS_FAMILY === 'Windows') {
         expect(PHP_OS_FAMILY)->toBe('Windows');

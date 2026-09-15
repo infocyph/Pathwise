@@ -6,11 +6,6 @@ namespace Infocyph\Pathwise\Utils;
 
 class PathHelper
 {
-    private const int NORMALIZATION_CACHE_LIMIT = 1024;
-
-    /** @var array<string, string> */
-    private static array $cache = [];
-
     /**
      * Changes the extension of a file path.
      *
@@ -280,23 +275,12 @@ class PathHelper
      * Normalize a path, collapsing any redundant separators and eliminating
      * any '.' or '..' segments.
      *
-     * The normalized path is cached for subsequent calls.
-     *
      * @param string $path The path to normalize.
      * @return string The normalized path.
      */
     public static function normalize(string $path): string
     {
-        if (isset(self::$cache[$path])) {
-            return self::$cache[$path];
-        }
-
-        $normalized = self::normalizeUncached($path);
-        if (count(self::$cache) >= self::NORMALIZATION_CACHE_LIMIT) {
-            self::$cache = [];
-        }
-
-        return self::$cache[$path] = $normalized;
+        return self::normalizeUncached($path);
     }
 
     /**

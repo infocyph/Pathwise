@@ -56,6 +56,17 @@ function supportsSymlinkCreation(string $directory): bool
     return $created;
 }
 
+function symlinkTestCanRun(object $testCase): bool
+{
+    if ($testCase->symlinkSupported) {
+        return true;
+    }
+
+    expect($testCase->symlinkSupported)->toBeFalse();
+
+    return false;
+}
+
 beforeEach(function (): void {
     $this->workingDir = symlinkTestDirectory('pathwise_symlink_');
     $this->linkRoot = PathHelper::join($this->workingDir, 'public');
@@ -63,10 +74,7 @@ beforeEach(function (): void {
     mkdir($this->linkRoot, 0700);
     mkdir($this->targetRoot, 0700);
 
-    if (!supportsSymlinkCreation($this->workingDir)) {
-        $this->markTestSkipped('Symbolic link creation is not available on this platform/runtime.');
-    }
-
+    $this->symlinkSupported = supportsSymlinkCreation($this->workingDir);
     $this->manager = new SafeSymlinkManager($this->linkRoot, $this->targetRoot);
 });
 
@@ -99,6 +107,10 @@ afterEach(function (): void {
 });
 
 test('it creates a missing target directory and an idempotent safe symlink', function (): void {
+    if (!symlinkTestCanRun($this)) {
+        return;
+    }
+
     $created = $this->manager->create('assets', 'generated/assets', true);
     $status = $this->manager->status('assets', 'generated/assets');
 
@@ -112,6 +124,10 @@ test('it creates a missing target directory and an idempotent safe symlink', fun
 });
 
 test('it rejects link and target paths outside their configured roots', function (): void {
+    if (!symlinkTestCanRun($this)) {
+        return;
+    }
+
     $outside = PathHelper::join($this->workingDir, 'outside');
     mkdir($outside, 0700);
 
@@ -122,6 +138,10 @@ test('it rejects link and target paths outside their configured roots', function
 });
 
 test('it rejects parent-directory traversal in link and target paths', function (): void {
+    if (!symlinkTestCanRun($this)) {
+        return;
+    }
+
     expect(fn () => $this->manager->create('../escape', 'safe', true))
         ->toThrow(PolicyViolationException::class, 'parent-directory traversal')
         ->and(fn () => $this->manager->create('safe', '../escape', true))
@@ -129,6 +149,10 @@ test('it rejects parent-directory traversal in link and target paths', function 
 });
 
 test('it rejects a symlinked link parent that escapes the allowed link root', function (): void {
+    if (!symlinkTestCanRun($this)) {
+        return;
+    }
+
     $outside = PathHelper::join($this->workingDir, 'outside-link-parent');
     mkdir($outside, 0700);
     symlink($outside, PathHelper::join($this->linkRoot, 'escape'));
@@ -138,6 +162,10 @@ test('it rejects a symlinked link parent that escapes the allowed link root', fu
 });
 
 test('it rejects a symlinked target ancestor that escapes the allowed target root', function (): void {
+    if (!symlinkTestCanRun($this)) {
+        return;
+    }
+
     $outside = PathHelper::join($this->workingDir, 'outside-target-parent');
     mkdir($outside, 0700);
     symlink($outside, PathHelper::join($this->targetRoot, 'escape'));
@@ -147,6 +175,10 @@ test('it rejects a symlinked target ancestor that escapes the allowed target roo
 });
 
 test('it never clobbers an existing non-link path', function (): void {
+    if (!symlinkTestCanRun($this)) {
+        return;
+    }
+
     $link = PathHelper::join($this->linkRoot, 'existing.txt');
     file_put_contents($link, 'keep-me');
     expect(fn () => $this->manager->create('existing.txt', 'target', true))
@@ -156,6 +188,10 @@ test('it never clobbers an existing non-link path', function (): void {
 });
 
 test('it refuses to replace or remove a symlink that points elsewhere', function (): void {
+    if (!symlinkTestCanRun($this)) {
+        return;
+    }
+
     mkdir(PathHelper::join($this->targetRoot, 'first'), 0700);
     mkdir(PathHelper::join($this->targetRoot, 'second'), 0700);
     $this->manager->create('current', 'first');
@@ -170,6 +206,10 @@ test('it refuses to replace or remove a symlink that points elsewhere', function
 });
 
 test('it can safely identify and remove a broken link created for the expected target', function (): void {
+    if (!symlinkTestCanRun($this)) {
+        return;
+    }
+
     $this->manager->create('broken', 'disposable', true);
     rmdir(PathHelper::join($this->targetRoot, 'disposable'));
 
@@ -183,6 +223,10 @@ test('it can safely identify and remove a broken link created for the expected t
 });
 
 test('it validates target-directory permissions', function (): void {
+    if (!symlinkTestCanRun($this)) {
+        return;
+    }
+
     expect(fn () => $this->manager->create('link', 'target', true, 01000))
         ->toThrow(InvalidArgumentException::class, 'permissions');
 });

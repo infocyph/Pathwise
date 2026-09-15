@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\StreamHandler\Concerns;
 
+use Infocyph\Pathwise\Security\LocalPathContainment;
 use Infocyph\Pathwise\Storage\StorageContext;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\MetadataHelper;
@@ -157,10 +158,34 @@ trait StorageContextRoutingConcern
             return FlysystemHelper::isSameOrDescendant($root, $path);
         }
 
-        $rootResolution = $this->storageContext?->resolve($root);
-        $pathResolution = $this->storageContext?->resolve($path);
-        if ($rootResolution === null || $pathResolution === null || $rootResolution[0] !== $pathResolution[0]) {
+        $context = $this->storageContext;
+        if ($context === null) {
             return false;
+        }
+
+        $rootResolution = $context->resolve($root);
+        $pathResolution = $context->resolve($path);
+        if ($rootResolution[0] !== $pathResolution[0]) {
+            return false;
+        }
+
+        $rootContextPath = $context->path($root);
+        $pathContextPath = $context->path($path);
+        $rootName = strstr($rootContextPath, '://', true);
+        $pathName = strstr($pathContextPath, '://', true);
+        if (
+            is_string($rootName)
+            && $rootName === $pathName
+            && $context->isLocal($rootName)
+        ) {
+            try {
+                $rootLocalPath = $context->localPath($root);
+                $pathLocalPath = $context->localPath($path);
+            } catch (\InvalidArgumentException) {
+                return false;
+            }
+
+            return LocalPathContainment::isSameOrDescendant($rootLocalPath, $pathLocalPath);
         }
 
         $rootLocation = trim(str_replace('\\', '/', $rootResolution[1]), '/');

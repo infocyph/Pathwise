@@ -30,13 +30,50 @@ final class LocalPathContainment
         return str_starts_with($candidateKey, rtrim($rootKey, '/') . '/');
     }
 
+    private static function absolutePath(string $path): ?string
+    {
+        if ($path === '' || str_contains($path, "\0") || PathHelper::hasScheme($path)) {
+            return null;
+        }
+
+        if (PHP_OS_FAMILY === 'Windows') {
+            return self::windowsAbsolutePath($path);
+        }
+
+        if (str_starts_with($path, '/')) {
+            return $path;
+        }
+
+        $cwd = getcwd();
+        if (!is_string($cwd)) {
+            return null;
+        }
+
+        return rtrim($cwd, '/') . '/' . $path;
+    }
+
+    /** @param list<string> $suffix */
+    private static function appendSuffix(string $base, array $suffix): ?string
+    {
+        foreach ($suffix as $segment) {
+            if ($segment === '' || $segment === '.' || $segment === '..') {
+                return null;
+            }
+
+            $base .= DIRECTORY_SEPARATOR . $segment;
+        }
+
+        return $base;
+    }
+
     private static function canonicalPath(string $path): ?string
     {
-        $absolute = self::normalizeAbsolutePath($path);
+        $absolute = self::absolutePath($path);
         if ($absolute === null) {
             return null;
         }
 
+        /** @var list<string> $suffix */
         $suffix = [];
         $current = $absolute;
         while (!file_exists($current) && !is_link($current)) {
@@ -50,15 +87,11 @@ final class LocalPathContainment
         }
 
         $resolved = realpath($current);
-        if (!is_string($resolved) || $resolved === '') {
+        if (!is_string($resolved)) {
             return null;
         }
 
-        foreach ($suffix as $segment) {
-            $resolved .= DIRECTORY_SEPARATOR . $segment;
-        }
-
-        return self::normalizeAbsolutePath($resolved);
+        return self::appendSuffix($resolved, $suffix);
     }
 
     private static function comparisonKey(string $path): string
@@ -71,71 +104,19 @@ final class LocalPathContainment
         return PHP_OS_FAMILY === 'Windows' ? strtolower($key) : $key;
     }
 
-    /** @param list<string> $segments */
-    private static function collapseSegments(array $segments): array
-    {
-        $collapsed = [];
-        foreach ($segments as $segment) {
-            if ($segment === '' || $segment === '.') {
-                continue;
-            }
-            if ($segment === '..') {
-                if ($collapsed !== []) {
-                    array_pop($collapsed);
-                }
-
-                continue;
-            }
-
-            $collapsed[] = $segment;
-        }
-
-        return $collapsed;
-    }
-
-    private static function normalizeAbsolutePath(string $path): ?string
-    {
-        if ($path === '' || str_contains($path, "\0") || PathHelper::hasScheme($path)) {
-            return null;
-        }
-
-        return PHP_OS_FAMILY === 'Windows'
-            ? self::normalizeWindowsAbsolutePath($path)
-            : self::normalizeUnixAbsolutePath($path);
-    }
-
-    private static function normalizeUnixAbsolutePath(string $path): ?string
-    {
-        if (!str_starts_with($path, '/')) {
-            $cwd = getcwd();
-            if (!is_string($cwd) || $cwd === '') {
-                return null;
-            }
-
-            $path = rtrim($cwd, '/') . '/' . $path;
-        }
-
-        $segments = self::collapseSegments(explode('/', $path));
-
-        return '/' . implode('/', $segments);
-    }
-
-    private static function normalizeWindowsAbsolutePath(string $path): ?string
+    private static function windowsAbsolutePath(string $path): ?string
     {
         $path = str_replace('/', '\\', $path);
         if (preg_match('/^[A-Za-z]:[^\\\\]/', $path) === 1) {
             return null;
         }
 
-        if (preg_match('/^\\\\\\\\([^\\\\]+)\\\\([^\\\\]+)(?:\\\\(.*))?$/s', $path, $matches) === 1) {
-            $prefix = '\\\\' . $matches[1] . '\\' . $matches[2];
-            $tail = $matches[3] ?? '';
-
-            return self::buildWindowsPath($prefix, $tail);
+        if (preg_match('/^\\\\\\\\[^\\\\]+\\\\[^\\\\]+(?:\\\\.*)?$/s', $path) === 1) {
+            return $path;
         }
 
-        if (preg_match('/^([A-Za-z]):\\\\(.*)$/s', $path, $matches) === 1) {
-            return self::buildWindowsPath(strtoupper($matches[1]) . ':', $matches[2]);
+        if (preg_match('/^[A-Za-z]:\\\\/', $path) === 1) {
+            return strtoupper($path[0]) . substr($path, 1);
         }
 
         if (str_starts_with($path, '\\')) {
@@ -143,17 +124,10 @@ final class LocalPathContainment
         }
 
         $cwd = getcwd();
-        if (!is_string($cwd) || $cwd === '') {
+        if (!is_string($cwd)) {
             return null;
         }
 
-        return self::normalizeWindowsAbsolutePath(rtrim($cwd, '\\') . '\\' . $path);
-    }
-
-    private static function buildWindowsPath(string $prefix, string $tail): string
-    {
-        $segments = self::collapseSegments(explode('\\', $tail));
-
-        return $prefix . '\\' . implode('\\', $segments);
+        return rtrim(str_replace('/', '\\', $cwd), '\\') . '\\' . $path;
     }
 }
