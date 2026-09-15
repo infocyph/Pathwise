@@ -7,5 +7,6 @@ namespace Infocyph\Pathwise\StreamHandler;
 enum UploadTrustProfile: string
 {
     case STANDARD = 'standard';
+
     case UNTRUSTED_DATA = 'untrusted_data';
 }

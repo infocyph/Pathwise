@@ -30,6 +30,64 @@ trait UploadPublicationConcern
         return $target;
     }
 
+    private function commitLocalPublication(
+        string $source,
+        string $destination,
+        string $temporary,
+        int $sourceSize,
+    ): void {
+        clearstatcache(true, $temporary);
+        if (
+            is_link($temporary)
+            || !is_file($temporary)
+            || filesize($temporary) !== $sourceSize
+            || $this->storageSize($source) !== $sourceSize
+        ) {
+            throw new UploadException('Upload changed during controlled publication.');
+        }
+
+        $target = $this->assertLocalPublicationTarget($destination);
+        if (file_exists($target) || is_link($target)) {
+            throw new UploadException('Upload publication target already exists.');
+        }
+        if (!$this->runSilently(static fn(): bool => rename($temporary, $target))) {
+            throw new UploadException('Unable to atomically publish destination-side upload staging file.');
+        }
+
+        $this->finalizeLocalPermissions($target);
+        $this->deleteIncomingFile($source);
+    }
+
+    private function copyLocalPublicationStage(string $source, string $temporary, int $sourceSize): void
+    {
+        $input = $this->storageReadStream($source);
+        $output = fopen($temporary, 'xb');
+        if (!is_resource($output)) {
+            fclose($input);
+
+            throw new UploadException('Unable to create destination-side upload staging file.');
+        }
+
+        try {
+            if (!$this->runSilently(static fn(): bool => chmod($temporary, 0600))) {
+                throw new UploadException('Unable to secure destination-side upload staging file.');
+            }
+            $copied = stream_copy_to_stream($input, $output);
+            if (!is_int($copied) || $copied !== $sourceSize) {
+                throw new UploadException('Upload changed during controlled publication.');
+            }
+            if (!fflush($output)) {
+                throw new UploadException('Unable to flush destination-side upload staging file.');
+            }
+            if (function_exists('fsync') && !fsync($output)) {
+                throw new UploadException('Unable to sync destination-side upload staging file.');
+            }
+        } finally {
+            fclose($input);
+            fclose($output);
+        }
+    }
+
     private function finalizeLocalPermissions(string $path): void
     {
         clearstatcache(true, $path);
@@ -149,53 +207,10 @@ trait UploadPublicationConcern
 
         $sourceSize = $this->storageSize($source);
         $temporary = PathHelper::join(dirname($target), '.pathwise-upload-' . bin2hex(random_bytes(16)) . '.tmp');
-        $input = $this->storageReadStream($source);
-        $output = fopen($temporary, 'xb');
-        if (!is_resource($output)) {
-            fclose($input);
-            throw new UploadException('Unable to create destination-side upload staging file.');
-        }
 
         try {
-            if (!$this->runSilently(static fn(): bool => chmod($temporary, 0600))) {
-                throw new UploadException('Unable to secure destination-side upload staging file.');
-            }
-            $copied = stream_copy_to_stream($input, $output);
-            if (!is_int($copied) || $copied !== $sourceSize) {
-                throw new UploadException('Upload changed during controlled publication.');
-            }
-            if (!fflush($output)) {
-                throw new UploadException('Unable to flush destination-side upload staging file.');
-            }
-            if (function_exists('fsync') && !fsync($output)) {
-                throw new UploadException('Unable to sync destination-side upload staging file.');
-            }
-        } finally {
-            fclose($input);
-            fclose($output);
-        }
-
-        try {
-            clearstatcache(true, $temporary);
-            if (
-                is_link($temporary)
-                || !is_file($temporary)
-                || filesize($temporary) !== $sourceSize
-                || $this->storageSize($source) !== $sourceSize
-            ) {
-                throw new UploadException('Upload changed during controlled publication.');
-            }
-
-            $target = $this->assertLocalPublicationTarget($destination);
-            if (file_exists($target) || is_link($target)) {
-                throw new UploadException('Upload publication target already exists.');
-            }
-            if (!$this->runSilently(static fn(): bool => rename($temporary, $target))) {
-                throw new UploadException('Unable to atomically publish destination-side upload staging file.');
-            }
-
-            $this->finalizeLocalPermissions($target);
-            $this->deleteIncomingFile($source);
+            $this->copyLocalPublicationStage($source, $temporary, $sourceSize);
+            $this->commitLocalPublication($source, $destination, $temporary, $sourceSize);
         } finally {
             if (is_file($temporary) || is_link($temporary)) {
                 $this->runSilently(static fn(): bool => unlink($temporary));
