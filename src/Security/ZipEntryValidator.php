@@ -13,7 +13,13 @@ final class ZipEntryValidator
 
     public const int DEFAULT_MAX_ENTRIES = 10_000;
 
+    public const int DEFAULT_MAX_ENTRY_NAME_BYTES = 255;
+
     public const int DEFAULT_MAX_ENTRY_UNCOMPRESSED_BYTES = 1_073_741_824;
+
+    public const int DEFAULT_MAX_PATH_BYTES = 4_096;
+
+    public const int DEFAULT_MAX_PATH_DEPTH = 64;
 
     public const int DEFAULT_MAX_TOTAL_UNCOMPRESSED_BYTES = 4_294_967_296;
 
@@ -29,12 +35,18 @@ final class ZipEntryValidator
 
     private const int UNIX_SYMBOLIC_LINK = 0120000;
 
-    public static function validate(string $entry, string $extractionRoot): string
-    {
+    public static function validate(
+        string $entry,
+        string $extractionRoot,
+        int $maxEntryNameBytes = self::DEFAULT_MAX_ENTRY_NAME_BYTES,
+        int $maxPathBytes = self::DEFAULT_MAX_PATH_BYTES,
+        int $maxPathDepth = self::DEFAULT_MAX_PATH_DEPTH,
+    ): string {
         if ($entry === '' || str_contains($entry, "\0")) {
             throw new UnsafeArchiveEntryException("Unsafe ZIP entry path detected: {$entry}");
         }
 
+        self::validatePathLimits($maxEntryNameBytes, $maxPathBytes, $maxPathDepth);
         $normalized = str_replace('\\', '/', $entry);
         if (
             str_starts_with($normalized, '/')
@@ -61,6 +73,7 @@ final class ZipEntryValidator
             throw new UnsafeArchiveEntryException("Empty ZIP entry path detected: {$entry}");
         }
 
+        self::assertPathLimits($safeSegments, $entry, $maxEntryNameBytes, $maxPathBytes, $maxPathDepth);
         $relative = implode('/', $safeSegments);
         $root = rtrim(str_replace('\\', '/', $extractionRoot), '/');
         $destination = $root . '/' . $relative;
@@ -82,12 +95,18 @@ final class ZipEntryValidator
         int $maxEntryUncompressedBytes = self::DEFAULT_MAX_ENTRY_UNCOMPRESSED_BYTES,
         int $maxTotalUncompressedBytes = self::DEFAULT_MAX_TOTAL_UNCOMPRESSED_BYTES,
         float $maxCompressionRatio = self::DEFAULT_MAX_COMPRESSION_RATIO,
+        int $maxEntryNameBytes = self::DEFAULT_MAX_ENTRY_NAME_BYTES,
+        int $maxPathBytes = self::DEFAULT_MAX_PATH_BYTES,
+        int $maxPathDepth = self::DEFAULT_MAX_PATH_DEPTH,
     ): array {
         self::validateArchiveLimits(
             $maxEntries,
             $maxEntryUncompressedBytes,
             $maxTotalUncompressedBytes,
             $maxCompressionRatio,
+            $maxEntryNameBytes,
+            $maxPathBytes,
+            $maxPathDepth,
         );
         if ($maxEntries > 0 && $archive->numFiles > $maxEntries) {
             throw new UnsafeArchiveEntryException(
@@ -107,7 +126,13 @@ final class ZipEntryValidator
                 throw new UnsafeArchiveEntryException("Unable to read ZIP entry at index {$index}.");
             }
 
-            $path = self::validate($archiveName, $extractionRoot);
+            $path = self::validate(
+                $archiveName,
+                $extractionRoot,
+                $maxEntryNameBytes,
+                $maxPathBytes,
+                $maxPathDepth,
+            );
             $directory = str_ends_with($path, '/');
             self::assertSupportedEntryType($archive, $index, $archiveName);
             self::assertNoPathConflict($path, $directory, $seenPaths, $filePaths, $ancestorPaths, $archiveName);
@@ -139,6 +164,9 @@ final class ZipEntryValidator
         int $maxEntryUncompressedBytes,
         int $maxTotalUncompressedBytes,
         float $maxCompressionRatio,
+        int $maxEntryNameBytes = self::DEFAULT_MAX_ENTRY_NAME_BYTES,
+        int $maxPathBytes = self::DEFAULT_MAX_PATH_BYTES,
+        int $maxPathDepth = self::DEFAULT_MAX_PATH_DEPTH,
     ): void {
         if (
             $maxEntries < 0
@@ -148,6 +176,33 @@ final class ZipEntryValidator
             || !is_finite($maxCompressionRatio)
         ) {
             throw new \InvalidArgumentException('ZIP extraction limits must be finite, non-negative values.');
+        }
+
+        self::validatePathLimits($maxEntryNameBytes, $maxPathBytes, $maxPathDepth);
+    }
+
+    /**
+     * @param list<string> $segments
+     */
+    private static function assertPathLimits(
+        array $segments,
+        string $entry,
+        int $maxEntryNameBytes,
+        int $maxPathBytes,
+        int $maxPathDepth,
+    ): void {
+        if ($maxPathDepth > 0 && count($segments) > $maxPathDepth) {
+            throw new UnsafeArchiveEntryException("ZIP entry exceeds the configured path-depth limit: {$entry}");
+        }
+
+        foreach ($segments as $segment) {
+            if ($maxEntryNameBytes > 0 && strlen($segment) > $maxEntryNameBytes) {
+                throw new UnsafeArchiveEntryException("ZIP entry name exceeds the configured byte limit: {$entry}");
+            }
+        }
+
+        if ($maxPathBytes > 0 && strlen(implode('/', $segments)) > $maxPathBytes) {
+            throw new UnsafeArchiveEntryException("ZIP entry path exceeds the configured byte limit: {$entry}");
         }
     }
 
@@ -279,5 +334,12 @@ final class ZipEntryValidator
         }
 
         return [$size, $total];
+    }
+
+    private static function validatePathLimits(int $maxEntryNameBytes, int $maxPathBytes, int $maxPathDepth): void
+    {
+        if ($maxEntryNameBytes < 0 || $maxPathBytes < 0 || $maxPathDepth < 0) {
+            throw new \InvalidArgumentException('ZIP path limits must be non-negative values.');
+        }
     }
 }
