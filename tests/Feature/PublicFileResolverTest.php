@@ -63,7 +63,7 @@ test('resolved public artifact composes with download preparation without repars
         ->and($prepared->size)->toBe($resolution->size)
         ->and($prepared->lastModified)->toBe($resolution->lastModified)
         ->and($prepared->status)->toBe(206)
-        ->and($prepared->range->length)->toBe(6);
+        ->and($prepared->range->contentLength)->toBe(6);
 });
 
 test('public resolver rejects traversal and absolute candidates', function (): void {
