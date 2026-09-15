@@ -182,31 +182,6 @@ final class ZipEntryValidator
     }
 
     /**
-     * @param list<string> $segments
-     */
-    private static function assertPathLimits(
-        array $segments,
-        string $entry,
-        int $maxEntryNameBytes,
-        int $maxPathBytes,
-        int $maxPathDepth,
-    ): void {
-        if ($maxPathDepth > 0 && count($segments) > $maxPathDepth) {
-            throw new UnsafeArchiveEntryException("ZIP entry exceeds the configured path-depth limit: {$entry}");
-        }
-
-        foreach ($segments as $segment) {
-            if ($maxEntryNameBytes > 0 && strlen($segment) > $maxEntryNameBytes) {
-                throw new UnsafeArchiveEntryException("ZIP entry name exceeds the configured byte limit: {$entry}");
-            }
-        }
-
-        if ($maxPathBytes > 0 && strlen(implode('/', $segments)) > $maxPathBytes) {
-            throw new UnsafeArchiveEntryException("ZIP entry path exceeds the configured byte limit: {$entry}");
-        }
-    }
-
-    /**
      * @param array<string, bool> $seenPaths
      * @param array<string, true> $filePaths
      * @param array<string, true> $ancestorPaths
@@ -267,6 +242,31 @@ final class ZipEntryValidator
             if (is_link($candidate)) {
                 throw new UnsafeArchiveEntryException("ZIP destination traverses a symbolic link: {$entry}");
             }
+        }
+    }
+
+    /**
+     * @param list<string> $segments
+     */
+    private static function assertPathLimits(
+        array $segments,
+        string $entry,
+        int $maxEntryNameBytes,
+        int $maxPathBytes,
+        int $maxPathDepth,
+    ): void {
+        if ($maxPathDepth > 0 && count($segments) > $maxPathDepth) {
+            throw new UnsafeArchiveEntryException("ZIP entry exceeds the configured path-depth limit: {$entry}");
+        }
+
+        foreach ($segments as $segment) {
+            if ($maxEntryNameBytes > 0 && strlen($segment) > $maxEntryNameBytes) {
+                throw new UnsafeArchiveEntryException("ZIP entry name exceeds the configured byte limit: {$entry}");
+            }
+        }
+
+        if ($maxPathBytes > 0 && strlen(implode('/', $segments)) > $maxPathBytes) {
+            throw new UnsafeArchiveEntryException("ZIP entry path exceeds the configured byte limit: {$entry}");
         }
     }
 

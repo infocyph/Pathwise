@@ -36,11 +36,11 @@ final class PublicFileResolver
 
         $size = filesize($canonical);
         $lastModified = filemtime($canonical);
-        if (!is_int($size) || $size < 0 || !is_int($lastModified) || $lastModified < 0) {
+        if (!is_int($size) || !is_int($lastModified)) {
             throw new DownloadException('Unable to read public-file metadata.');
         }
 
-        $mimeType = (new finfo(FILEINFO_MIME_TYPE))->file($canonical);
+        $mimeType = new finfo(FILEINFO_MIME_TYPE)->file($canonical);
         $mimeType = is_string($mimeType) && $mimeType !== '' ? $mimeType : 'application/octet-stream';
 
         clearstatcache(true, $candidate);
