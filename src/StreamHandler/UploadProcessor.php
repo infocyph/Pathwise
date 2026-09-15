@@ -200,6 +200,9 @@ class UploadProcessor
     /**
      * Ingest a trusted CLI/application file that is not an HTTP upload.
      *
+     * The source is copied to Pathwise-owned staging before validation. The
+     * caller path is consumed only after the staged payload is persisted.
+     *
      * @param array<string, mixed> $file File metadata using the same keys as $_FILES.
      * @param array<string, scalar|null> $metadata Explicit audit metadata for the log entry.
      */
@@ -217,13 +220,8 @@ class UploadProcessor
     {
         $this->assertUploadDirectoryConfigured();
         $this->assertSourceReady($source);
-        $materialization = $source->materialize($this->tempDir);
 
-        try {
-            return $this->processIncomingFile($materialization->toFileArray(), false, $metadata);
-        } finally {
-            $materialization->cleanup();
-        }
+        return $this->processSource($source, $metadata);
     }
 
     /**
@@ -247,39 +245,23 @@ class UploadProcessor
         $chunkFile = $this->validateFile($chunkFile);
         $this->validateChunkUploadRequest($chunkFile, $uploadId, $chunkIndex, $totalChunks, $originalFilename);
 
-        return $this->withChunkSessionLock($uploadId, function () use (
-            $chunkFile,
-            $uploadId,
-            $chunkIndex,
-            $totalChunks,
-            $originalFilename,
-        ): ChunkUploadState {
-            $chunkDirectory = $this->getChunkDirectory($uploadId);
-            if (!$this->storageDirectoryExists($chunkDirectory)) {
-                $this->storageCreateDirectory($chunkDirectory);
-            }
+        $sourcePath = $chunkFile['tmp_name'];
+        $source = UploadSource::fromPath(
+            path: $sourcePath,
+            clientFilename: $chunkFile['name'],
+            size: $chunkFile['size'],
+        );
 
-            /** @var ChunkManifest $manifest */
-            $manifest = $this->loadChunkManifest($uploadId) ?? [
-                'uploadId' => $uploadId,
-                'originalFilename' => $originalFilename,
-                'totalChunks' => $totalChunks,
-                'createdAt' => time(),
-            ];
-            $this->assertChunkManifestIdentity($manifest, $uploadId, $originalFilename, $totalChunks);
-            $this->saveChunkManifest($uploadId, $manifest);
-
-            $chunkPath = PathHelper::join($chunkDirectory, sprintf('chunk_%06d.part', $chunkIndex));
-            $this->moveIncomingFile($chunkFile['tmp_name'], $chunkPath);
-            $received = $this->receivedChunkMap($chunkDirectory, $totalChunks);
-
-            return new ChunkUploadState(
-                uploadId: $uploadId,
-                receivedChunks: count($received),
-                totalChunks: $totalChunks,
-                complete: count($received) === $totalChunks,
-            );
-        });
+        return $this->processChunkSource(
+            source: $source,
+            uploadId: $uploadId,
+            chunkIndex: $chunkIndex,
+            totalChunks: $totalChunks,
+            originalFilename: $originalFilename,
+            afterPersist: function () use ($sourcePath): void {
+                $this->deleteIncomingFile($sourcePath);
+            },
+        );
     }
 
     /**
@@ -294,19 +276,8 @@ class UploadProcessor
     ): ChunkUploadState {
         $this->assertUploadDirectoryConfigured();
         $this->assertSourceReady($source);
-        $materialization = $source->materialize($this->tempDir);
 
-        try {
-            return $this->processChunkUpload(
-                $materialization->toFileArray(),
-                $uploadId,
-                $chunkIndex,
-                $totalChunks,
-                $originalFilename,
-            );
-        } finally {
-            $materialization->cleanup();
-        }
+        return $this->processChunkSource($source, $uploadId, $chunkIndex, $totalChunks, $originalFilename);
     }
 
     /**
@@ -395,17 +366,13 @@ class UploadProcessor
         $this->logger = $logger;
     }
 
-    /**
-     * Configure malware scan policy.
-     */
+    /** Configure malware scan policy. */
     public function setMalwareScanMode(MalwareScanMode $mode): void
     {
         $this->malwareScanMode = $mode;
     }
 
-    /**
-     * Configure or clear the malware scanner used before content parsing.
-     */
+    /** Configure or clear the malware scanner used before content parsing. */
     public function setMalwareScanner(?MalwareScannerInterface $scanner): void
     {
         $this->malwareScanner = $scanner;
@@ -425,11 +392,7 @@ class UploadProcessor
         $this->namingStrategy = $namingStrategy;
     }
 
-    /**
-     * Enable strict content checks (MIME-extension agreement + magic signature).
-     *
-     * @param bool $enabled If true, enable strict content type validation.
-     */
+    /** Enable strict content checks (MIME-extension agreement + magic signature). */
     public function setStrictContentTypeValidation(bool $enabled = true): void
     {
         $this->strictContentTypeValidation = $enabled;
@@ -488,9 +451,7 @@ class UploadProcessor
         }
     }
 
-    /**
-     * Generate a unique file name based on the strategy and caller info.
-     */
+    /** Generate a unique file name based on the strategy and caller info. */
     private function generateFileName(?string $dataSource, string $extension): string
     {
         $identifier = match ($this->namingStrategy) {
@@ -540,25 +501,58 @@ class UploadProcessor
      */
     private function processIncomingFile(array $file, bool $requireHttpUpload, array $metadata): string
     {
-        $logFileName = is_string($file['name'] ?? null) ? $file['name'] : null;
+        $this->assertUploadDirectoryConfigured();
+        $file = $this->validateFile($file);
+        $tmpName = $file['tmp_name'];
 
-        try {
-            $this->assertUploadDirectoryConfigured();
-
-            $file = $this->validateFile($file);
-            $tmpName = $file['tmp_name'];
-            if ($requireHttpUpload && !is_uploaded_file($tmpName)) {
+        if ($requireHttpUpload) {
+            if (!is_uploaded_file($tmpName)) {
                 throw new UploadException('File is not a valid HTTP upload.');
             }
-            $extension = pathinfo($file['name'], PATHINFO_EXTENSION);
-            $fileType = $this->validateUploadedPayload($tmpName, $extension);
 
-            $destination = $this->finalizeIncomingFile($tmpName, $extension);
-            $fileName = basename($destination);
+            $source = UploadSource::fromMover(
+                mover: static function (string $target) use ($tmpName): void {
+                    if (!move_uploaded_file($tmpName, $target)) {
+                        throw new UploadException('Failed to move uploaded file into staging.');
+                    }
+                },
+                clientFilename: $file['name'],
+                size: $file['size'],
+            );
+
+            return $this->processSource($source, $metadata);
+        }
+
+        $source = UploadSource::fromPath(
+            path: $tmpName,
+            clientFilename: $file['name'],
+            size: $file['size'],
+        );
+
+        return $this->processSource(
+            $source,
+            $metadata,
+            function () use ($tmpName): void {
+                $this->deleteIncomingFile($tmpName);
+            },
+        );
+    }
+
+    /** @param null|callable(): void $afterPersist */
+    private function processSource(UploadSource $source, array $metadata, ?callable $afterPersist = null): string
+    {
+        $materialization = null;
+
+        try {
+            $materialization = $source->materialize($this->tempDir);
+            [$destination, $fileType] = $this->processMaterializedUpload($materialization);
+            if ($afterPersist !== null) {
+                $afterPersist();
+            }
 
             if (isset($this->logger)) {
                 $this->logger->info('File uploaded successfully.', [
-                    'fileName' => $fileName,
+                    'fileName' => basename($destination),
                     'destination' => $destination,
                     'fileType' => $fileType,
                     'metadata' => $metadata,
@@ -570,12 +564,101 @@ class UploadProcessor
             if (isset($this->logger)) {
                 $this->logger->error('File upload failed.', [
                     'error' => $e->getMessage(),
-                    'file' => $logFileName,
+                    'file' => $source->clientFilename,
                     'metadata' => $metadata,
                 ]);
             }
 
             throw $e;
+        } finally {
+            $materialization?->cleanup();
         }
+    }
+
+    /** @return array{string, string} */
+    private function processMaterializedUpload(UploadMaterialization $materialization): array
+    {
+        $materialization->assertUnchanged();
+        $extension = pathinfo($materialization->clientFilename, PATHINFO_EXTENSION);
+        $fileType = $this->validateUploadedPayload($materialization->path, $extension);
+        $materialization->assertUnchanged();
+        $destination = $this->finalizeIncomingFile($materialization->path, $extension);
+
+        return [$destination, $fileType];
+    }
+
+    /** @param null|callable(): void $afterPersist */
+    private function processChunkSource(
+        UploadSource $source,
+        string $uploadId,
+        int $chunkIndex,
+        int $totalChunks,
+        string $originalFilename,
+        ?callable $afterPersist = null,
+    ): ChunkUploadState {
+        $materialization = $source->materialize($this->tempDir);
+
+        try {
+            $materialization->assertUnchanged();
+            $chunkFile = $this->validateFile($materialization->toFileArray());
+            $this->validateChunkUploadRequest($chunkFile, $uploadId, $chunkIndex, $totalChunks, $originalFilename);
+            $result = $this->persistMaterializedChunk(
+                $materialization,
+                $uploadId,
+                $chunkIndex,
+                $totalChunks,
+                $originalFilename,
+            );
+            if ($afterPersist !== null) {
+                $afterPersist();
+            }
+
+            return $result;
+        } finally {
+            $materialization->cleanup();
+        }
+    }
+
+    private function persistMaterializedChunk(
+        UploadMaterialization $materialization,
+        string $uploadId,
+        int $chunkIndex,
+        int $totalChunks,
+        string $originalFilename,
+    ): ChunkUploadState {
+        return $this->withChunkSessionLock($uploadId, function () use (
+            $materialization,
+            $uploadId,
+            $chunkIndex,
+            $totalChunks,
+            $originalFilename,
+        ): ChunkUploadState {
+            $chunkDirectory = $this->getChunkDirectory($uploadId);
+            if (!$this->storageDirectoryExists($chunkDirectory)) {
+                $this->storageCreateDirectory($chunkDirectory);
+            }
+
+            /** @var ChunkManifest $manifest */
+            $manifest = $this->loadChunkManifest($uploadId) ?? [
+                'uploadId' => $uploadId,
+                'originalFilename' => $originalFilename,
+                'totalChunks' => $totalChunks,
+                'createdAt' => time(),
+            ];
+            $this->assertChunkManifestIdentity($manifest, $uploadId, $originalFilename, $totalChunks);
+            $this->saveChunkManifest($uploadId, $manifest);
+
+            $materialization->assertUnchanged();
+            $chunkPath = PathHelper::join($chunkDirectory, sprintf('chunk_%06d.part', $chunkIndex));
+            $this->moveIncomingFile($materialization->path, $chunkPath);
+            $received = $this->receivedChunkMap($chunkDirectory, $totalChunks);
+
+            return new ChunkUploadState(
+                uploadId: $uploadId,
+                receivedChunks: count($received),
+                totalChunks: $totalChunks,
+                complete: count($received) === $totalChunks,
+            );
+        });
     }
 }
