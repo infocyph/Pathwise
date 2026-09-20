@@ -76,6 +76,21 @@ test('it calculates relative path', function () {
     expect(PathHelper::relativePath('/var/www/html', '/var/www/assets/css/style.css'))->toBe('..' . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'css' . DIRECTORY_SEPARATOR . 'style.css');
 });
 
+test('it calculates relative paths from local and mounted roots', function () {
+    $root = DIRECTORY_SEPARATOR === '/' ? '/' : 'C:\\';
+
+    expect(PathHelper::relativePath($root, $root . 'child'))->toBe('child')
+        ->and(PathHelper::relativePath('archive://', 'archive://child'))->toBe('child')
+        ->and(PathHelper::relativePath('archive://reports', 'archive://reports/child'))->toBe('child');
+});
+
+test('it rejects relative path calculations between absolute and relative paths', function () {
+    $absolute = DIRECTORY_SEPARATOR === '/' ? '/var/www' : 'C:\\var\\www';
+
+    expect(fn() => PathHelper::relativePath($absolute, 'var/www/file.txt'))
+        ->toThrow(InvalidArgumentException::class, 'between absolute and relative paths');
+});
+
 test('it sanitizes a single path segment', function () {
     expect(PathHelper::sanitizeSegment('path*with|characters'))->toBe('pathwithcharacters')
         ->and(fn() => PathHelper::sanitizeSegment('invalid/path'))->toThrow(InvalidArgumentException::class);

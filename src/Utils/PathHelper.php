@@ -317,8 +317,14 @@ class PathHelper
     public static function relativePath(string $from, string $to): string
     {
         self::assertCompatibleRelativePathRoots($from, $to);
-        $from = explode(DIRECTORY_SEPARATOR, self::normalize($from));
-        $to = explode(DIRECTORY_SEPARATOR, self::normalize($to));
+        $from = array_values(array_filter(
+            explode('/', str_replace('\\', '/', self::normalize($from))),
+            static fn(string $segment): bool => $segment !== '',
+        ));
+        $to = array_values(array_filter(
+            explode('/', str_replace('\\', '/', self::normalize($to))),
+            static fn(string $segment): bool => $segment !== '',
+        ));
 
         while (count($from) && count($to) && $from[0] === $to[0]) {
             array_shift($from);
@@ -367,6 +373,10 @@ class PathHelper
 
     private static function assertCompatibleRelativePathRoots(string $from, string $to): void
     {
+        if (self::isAbsolute($from) !== self::isAbsolute($to)) {
+            throw new \InvalidArgumentException('Cannot calculate a relative path between absolute and relative paths.');
+        }
+
         $fromScheme = preg_match('/^([A-Za-z][A-Za-z0-9._-]*):\/\//', $from, $fromMatch) === 1
             ? strtolower($fromMatch[1])
             : null;
