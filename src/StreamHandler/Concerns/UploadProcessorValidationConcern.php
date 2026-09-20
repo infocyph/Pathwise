@@ -6,6 +6,7 @@ namespace Infocyph\Pathwise\StreamHandler\Concerns;
 
 use Infocyph\Pathwise\Exceptions\FileSizeExceededException;
 use Infocyph\Pathwise\Exceptions\UploadException;
+use Infocyph\Pathwise\Security\LocalPathContainment;
 use Infocyph\Pathwise\StreamHandler\MalwareScanMode;
 use Infocyph\Pathwise\StreamHandler\MalwareScanRequest;
 use Infocyph\Pathwise\StreamHandler\MalwareScanVerdict;
@@ -23,19 +24,41 @@ use Infocyph\Pathwise\Utils\PathHelper;
 trait UploadProcessorValidationConcern
 {
     use StorageContextRoutingConcern;
+    use UploadPublicationConcern;
+    use UploadTrustPolicyConcern;
 
-    /**
-     * Get a unique destination for the uploaded file.
-     */
+    /** Get a unique destination for the uploaded file. */
     private function buildDestination(string $fileName): string
     {
         $subDir = $this->useDateDirectories ? date('Y/m/d') : '';
         $destinationDir = $subDir !== ''
             ? PathHelper::join($this->uploadDir, $subDir)
             : $this->uploadDir;
+        $directRoot = $this->storageDirectLocalPath($this->uploadDir);
+        $directDirectory = $this->storageDirectLocalPath($destinationDir);
+        if (
+            $directRoot !== null
+            && $directDirectory !== null
+            && !LocalPathContainment::isSameOrDescendant($directRoot, $directDirectory)
+        ) {
+            throw new UploadException('Upload directory escaped the configured root.');
+        }
 
+        $created = false;
         if (!$this->storageDirectoryExists($destinationDir)) {
             $this->storageCreateDirectory($destinationDir);
+            $created = true;
+        }
+
+        if (
+            $directRoot !== null
+            && $directDirectory !== null
+            && !LocalPathContainment::isSameOrDescendant($directRoot, $directDirectory)
+        ) {
+            throw new UploadException('Upload directory escaped the configured root.');
+        }
+        if ($created) {
+            $this->securePublishedDirectory($destinationDir);
         }
 
         return PathHelper::join($destinationDir, $fileName);
@@ -108,9 +131,7 @@ trait UploadProcessorValidationConcern
         }
     }
 
-    /**
-     * Ensure the upload directory exists.
-     */
+    /** Ensure the upload directory exists. */
     private function ensureUploadDirectoryExists(): void
     {
         if (!$this->storageDirectoryExists($this->uploadDir)) {
@@ -123,8 +144,12 @@ trait UploadProcessorValidationConcern
         if ($this->namingStrategy === 'hash') {
             $fileName = $this->generateFileName($source, $extension);
             $destination = $this->buildDestination($fileName);
+            $directDestination = $this->storageDirectLocalPath($destination);
+            if ($directDestination !== null && is_link($directDestination)) {
+                throw new UploadException('Upload publication target cannot be a symbolic link.');
+            }
             if (!$this->storageFileExists($destination)) {
-                $this->moveIncomingFile($source, $destination);
+                $this->publishIncomingFile($source, $destination);
 
                 return $destination;
             }
@@ -147,7 +172,7 @@ trait UploadProcessorValidationConcern
         for ($attempt = 0; $attempt < 5; $attempt++) {
             $destination = $this->buildDestination($this->generateFileName(null, $extension));
             if (!$this->storageFileExists($destination)) {
-                $this->moveIncomingFile($source, $destination);
+                $this->publishIncomingFile($source, $destination);
 
                 return $destination;
             }
@@ -156,9 +181,7 @@ trait UploadProcessorValidationConcern
         throw new UploadException('Unable to allocate a unique upload destination.');
     }
 
-    /**
-     * Get the MIME type of a file.
-     */
+    /** Get the MIME type of a file. */
     private function getFileMimeType(string $filePath): string
     {
         $mimeType = $this->storageMimeType($filePath);
@@ -169,9 +192,7 @@ trait UploadProcessorValidationConcern
         return $mimeType;
     }
 
-    /**
-     * Check if a file is an image.
-     */
+    /** Check if a file is an image. */
     private function isImage(string $fileType): bool
     {
         return str_starts_with($fileType, 'image/');
@@ -187,9 +208,7 @@ trait UploadProcessorValidationConcern
         return $digest;
     }
 
-    /**
-     * @return array{string, string}
-     */
+    /** @return array{string, string} */
     private function materializeMalwareScanInput(string $filePath): array
     {
         $root = PathHelper::toAbsolutePath(sys_get_temp_dir());
@@ -226,6 +245,8 @@ trait UploadProcessorValidationConcern
         $directDestination = $this->storageDirectLocalPath($destination);
         if (is_uploaded_file($source)) {
             if ($directDestination !== null && move_uploaded_file($source, $directDestination)) {
+                $this->secureUploadStagingFile($destination);
+
                 return;
             }
 
@@ -238,6 +259,7 @@ trait UploadProcessorValidationConcern
                 }
 
                 $this->unlinkFileSilently($source);
+                $this->secureUploadStagingFile($destination);
 
                 return;
             }
@@ -251,6 +273,8 @@ trait UploadProcessorValidationConcern
             && $directDestination !== null
             && $this->runSilently(static fn(): bool => rename($directSource, $directDestination))
         ) {
+            $this->secureUploadStagingFile($destination);
+
             return;
         }
 
@@ -261,6 +285,7 @@ trait UploadProcessorValidationConcern
         }
 
         $this->storageDelete($source);
+        $this->secureUploadStagingFile($destination);
     }
 
     private function normalizeExtension(string $extension): string
@@ -308,9 +333,7 @@ trait UploadProcessorValidationConcern
         return $normalized;
     }
 
-    /**
-     * @return array{string, bool}
-     */
+    /** @return array{string, bool} */
     private function prepareImagePathForInspection(string $filePath): array
     {
         $directLocalPath = $this->storageDirectLocalPath($filePath);
@@ -504,9 +527,7 @@ trait UploadProcessorValidationConcern
         ));
     }
 
-    /**
-     * Validate file size.
-     */
+    /** Validate file size. */
     private function validateFileSize(int $size): void
     {
         if ($size > $this->maxFileSize) {
@@ -514,9 +535,7 @@ trait UploadProcessorValidationConcern
         }
     }
 
-    /**
-     * Validate the file type.
-     */
+    /** Validate the file type. */
     private function validateFileType(string $fileType): void
     {
         if ($this->allowedFileTypes === []) {
@@ -533,9 +552,7 @@ trait UploadProcessorValidationConcern
         $this->validateUploadedPayload($destination, $extension);
     }
 
-    /**
-     * Validate image dimensions.
-     */
+    /** Validate image dimensions. */
     private function validateImageDimensions(string $filePath): void
     {
         [$pathForInspection, $cleanup] = $this->prepareImagePathForInspection($filePath);

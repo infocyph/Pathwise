@@ -29,6 +29,7 @@ retention, indexing, policy enforcement, and bounded native execution.
    symlink-management
    directory-manager
    upload-processing
+   trust-boundaries
    malware-scanning
    download-processing
    queue

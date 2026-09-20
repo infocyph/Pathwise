@@ -12,12 +12,26 @@ Pathwise can use OS-native commands for selected direct-local workflows through
 * ``NATIVE`` — require the native capability and fail explicitly when it is not
   available or execution fails.
 
-``NativeOperationsAdapter`` provides native acceleration for selected file,
-directory, and archive operations. The actual tool is capability/platform
-dependent: Unix-like systems may use tools such as ``cp``, ``rsync``, ``zip``
-and ``unzip``; Windows may use ``cmd``, ``robocopy`` or PowerShell capabilities.
-Do not depend on one executable being present merely because the OS family is
-known.
+``NativeOperationsAdapter`` remains Pathwise's filesystem-specific acceleration
+surface for trusted direct-local work such as copy, search and ZIP creation.
+Executable availability is capability/platform dependent; do not depend on one
+native tool being present merely because the OS family is known.
+
+Generic Process Boundary
+------------------------
+
+``NativeCommandRunner`` is retained in Pathwise 4.1 for source compatibility and
+for the library's internal filesystem-native acceleration. Direct application use
+for generic process execution is deprecated. Application and Foundation process
+work belongs to Runwire ``Command``, ``ProcessPolicy`` and ``ProcessRunner``.
+
+Pathwise intentionally has no production dependency on Runwire. Ordinary file,
+upload, download and archive operations remain portable to request-owned PHP,
+shared hosting, CLI and serverless environments.
+
+The legacy runner no longer keeps caller-derived executable lookups in a
+process-global cache. This prevents persistent workers from retaining arbitrary
+command names or stale PATH decisions across requests.
 
 Safety Limits
 -------------
@@ -35,9 +49,9 @@ rejected at configuration time. Runtime timeout, output-limit, startup, exit and
 unsupported-capability failures are represented through the typed native
 execution failure/exception surface.
 
-The command runner uses non-blocking pipe handling, bounded termination and
-deterministic cleanup. Pathwise starts argument-vector commands; caller-provided
-shell fragments are not accepted as an execution API.
+The compatibility runner uses non-blocking pipe handling, bounded termination
+and deterministic cleanup. Pathwise starts argument-vector commands; shell
+fragments are not accepted as an execution API.
 
 Storage Boundary
 ----------------
@@ -53,6 +67,10 @@ implementation. In forced ``NATIVE`` mode, it is an explicit typed failure.
 Once a native command has started and fails, Pathwise does not silently mask the
 failure by rerunning the operation through a different implementation.
 
+Untrusted ZIP extraction never uses raw native ``unzip``. Hardened extraction
+always passes through ``ZipEntryValidator`` and ``ZipArchiveExtractor`` so entry
+paths, types, sizes, ratios and rollback behavior remain authoritative.
+
 Example
 -------
 
@@ -65,6 +83,6 @@ Example
    $ops->setExecutionStrategy(ExecutionStrategy::AUTO)
        ->copy('/tmp/target');
 
-Use native acceleration for large local workloads only after measuring it on
-the deployment platform. See :doc:`performance-portability` and
+Use native acceleration for large trusted local workloads only after measuring
+it on the deployment platform. See :doc:`performance-portability` and
 :doc:`storage-contracts` for the capability and release-workload guidance.

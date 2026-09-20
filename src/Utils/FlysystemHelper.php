@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Infocyph\Pathwise\Utils;
 
 use DateTimeInterface;
+use Infocyph\Pathwise\Security\LocalPathContainment;
 use League\Flysystem\DirectoryAttributes;
 use League\Flysystem\DirectoryListing;
 use League\Flysystem\FileAttributes;
@@ -249,11 +250,7 @@ final class FlysystemHelper
     public static function isSameOrDescendant(string $sourceDirectory, string $target): bool
     {
         if (self::isLocalPath($sourceDirectory) && self::isLocalPath($target)) {
-            $source = rtrim(self::canonicalLocalPath($sourceDirectory), '/');
-            $destination = rtrim(self::canonicalLocalPath($target), '/');
-
-            return self::pathsMatch($source, $destination)
-                || self::pathStartsWith($destination, $source . '/');
+            return LocalPathContainment::isSameOrDescendant($sourceDirectory, $target);
         }
 
         [$sourceFilesystem, $sourceLocation] = self::filesystemForDirectory($sourceDirectory);
@@ -570,23 +567,6 @@ final class FlysystemHelper
         $filesystem->writeStream($location, $stream, $config);
     }
 
-    private static function canonicalLocalPath(string $path): string
-    {
-        $absolute = PathHelper::toAbsolutePath($path);
-        $suffix = [];
-        $candidate = $absolute;
-        while (!file_exists($candidate) && dirname($candidate) !== $candidate) {
-            array_unshift($suffix, basename($candidate));
-            $candidate = dirname($candidate);
-        }
-
-        $resolved = realpath($candidate);
-        $base = is_string($resolved) ? $resolved : $candidate;
-        $canonical = PathHelper::normalize(PathHelper::join($base, ...$suffix));
-
-        return str_replace('\\', '/', $canonical);
-    }
-
     /**
      * @return array{FilesystemOperator, string}
      */
@@ -721,20 +701,6 @@ final class FlysystemHelper
         }
 
         return $normalized;
-    }
-
-    private static function pathsMatch(string $first, string $second): bool
-    {
-        return PHP_OS_FAMILY === 'Windows'
-            ? strcasecmp($first, $second) === 0
-            : $first === $second;
-    }
-
-    private static function pathStartsWith(string $path, string $prefix): bool
-    {
-        return PHP_OS_FAMILY === 'Windows'
-            ? str_starts_with(strtolower($path), strtolower($prefix))
-            : str_starts_with($path, $prefix);
     }
 
     /**

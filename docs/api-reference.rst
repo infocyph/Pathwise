@@ -1,7 +1,7 @@
 Pathwise 4 API and Error Reference
 ==================================
 
-This page is the compact map of the public 4.0 surface. Feature guides remain
+This page is the compact map of the public 4.x surface. Feature guides remain
 the source for workflow semantics and examples.
 
 Facade and Core Types
@@ -13,8 +13,8 @@ Facade and Core Types
    helpers. It does **not** own persistent storage topology.
 
 ``Infocyph\Pathwise\Core\ExecutionStrategy``
-   Native/PHP execution strategy enum used by operations that can select an
-   implementation path.
+   Native/PHP execution strategy enum used by trusted direct-local operations
+   that can select an implementation path.
 
 ``Infocyph\Pathwise\Core\SyncComparison``
    Directory synchronization comparison enum.
@@ -48,7 +48,8 @@ File Management
 
 ``FileManager\FileCompression``
    ZIP compression/decompression with archive validation, filters, progress and
-   bounded native/PHP execution paths.
+   trusted-local native/PHP execution paths. Untrusted extraction always uses
+   Pathwise's validated extractor.
 
 ``FileManager\FileTransactionJournal``
    Direct-local transaction journal/rollback support used by transactional file
@@ -75,18 +76,23 @@ Uploads and Malware Scanning
 ``StreamHandler\UploadProcessor``
    Upload validation/publication and resumable chunk workflow. Important
    methods include ``setStorageContext()``, ``setDirectorySettings()``,
-   ``processUpload()``, ``ingestFile()``, ``ingestSource()``,
-   ``processChunkUpload()``, ``processChunkUploadSource()``,
-   ``finalizeChunkUpload()``, validation/scanner/extension/chunk setters, and
-   ``getInfo()``.
+   ``setTrustProfile()``, ``processUpload()``, ``ingestFile()``,
+   ``ingestSource()``, ``processChunkUpload()``,
+   ``processChunkUploadSource()``, ``finalizeChunkUpload()``, validation,
+   scanner, extension and chunk setters, and ``getInfo()``.
+
+``StreamHandler\UploadTrustProfile``
+   Upload trust policy enum. ``STANDARD`` preserves ordinary behavior;
+   ``UNTRUSTED_DATA`` enables finite chunk defaults, server-generated naming,
+   strict content checks and restrictive local publication behavior.
 
 ``StreamHandler\UploadSource``
    Framework-neutral source factory: ``fromMover()``, ``fromPath()``,
    ``fromStream()``.
 
 ``StreamHandler\UploadMaterialization``
-   Owned staging representation used to carry materialized upload metadata and
-   deterministic cleanup.
+   Owned staging representation used to carry materialized upload metadata,
+   identity checks and deterministic cleanup.
 
 ``StreamHandler\MalwareScannerInterface``
    Scanner contract receiving ``MalwareScanRequest`` and returning
@@ -110,17 +116,29 @@ Uploads and Malware Scanning
 ``StreamHandler\Scanner\ClamAvDaemonScanner``
    Bounded ClamAV daemon scanner implementation.
 
-See :doc:`upload-processing` and :doc:`malware-scanning`.
+See :doc:`upload-processing`, :doc:`malware-scanning`, and
+:doc:`trust-boundaries`.
 
-Downloads
----------
+Downloads and Public Files
+--------------------------
 
 ``StreamHandler\DownloadProcessor``
    Secure metadata/range preparation and streaming. Important methods:
    ``setStorageContext()``, ``setAllowedRoots()``, policy setters,
    ``prepareDownload()``, ``streamChunks()``, ``streamDownload()``.
 
-See :doc:`download-processing`.
+``StreamHandler\PublicFileResolver``
+   Resolves a configured trusted local public root plus a relative filesystem
+   candidate into a canonically-contained ``PublicFileResolution``. It is the
+   filesystem boundary for static/public delivery; URL/routing policy remains
+   application/Webrick-owned.
+
+``StreamHandler\PublicFileSymlinkPolicy``
+   Explicit public-file symlink behavior. ``REJECT`` is the default;
+   ``ALLOW_WITHIN_ROOT`` permits links only when canonical resolution remains
+   inside the trusted root.
+
+See :doc:`download-processing` and :doc:`trust-boundaries`.
 
 Queue
 -----
@@ -166,15 +184,18 @@ Security and Archives
    conditions, and last-match-wins evaluation.
 
 ``Security\ZipEntryValidator``
-   Archive-entry normalization and safety/limit validation.
+   Archive-entry normalization and safety/resource validation including
+   traversal, type, collision, count, size, compression-ratio, entry-name,
+   normalized-path and depth bounds.
 
 ``Security\ZipArchiveManifestEntry``
    Validated immutable ZIP manifest entry metadata.
 
 ``Security\ZipArchiveExtractor``
-   Manifest-driven extraction with collision/type/size/ratio/write-time checks.
+   Manifest-driven extraction with collision/type/size/ratio/write-time checks
+   and controlled publication/rollback.
 
-See :doc:`security`.
+See :doc:`security` and :doc:`trust-boundaries`.
 
 Indexing, Retention and Watchers
 --------------------------------
@@ -196,7 +217,10 @@ Native Execution
 ----------------
 
 ``Native\NativeCommandRunner``
-   Non-blocking bounded argv execution with deterministic termination/cleanup.
+   Legacy non-blocking bounded argv runner retained for Pathwise 4.1 source
+   compatibility and internal filesystem-native acceleration. **Direct generic
+   application use is deprecated**; use Runwire for application/Foundation
+   process execution.
 
 ``Native\NativeExecutionLimits``
    Immutable timeout/output/grace/poll limits.
@@ -205,15 +229,17 @@ Native Execution
    Typed native failure classification.
 
 ``Native\NativeOperationsAdapter``
-   Capability-aware native filesystem/archive operation adapter.
+   Capability-aware trusted direct-local filesystem/archive acceleration
+   adapter. It is not a general authorization/process API.
 
-See :doc:`native-execution`.
+See :doc:`native-execution` and :doc:`trust-boundaries`.
 
 Utilities
 ---------
 
 ``Utils\PathHelper``
-   Path normalization/join/validation/relative/temp helpers.
+   Path normalization/join/validation/relative/temp helpers. Normalization does
+   not retain request-derived paths in process-global cache state.
 
 ``Utils\FlysystemHelper``
    Low-level storage-neutral helper with direct-local/default/mount routing.
@@ -275,6 +301,10 @@ Pathwise 4 exposes these immutable/typed workflow results:
 ``Results\DownloadPreparation``
    Path/name/MIME/size/mtime/ETag/status/range/headers.
 
+``Results\PublicFileResolution``
+   Canonical local ``path``, trusted-root-relative path, MIME type, size and
+   last-modified metadata for an authorized public/static artifact.
+
 ``Results\RangeDownloadMetadata``
    Range start/end/content length/partial state.
 
@@ -282,7 +312,7 @@ Pathwise 4 exposes these immutable/typed workflow results:
    Preparation plus ``bytesSent``.
 
 ``Results\NativeExecutionResult``
-   Native command completion/output/result metadata.
+   Legacy native command completion/output/result metadata.
 
 ``Results\QueueProcessResult``
    Processed/failed counts for ``FileJobQueue::process()``.
@@ -311,14 +341,14 @@ appropriate. Public exception types are:
 * ``AuditException`` — audit sink/event persistence failure;
 * ``CompressionException`` — compression/archive workflow failure;
 * ``DirectoryOperationException`` — directory operation/sync failure;
-* ``DownloadException`` — download policy/range/stream failure;
+* ``DownloadException`` — download/public-file policy/range/stream failure;
 * ``FileAccessException`` — file access/read/write failure;
 * ``FileNotFoundException`` — required path missing;
 * ``FileSizeExceededException`` — configured size limit exceeded;
 * ``InvalidPathException`` — invalid/unsafe path;
 * ``MalwareScannerException`` — scanner implementation/protocol failure;
 * ``MissingExtensionException`` — required PHP extension missing;
-* ``NativeExecutionException`` — bounded native execution failure;
+* ``NativeExecutionException`` — bounded native filesystem acceleration failure;
 * ``PolicyViolationException`` — policy rejected an operation;
 * ``QueueException`` — queue state/lease/durability failure;
 * ``StorageCapabilityException`` — storage lacks a required capability;

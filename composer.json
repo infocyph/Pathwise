@@ -12,7 +12,7 @@
     "require": {
         "php": ">=8.4",
         "ext-fileinfo": "*",
-        "league/flysystem": "^3.35.2",
+        "league/flysystem": "^3.36",
         "psr/log": "^3.0.2"
     },
     "require-dev": {

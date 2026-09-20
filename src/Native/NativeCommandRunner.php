@@ -6,6 +6,11 @@ namespace Infocyph\Pathwise\Native;
 
 use Infocyph\Pathwise\Results\NativeExecutionResult;
 
+/**
+ * Legacy bounded runner retained for Pathwise filesystem-native acceleration.
+ *
+ * @deprecated 4.1 Application-level process execution belongs to Runwire.
+ */
 final class NativeCommandRunner
 {
     private const int EXIT_IO_ERROR = 126;
@@ -18,25 +23,19 @@ final class NativeCommandRunner
 
     private const int READ_CHUNK_BYTES = 65_536;
 
-    /** @var array<string, bool> */
-    private static array $executableCache = [];
-
+    /** @deprecated 4.1 Application-level executable discovery belongs to Runwire. */
     public static function commandExists(string $command): bool
     {
         if (!self::supportsBoundedExecution()) {
             return false;
         }
 
-        $cacheKey = PHP_OS_FAMILY . ':' . strtolower($command);
-        if (array_key_exists($cacheKey, self::$executableCache)) {
-            return self::$executableCache[$cacheKey];
-        }
-
-        return self::$executableCache[$cacheKey] = self::locateExecutable($command);
+        return self::locateExecutable($command);
     }
 
     /**
      * @param list<string> $command
+     * @deprecated 4.1 Application-level process execution belongs to Runwire.
      */
     public static function run(
         array $command,

@@ -142,8 +142,9 @@ final readonly class UploadSource
 
             clearstatcache(true, $target);
             $size = filesize($target);
-            if (!is_int($size)) {
-                throw new UploadException('Unable to determine materialized upload size.');
+            $sha256 = hash_file('sha256', $target);
+            if (!is_int($size) || !is_string($sha256)) {
+                throw new UploadException('Unable to determine materialized upload identity.');
             }
 
             return new UploadMaterialization(
@@ -152,6 +153,7 @@ final readonly class UploadSource
                 clientFilename: $this->clientFilename,
                 clientMediaType: $this->clientMediaType,
                 error: $this->error,
+                sha256: $sha256,
                 cleanupDirectory: $directory,
             );
         } catch (\Throwable $exception) {

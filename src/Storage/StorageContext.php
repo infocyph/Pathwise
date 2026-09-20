@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\Storage;
 
+use Infocyph\Pathwise\Security\LocalPathContainment;
 use Infocyph\Pathwise\Utils\PathHelper;
 use League\Flysystem\FilesystemOperator;
 
@@ -126,8 +127,14 @@ final class StorageContext
         }
 
         $root = PathHelper::normalize($root);
+        $localPath = $location === '' ? $root : PathHelper::join($root, $location);
+        if (!LocalPathContainment::isSameOrDescendant($root, $localPath)) {
+            throw new \InvalidArgumentException(
+                "Filesystem path must remain inside local root for '{$resolvedName}'.",
+            );
+        }
 
-        return $location === '' ? $root : PathHelper::join($root, $location);
+        return $localPath;
     }
 
     /**
