@@ -216,6 +216,6 @@ test('real Runwire coroutine scopes support explicit intermediary forwarding and
 
     expect(fn () => $download->withRunwire(
         $execution,
-        static fn (DownloadProcessor $bound): int => $bound->prepareDownload($this->runwireFile)->size,
+        fn (DownloadProcessor $bound): int => $bound->prepareDownload($this->runwireFile)->size,
     ))->toThrow(LogicException::class);
 });
