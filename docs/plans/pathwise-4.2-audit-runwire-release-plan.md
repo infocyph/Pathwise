@@ -262,13 +262,20 @@ Branch: `feature/runwire-2.1.1`. Review baseline: `eead7cc6a1ac498a602f7f0ac0b3f
 | Batch / gate | Findings and scope | Implementation | QA / CI | Commit evidence |
 | --- | --- | --- | --- | --- |
 | Prepare | Draft PR, tracker, preserve tagged 4.1 audit reference | Done | Plan/PR metadata checked | `faf02f7` · [PR #24](https://github.com/infocyph/Pathwise/pull/24) |
-| A1 | P01 local containment, P02 bounded upload/materialization + cumulative chunks | Implemented, **QA in progress** | [Candidate `41788162`](https://github.com/infocyph/Pathwise/actions/runs/37905096399) queued; [preceding `c8f41884`](https://github.com/infocyph/Pathwise/actions/runs/37904951939) failed 5 exception-wrapping assertions, corrected; baseline PHPStan 12 findings remain open for P12 | `947f34a` through `4178816` (source + regressions) |
+| A1 | P01 local containment, P02 bounded upload/materialization + cumulative chunks | **Implemented**; candidate QA in progress | [`a6a153b` workflow](https://github.com/infocyph/Pathwise/actions/runs/37905549989): 8.4/8.5 prefer-stable and optional adapters passed; other jobs pending. Previous five upload exception-contract failures corrected in `4178816`. Preexisting 12 PHPStan complexity findings still block complete analysis (P12). | P01: `947f34a`, `354135b`, `81e5fc9`; P02: `e10a590`–`a6a153b` |
 | A2 | P03 serialized graph work, P04 native ZIP, P05 lock correctness | Not started | Pending | — |
 | A3 | P06 ClamAV, P11 deduplication | Not started | Pending | — |
 | B | P07–P10 Windows/queue/framing/native args, P12 analyzers/clones/deps/docs | Not started | Pending | — |
 | Remediation gate | Full PHPForge, security fixtures, Windows CI and matched baseline | Not started | Pending | — |
 | Runwire integration | Exact 2.1.1 borrowed context; nested/Fiber safety, cancellation, Foundation 3 host chain | Not started | Pending | — |
 | Final 4.2.0 candidate | Hosted matrix, security, adapters, performance, soak/release checklist | Not started | Pending | — |
+
+### Batch A1 verification record
+
+- **P01:** Distinguish local capability from local-path containment; propagate containment denials rather than falling back to the adapter; check local upload root before creating directory. Regression coverage includes default/named local disks and nested symlink escapes.
+- **P02:** Bound framework-controlled stream/path staging to the actual configured byte ceiling with one-byte over-read, retain borrowed streams and owned-source failure semantics, fail closed when strict total limits are disabled, and reject aggregate/replacement excess under the chunk-session lock before merge. Mover callback limits remain the host's responsibility; Pathwise checks resulting staged size before hashing.
+- **Hosted QA:** Initial candidate `c8f41884` failed five expected `FileSizeExceededException` tests because materialization wrapped the exception; `4178816` corrected this. Subsequent `0e376dc` passed Pest but failed Pint ordering/blank-line rules; `a6a153b` corrected formatting. On the `a6a153b` workflow, PHP 8.4/8.5 prefer-stable QA and optional adapters have passed; remaining jobs still require inspection.
+- **Open release blockers:** Original twelve PHPStan cognitive-complexity findings (P12); incomplete candidate workflow and benchmark/stress outcomes. A1 must not be marked fully QA-accepted until relevant candidate jobs are accounted for. The full remediation gate remains later in the plan.
 
 ### Tracker policy
 
