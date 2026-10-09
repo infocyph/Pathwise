@@ -83,7 +83,6 @@ final class FileWatcher
         return self::snapshotLocal($normalized, $recursive);
     }
 
-
     public static function watch(
         string $path,
         callable $onChange,

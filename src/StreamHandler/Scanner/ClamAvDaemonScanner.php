@@ -157,13 +157,11 @@ final readonly class ClamAvDaemonScanner implements MalwareScannerInterface, Mal
                 break;
             }
 
-            $readLength = max(1, min(4_096, $remaining));
-            $chunk = fread($socket, $readLength);
-            if (!is_string($chunk) || $chunk === '') {
-                if ($this->responseReadEnded($socket, $chunk)) {
-                    return $response;
-                }
-
+            $chunk = $this->readResponseChunk($socket, max(1, min(4_096, $remaining)));
+            if ($chunk === null) {
+                return $response;
+            }
+            if ($chunk === '') {
                 continue;
             }
 
@@ -175,6 +173,17 @@ final readonly class ClamAvDaemonScanner implements MalwareScannerInterface, Mal
         }
 
         throw new MalwareScannerException('ClamAV response exceeds the configured limit.');
+    }
+
+    /** @param resource $socket */
+    private function readResponseChunk(mixed $socket, int $readLength): ?string
+    {
+        $chunk = fread($socket, $readLength);
+        if (!is_string($chunk) || $chunk === '') {
+            return $this->responseReadEnded($socket, $chunk) ? null : '';
+        }
+
+        return $chunk;
     }
 
     /** @param resource $socket */

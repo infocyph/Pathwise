@@ -336,6 +336,17 @@ trait UploadProcessorValidationConcern
     }
 
     /** @return array{string, bool} */
+    private function performMalwareScan(
+        MalwareScannerInterface $scanner,
+        MalwareScanRequest $request,
+    ): MalwareScanVerdict {
+        try {
+            return $scanner->scan($request);
+        } catch (\Throwable $exception) {
+            throw new UploadException('Malware scanner failed.', 0, $exception);
+        }
+    }
+
     private function prepareImagePathForInspection(string $filePath): array
     {
         $directLocalPath = $this->storageDirectLocalPath($filePath);
@@ -408,11 +419,7 @@ trait UploadProcessorValidationConcern
 
             $digestBeforeScan = $this->malwareScanDigest($scanPath);
 
-            try {
-                $verdict = $this->malwareScanner->scan($request);
-            } catch (\Throwable $exception) {
-                throw new UploadException('Malware scanner failed.', 0, $exception);
-            }
+            $verdict = $this->performMalwareScan($this->malwareScanner, $request);
 
             clearstatcache(true, $scanPath);
             if (is_link($scanPath) || !is_file($scanPath)) {

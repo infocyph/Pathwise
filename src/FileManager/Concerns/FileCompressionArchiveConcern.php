@@ -326,7 +326,6 @@ trait FileCompressionArchiveConcern
         return $this->countDirectoryFilesForCompression($source, $extensions);
     }
 
-
     private function createExtractionTempDirectory(): string
     {
         $extractTempDir = PathHelper::createTempDirectory('pathwise_extract_');

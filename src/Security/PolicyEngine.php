@@ -105,8 +105,9 @@ final class PolicyEngine
 
         return $decision;
     }
+
     /**
-     * @param array{operation: string, pattern: string, allow: bool, condition: (callable(string, string, array<string, mixed>): bool)|null} $rule
+     * @param array{ string, pattern: string, allow: bool, condition: (callable(string, string, array<string, mixed>): bool)|null} $rule
      * @param array<string, mixed> $context
      */
     private function ruleMatches(

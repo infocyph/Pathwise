@@ -778,7 +778,6 @@ class FileOperations
                 $native,
             );
         }
-
     }
 
     private function recordFileState(string $path): void
