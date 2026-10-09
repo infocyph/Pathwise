@@ -93,6 +93,10 @@ local destination and requires the final rename to succeed. Adapter-backed
 publication is not described as atomic merely because Pathwise can stage data
 before the final write.
 
+Closing publishes staging only after overwrite initialization or a write has
+started. A shared lock alone, or cancellation before exclusive acquisition,
+discards uninitialized staging and preserves the existing local/adapter target.
+
 ``lock()`` validates and applies the requested shared/exclusive mode. Mode changes
 release the previous lock before attempting the new one; a failed conversion
 leaves the writer unlocked. Overwrite initialization happens once per opened

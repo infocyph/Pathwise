@@ -36,8 +36,6 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
 
     private ?string $localWorkingPath = null;
 
-    private bool $syncBackOnClose = false;
-
     private int $writeCount = 0;
 
     private bool $writeInitialized = false;
@@ -108,9 +106,9 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
 
         $this->unlock();
         $this->file = null;
-        $this->writeInitialized = false;
         $this->finalizeAtomicWrite();
         $this->syncWorkingCopyBack();
+        $this->writeInitialized = false;
     }
 
     /**
@@ -270,6 +268,7 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
     {
         $this->initiate($this->append ? 'a' : 'w');
         $this->file?->ftruncate($size);
+        $this->writeInitialized = true;
     }
 
     /**
@@ -427,21 +426,9 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
         throw new FileAccessException("Failed to acquire lock on file {$this->filename} after {$attempts} attempts.");
     }
 
-    private function createAtomicTempFilePath(): string
+    private function createLocalTempFile(string $prefix, string $directory): string
     {
-        $directory = dirname($this->filename);
-        $prefix = basename($this->filename) . '.tmp_';
         $tempFile = tempnam($directory, $prefix);
-        if ($tempFile === false) {
-            throw new FileAccessException("Unable to create temporary file for atomic write: {$this->filename}");
-        }
-
-        return $tempFile;
-    }
-
-    private function createLocalTempFile(string $prefix): string
-    {
-        $tempFile = tempnam(sys_get_temp_dir(), $prefix);
         if ($tempFile === false) {
             throw new FileAccessException("Unable to create temporary file for {$this->filename}");
         }
@@ -461,7 +448,10 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
             return;
         }
 
-        if (!$this->runSilently(fn(): bool => rename($this->atomicTempFilePath, $this->filename))) {
+        $operation = $this->writeInitialized
+            ? fn(): bool => rename($this->atomicTempFilePath, $this->filename)
+            : fn(): bool => unlink($this->atomicTempFilePath);
+        if (!$this->runSilently($operation)) {
             throw new FileAccessException("Failed to atomically replace {$this->filename}");
         }
 
@@ -496,9 +486,8 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
 
     private function initializeRemoteWorkingPath(): void
     {
-        $this->localWorkingPath = $this->createLocalTempFile('pathwise_writer_');
+        $this->localWorkingPath = $this->createLocalTempFile('pathwise_writer_', sys_get_temp_dir());
         $this->cleanupLocalWorkingPath = true;
-        $this->syncBackOnClose = true;
         $this->preloadRemoteAppendSourceIfNeeded();
     }
 
@@ -536,6 +525,7 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
         if ($written === false) {
             throw new FileAccessException("Unable to perform {$type} write for {$this->filename}.");
         }
+        $this->writeInitialized = true;
         $this->trackWriteType($type);
 
         return $written;
@@ -592,13 +582,7 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
             return $this->resolveNonAtomicTargetFilePath();
         }
 
-        if ($this->atomicTempFilePath !== null) {
-            return $this->atomicTempFilePath;
-        }
-
-        $this->atomicTempFilePath = PathHelper::normalize($this->createAtomicTempFilePath());
-
-        return $this->atomicTempFilePath;
+        return $this->atomicTempFilePath ??= $this->createLocalTempFile(basename($this->filename) . '.tmp_', dirname($this->filename));
     }
 
     private function runSilently(callable $operation): mixed
@@ -616,7 +600,7 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
     {
         try {
             StreamTransferHelper::syncLocalFileToPathOrThrow(
-                $this->syncBackOnClose,
+                $this->writeInitialized,
                 $this->localWorkingPath,
                 $this->filename,
                 fn(): \Throwable => new FileAccessException("Cannot write to file: {$this->filename}"),
@@ -627,7 +611,6 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
             }
             $this->localWorkingPath = null;
             $this->cleanupLocalWorkingPath = false;
-            $this->syncBackOnClose = false;
         }
     }
 

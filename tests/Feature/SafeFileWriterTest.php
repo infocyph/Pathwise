@@ -307,3 +307,41 @@ test('an exclusive upgrade acquires actual exclusive ownership', function (): vo
         $writer->close();
     }
 });
+
+test('closing an atomic writer after a shared lock preserves the destination', function (): void {
+    file_put_contents($this->tempFilePath, 'original');
+    $writer = (new SafeFileWriter($this->tempFilePath))->enableAtomicWrite();
+    $writer->lock(LOCK_SH);
+    $writer->close();
+    expect(file_get_contents($this->tempFilePath))->toBe('original')
+        ->and(glob($this->tempFilePath . '.tmp_*'))->toBe([]);
+});
+
+test('closing an adapter writer after a shared lock preserves the destination', function (): void {
+    file_put_contents($this->mountRoot . DIRECTORY_SEPARATOR . 'remote.txt', 'original');
+    $writer = new SafeFileWriter('writer://remote.txt');
+    $writer->lock(LOCK_SH);
+    $writer->close();
+    expect(FlysystemHelper::read('writer://remote.txt'))->toBe('original');
+});
+
+test('staged writers publish explicit writes or truncation after a shared lock is released', function (bool $adapter, bool $truncate): void {
+    $target = $adapter ? $this->mountRoot . DIRECTORY_SEPARATOR . 'remote.txt' : $this->tempFilePath;
+    file_put_contents($target, 'original');
+    $writer = new SafeFileWriter($adapter ? 'writer://remote.txt' : $target);
+    if (!$adapter) {
+        $writer->enableAtomicWrite();
+    }
+    $writer->lock(LOCK_SH);
+    $writer->unlock();
+    if ($truncate) {
+        $writer->truncate();
+    } else {
+        $writer->writeBinary('replacement');
+    }
+    $writer->close();
+    expect(file_get_contents($target))->toBe($truncate ? '' : 'replacement');
+})->with([
+    'atomic write' => [false, false], 'atomic truncate' => [false, true],
+    'adapter write' => [true, false], 'adapter truncate' => [true, true],
+]);

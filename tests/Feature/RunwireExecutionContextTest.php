@@ -477,6 +477,30 @@ test('cancellation of a cooperative lock wait preserves the existing file and ho
     }
 });
 
+test('cancelled atomic lock acquisition discards uninitialized staging on close', function (): void {
+    $runtime = RuntimeContext::fromCapabilities(new RuntimeCapabilities(RuntimeDriver::NATIVE, supportsRunwireCoroutines: true), 'atomic-lock');
+    $request = RequestContext::create($runtime);
+    $writer = (new \Infocyph\Pathwise\FileManager\SafeFileWriter($this->runwireFile))->enableAtomicWrite();
+    try {
+        expect(function () use ($runtime, $request, $writer): void {
+            (new CoroutineRuntime())->run(function (CoroutineScope $scope) use ($runtime, $request, $writer): void {
+                $scope->spawn(function () use ($scope, $request): void {
+                    while ((glob($this->runwireFile . '.tmp_*') ?: []) === []) {
+                        $scope->yieldNow();
+                    }
+                    $request->cancel(CancellationReason::HOST_CANCELLED);
+                });
+                $writer->withRunwire(new RunwireExecutionContext($runtime, $request, $scope, checkpointEvery: 1),
+                    static fn($owner) => $owner->lock());
+            });
+        })->toThrow(CancelledException::class);
+    } finally {
+        $writer->close();
+    }
+    expect(file_get_contents($this->runwireFile))->toBe('abcdefghijklmnop')
+        ->and(glob($this->runwireFile . '.tmp_*'))->toBe([]);
+});
+
 test('a committed extraction remains successful when its host request is cancelled afterwards', function (): void {
     $archive = $this->runwireRoot . DIRECTORY_SEPARATOR . 'committed.zip';
     $output = $this->runwireRoot . DIRECTORY_SEPARATOR . 'committed';
