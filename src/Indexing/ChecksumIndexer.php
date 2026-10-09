@@ -199,6 +199,7 @@ final class ChecksumIndexer
         }
     }
 
+    /** @phpstan-impure */
     private static function isLocalFile(string $path): bool
     {
         return !PathHelper::hasScheme($path) && !is_link($path) && is_file($path);
