@@ -61,6 +61,43 @@ jobs:
       - name: "Run platform tests"
         run: composer ic:test:code
 
+  production-no-runwire:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
+    name: "Production-only installation (Runwire absent)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: "Set up PHP"
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: "fileinfo, zip"
+          coverage: none
+          tools: composer:v2
+      - name: "Install production dependencies"
+        run: composer install --no-dev --no-interaction --prefer-dist
+      - name: "Verify normal operations without Runwire"
+        run: |
+          php -r '
+          require "vendor/autoload.php";
+          if (class_exists(\Infocyph\Runwire\RuntimeContext::class)) {
+              fwrite(STDERR, "Runwire must not be installed as a production dependency.\n");
+              exit(1);
+          }
+          $processor = new \Infocyph\Pathwise\StreamHandler\DownloadProcessor();
+          $source = tempnam(sys_get_temp_dir(), "pathwise_prod_");
+          if (!is_string($source)) { exit(1); }
+          try {
+              file_put_contents($source, "unbound");
+              $prepared = $processor->prepareDownload($source);
+              if ($prepared->size !== 7) { exit(1); }
+              $uploader = new \Infocyph\Pathwise\StreamHandler\UploadProcessor();
+              if (!method_exists($uploader, "withRunwire")) { exit(1); }
+          } finally {
+              unlink($source);
+          }
+          '
+
   adapter-contracts:
     if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
     name: "Optional adapter contracts"
