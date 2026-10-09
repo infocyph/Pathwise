@@ -5,11 +5,21 @@ on:
     - cron: "0 0 * * 0"
   push:
     branches: [ "main", "master" ]
+    tags: [ "v*", "[0-9]*" ]
   pull_request:
     branches: [ "main", "master", "develop", "development" ]
 
 jobs:
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    uses: infocyph/phpforge/.github/workflows/release.yml@main
+    permissions:
+      contents: write
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+
   phpforge:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
     uses: infocyph/phpforge/.github/workflows/security-standards.yml@main
     with:
       fail_on_skipped_tests: true
@@ -23,6 +33,7 @@ jobs:
       contents: read
 
   windows:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
     name: "Windows / PHP ${{ matrix.php }}"
     runs-on: windows-latest
     strategy:
@@ -44,6 +55,7 @@ jobs:
         run: composer ic:test:code
 
   adapter-contracts:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
     name: "Optional adapter contracts"
     runs-on: ubuntu-latest
     env:
@@ -65,6 +77,7 @@ jobs:
         run: composer ic:test:code
 
   release-stress:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
     name: "Release stress / PHP 8.4"
     runs-on: ubuntu-latest
     timeout-minutes: 30
