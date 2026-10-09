@@ -16,10 +16,12 @@
         "psr/log": "^3.0.2"
     },
     "require-dev": {
-        "infocyph/phpforge": "dev-main@dev"
+        "infocyph/phpforge": "dev-main@dev",
+        "infocyph/runwire": "2.1.1"
     },
     "suggest": {
         "ext-posix": "required if you want to use permissions.",
+        "infocyph/runwire": "2.1.1 for optional borrowed runtime, request and coroutine context.",
         "ext-simplexml": "required if you want to use XML parsing.",
         "ext-xmlreader": "required if you want to use XML parsing.",
         "ext-zip": "required if you want to use compression.",

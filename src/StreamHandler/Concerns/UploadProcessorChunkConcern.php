@@ -174,6 +174,7 @@ trait UploadProcessorChunkConcern
         try {
             $remaining = $this->maxFileSize > 0 ? $this->maxFileSize : null;
             for ($i = 0; $i < $totalChunks; $i++) {
+                $this->checkpointRunwire();
                 $chunkPath = $this->resolveChunkPath($chunkDirectory, $i);
                 $copied = $this->appendChunkToStream($chunkPath, $output, $i, $remaining);
                 if ($remaining !== null) {
@@ -182,6 +183,7 @@ trait UploadProcessorChunkConcern
             }
 
             rewind($output);
+            $this->checkpointRunwire();
             $this->storageWriteStream($destination, $output);
             $this->secureUploadStagingFile($destination);
         } finally {

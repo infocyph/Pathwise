@@ -6,6 +6,7 @@ namespace Infocyph\Pathwise\StreamHandler;
 
 use Infocyph\Pathwise\Exceptions\FileSizeExceededException;
 use Infocyph\Pathwise\Exceptions\UploadException;
+use Infocyph\Pathwise\Integration\Runwire\RunwireScopedConcern;
 use Infocyph\Pathwise\Results\ChunkUploadState;
 use Infocyph\Pathwise\StreamHandler\Concerns\UploadProcessorChunkConcern;
 use Infocyph\Pathwise\StreamHandler\Concerns\UploadProcessorValidationConcern;
@@ -49,6 +50,7 @@ class UploadProcessor
 {
     use UploadProcessorChunkConcern;
     use UploadProcessorValidationConcern;
+    use RunwireScopedConcern;
 
     private const array VALIDATION_PROFILES = [
         'image' => [
@@ -123,6 +125,7 @@ class UploadProcessor
      */
     public function finalizeChunkUpload(string $uploadId): string
     {
+        $this->checkpointRunwire();
         if (!isset($this->uploadDir) || $this->uploadDir === '') {
             throw new UploadException('Upload directory is not set.');
         }
@@ -219,6 +222,7 @@ class UploadProcessor
      */
     public function ingestSource(UploadSource $source, array $metadata = []): string
     {
+        $this->checkpointRunwire();
         $this->assertUploadDirectoryConfigured();
         $this->assertSourceReady($source);
 
@@ -520,6 +524,7 @@ class UploadProcessor
             $this->assertChunkAggregateSize($chunkDirectory, $totalChunks, $chunkIndex, $materialization->size);
             $this->saveChunkManifest($uploadId, $manifest);
 
+            $this->checkpointRunwire();
             $materialization->assertUnchanged();
             $chunkPath = PathHelper::join($chunkDirectory, sprintf('chunk_%06d.part', $chunkIndex));
             $this->moveIncomingFile($materialization->path, $chunkPath);
@@ -543,6 +548,7 @@ class UploadProcessor
         string $originalFilename,
         ?callable $afterPersist = null,
     ): ChunkUploadState {
+        $this->checkpointRunwire();
         $this->assertStrictUploadSizeLimitConfigured();
         $this->assertStrictChunkLimitsConfigured();
         $maxBytes = $this->maxFileSize > 0 ? $this->maxFileSize : null;
@@ -618,9 +624,11 @@ class UploadProcessor
     /** @return array{string, string} */
     private function processMaterializedUpload(UploadMaterialization $materialization): array
     {
+        $this->checkpointRunwire();
         $materialization->assertUnchanged();
         $extension = pathinfo($materialization->clientFilename, PATHINFO_EXTENSION);
         $fileType = $this->validateUploadedPayload($materialization->path, $extension);
+        $this->checkpointRunwire();
         $materialization->assertUnchanged();
         $destination = $this->finalizeIncomingFile($materialization->path, $extension);
 

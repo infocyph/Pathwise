@@ -9,6 +9,7 @@ use Infocyph\Pathwise\Exceptions\CompressionException;
 use Infocyph\Pathwise\Exceptions\MissingExtensionException;
 use Infocyph\Pathwise\Exceptions\NativeExecutionException;
 use Infocyph\Pathwise\Exceptions\UnsupportedStorageOperationException;
+use Infocyph\Pathwise\Integration\Runwire\RunwireScopedConcern;
 use Infocyph\Pathwise\FileManager\Concerns\FileCompressionArchiveConcern;
 use Infocyph\Pathwise\FileManager\Concerns\FileCompressionRuntimeConcern;
 use Infocyph\Pathwise\FileManager\Concerns\FsConcern;
@@ -31,6 +32,7 @@ class FileCompression
     use FileCompressionArchiveConcern;
     use FileCompressionRuntimeConcern;
     use FsConcern;
+    use RunwireScopedConcern;
 
     private readonly ZipArchive $zip;
 
@@ -186,6 +188,7 @@ class FileCompression
      */
     public function batchExtractFiles(array $files, string $destination): self
     {
+        $this->checkpointRunwire();
         $this->reopenIfNeeded();
         $destination = PathHelper::normalize($destination);
         $this->log('Batch extracting files.');
@@ -247,6 +250,7 @@ class FileCompression
      */
     public function compress(string $source): self
     {
+        $this->checkpointRunwire();
         if (
             FlysystemHelper::directoryExists($source)
             && FlysystemHelper::isSameOrDescendant($source, $this->zipFilePath)
@@ -331,6 +335,7 @@ class FileCompression
      */
     public function decompress(?string $destination = null): self
     {
+        $this->checkpointRunwire();
         $this->reopenIfNeeded();
         $destination = $this->resolveDecompressionDestination($destination);
         $validatedEntries = $this->validateArchiveForExtraction($destination);

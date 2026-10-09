@@ -7,6 +7,7 @@ namespace Infocyph\Pathwise\StreamHandler;
 use Infocyph\Pathwise\Exceptions\DownloadException;
 use Infocyph\Pathwise\Exceptions\FileNotFoundException;
 use Infocyph\Pathwise\Exceptions\FileSizeExceededException;
+use Infocyph\Pathwise\Integration\Runwire\RunwireScopedConcern;
 use Infocyph\Pathwise\Results\DownloadPreparation;
 use Infocyph\Pathwise\Results\DownloadStreamResult;
 use Infocyph\Pathwise\Results\RangeDownloadMetadata;
@@ -17,6 +18,7 @@ use Infocyph\Pathwise\Utils\PathHelper;
 class DownloadProcessor
 {
     use StorageContextRoutingConcern;
+    use RunwireScopedConcern;
 
     /** @var list<string> */
     private array $allowedExtensions = [];
@@ -54,6 +56,7 @@ class DownloadProcessor
         ?string $downloadName = null,
         ?string $rangeHeader = null,
     ): DownloadPreparation {
+        $this->checkpointRunwire();
         $normalizedPath = PathHelper::normalize($path);
         $this->validateDownloadPath($normalizedPath);
 
@@ -214,6 +217,7 @@ class DownloadProcessor
      */
     public function streamChunks(DownloadPreparation $preparation): \Generator
     {
+        $this->checkpointRunwire();
         $path = $this->validatePreparedDownload($preparation);
         $remaining = $preparation->range->contentLength;
         if ($remaining === 0) {
@@ -229,6 +233,7 @@ class DownloadProcessor
             $this->seekStreamToOffset($inputStream, $preparation->range->start ?? 0);
 
             while ($remaining > 0) {
+                $this->checkpointRunwire();
                 $chunk = fread($inputStream, $this->readLength($remaining));
                 if (!is_string($chunk) || $chunk === '') {
                     throw new DownloadException('Download stream ended before the prepared range was complete.');
@@ -265,6 +270,7 @@ class DownloadProcessor
         $bytesSent = 0;
 
         foreach ($this->streamChunks($manifest) as $chunk) {
+            $this->checkpointRunwire();
             $bytesSent += $this->writeFully($outputStream, $chunk);
         }
 

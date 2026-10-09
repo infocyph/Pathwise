@@ -12,6 +12,7 @@ use Infocyph\Pathwise\DirectoryManager\Concerns\DirectoryOperationsSyncConcern;
 use Infocyph\Pathwise\DirectoryManager\Concerns\DirectoryOperationsZipConcern;
 use Infocyph\Pathwise\Exceptions\DirectoryOperationException;
 use Infocyph\Pathwise\Exceptions\UnsupportedStorageOperationException;
+use Infocyph\Pathwise\Integration\Runwire\RunwireScopedConcern;
 use Infocyph\Pathwise\Results\SyncReport;
 use Infocyph\Pathwise\Security\ZipEntryValidator;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
@@ -45,6 +46,7 @@ class DirectoryOperations
     use DirectoryOperationsEntryConcern;
     use DirectoryOperationsSyncConcern;
     use DirectoryOperationsZipConcern;
+    use RunwireScopedConcern;
 
     private ExecutionStrategy $executionStrategy = ExecutionStrategy::AUTO;
 
@@ -514,6 +516,7 @@ class DirectoryOperations
      */
     public function unzip(string $source): self
     {
+        $this->checkpointRunwire();
         $source = PathHelper::normalize($source);
         $this->assertZipSourceExists($source);
         [$localSource, $cleanupSource] = $this->prepareLocalZipSource($source);
@@ -556,6 +559,7 @@ class DirectoryOperations
      */
     public function zip(string $destination): self
     {
+        $this->checkpointRunwire();
         $this->assertSourceDirectoryExists();
         $destination = PathHelper::normalize($destination);
         $useLocalDestination = $this->isLocalPath($destination);
