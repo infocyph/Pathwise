@@ -206,12 +206,11 @@ final readonly class FileJobQueue
         ];
     }
 
-    /** @param array<array-key, mixed> $value */
     private static function normalizeFailureMessage(string $message): string
     {
         $encoded = json_encode($message, JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR);
-        $message = json_decode($encoded, true, 512, JSON_THROW_ON_ERROR);
-        $message = trim($message) === '' ? 'Queue job failed.' : $message;
+        $decoded = json_decode($encoded, true, 512, JSON_THROW_ON_ERROR);
+        $message = is_string($decoded) && trim($decoded) !== '' ? $decoded : 'Queue job failed.';
         if (strlen($message) <= self::ERROR_MESSAGE_BYTES) {
             return $message;
         }
@@ -224,6 +223,7 @@ final readonly class FileJobQueue
         return $message;
     }
 
+    /** @param array<array-key, mixed> $value */
     private function assertNoFailureState(array $value): void
     {
         if (isset($value['error']) || isset($value['failedAt'])) {

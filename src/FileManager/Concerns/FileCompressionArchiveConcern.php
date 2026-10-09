@@ -282,21 +282,8 @@ trait FileCompressionArchiveConcern
     }
 
     /** @param list<string> $extensions */
-    private function countFilesForCompression(string $source, array $extensions = []): int
+    private function countDirectoryFilesForCompression(string $source, array $extensions): int
     {
-        if (is_file($source)) {
-            $relative = basename($source);
-            if (!$this->matchesExtensions($source, $extensions)) {
-                return 0;
-            }
-
-            return $this->shouldIncludePath($relative) ? 1 : 0;
-        }
-
-        if (!is_dir($source)) {
-            return 0;
-        }
-
         $count = 0;
         $iterator = new \RecursiveIteratorIterator(
             new \RecursiveDirectoryIterator($source, \FilesystemIterator::SKIP_DOTS),
@@ -319,6 +306,26 @@ trait FileCompressionArchiveConcern
 
         return $count;
     }
+
+    /** @param list<string> $extensions */
+    private function countFilesForCompression(string $source, array $extensions = []): int
+    {
+        if (is_file($source)) {
+            $relative = basename($source);
+            if (!$this->matchesExtensions($source, $extensions)) {
+                return 0;
+            }
+
+            return $this->shouldIncludePath($relative) ? 1 : 0;
+        }
+
+        if (!is_dir($source)) {
+            return 0;
+        }
+
+        return $this->countDirectoryFilesForCompression($source, $extensions);
+    }
+
 
     private function createExtractionTempDirectory(): string
     {

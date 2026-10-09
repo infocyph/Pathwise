@@ -160,14 +160,7 @@ final readonly class ClamAvDaemonScanner implements MalwareScannerInterface, Mal
             $readLength = max(1, min(4_096, $remaining));
             $chunk = fread($socket, $readLength);
             if (!is_string($chunk) || $chunk === '') {
-                $metadata = stream_get_meta_data($socket);
-                if ($metadata['timed_out']) {
-                    throw new MalwareScannerException('ClamAV response timed out.');
-                }
-                if (!is_string($chunk)) {
-                    throw new MalwareScannerException('Unable to read ClamAV response.');
-                }
-                if (feof($socket)) {
+                if ($this->responseReadEnded($socket, $chunk)) {
                     return $response;
                 }
 
@@ -182,6 +175,20 @@ final readonly class ClamAvDaemonScanner implements MalwareScannerInterface, Mal
         }
 
         throw new MalwareScannerException('ClamAV response exceeds the configured limit.');
+    }
+
+    /** @param resource $socket */
+    private function responseReadEnded(mixed $socket, mixed $chunk): bool
+    {
+        $metadata = stream_get_meta_data($socket);
+        if ($metadata['timed_out']) {
+            throw new MalwareScannerException('ClamAV response timed out.');
+        }
+        if (!is_string($chunk)) {
+            throw new MalwareScannerException('Unable to read ClamAV response.');
+        }
+
+        return feof($socket);
     }
 
     private function remainingSeconds(float $deadline): float

@@ -34,19 +34,7 @@ final class PublicFileResolver
             throw new DownloadException('Public-file path escaped the trusted root.');
         }
 
-        clearstatcache(true, $candidate);
-        $rechecked = realpath($candidate);
-        if (
-            !is_string($rechecked)
-            || $rechecked !== $canonical
-            || !is_file($rechecked)
-            || !LocalPathContainment::isSameOrDescendant($root, $rechecked)
-        ) {
-            throw new DownloadException('Public file changed during trust resolution.');
-        }
-        if ($symlinkPolicy === PublicFileSymlinkPolicy::REJECT && $this->containsSymbolicLink($root, $relative)) {
-            throw new DownloadException('Public-file resolution rejected a symbolic link.');
-        }
+        $rechecked = $this->recheckCanonical($root, $relative, $candidate, $canonical, $symlinkPolicy);
 
         clearstatcache(true, $rechecked);
         $size = filesize($rechecked);
@@ -112,6 +100,30 @@ final class PublicFileResolver
         }
 
         return implode('/', $segments);
+    }
+
+    private function recheckCanonical(
+        string $root,
+        string $relative,
+        string $candidate,
+        string $canonical,
+        PublicFileSymlinkPolicy $symlinkPolicy,
+    ): string {
+        clearstatcache(true, $candidate);
+        $rechecked = realpath($candidate);
+        if (
+            !is_string($rechecked)
+            || $rechecked !== $canonical
+            || !is_file($rechecked)
+            || !LocalPathContainment::isSameOrDescendant($root, $rechecked)
+        ) {
+            throw new DownloadException('Public file changed during trust resolution.');
+        }
+        if ($symlinkPolicy === PublicFileSymlinkPolicy::REJECT && $this->containsSymbolicLink($root, $relative)) {
+            throw new DownloadException('Public-file resolution rejected a symbolic link.');
+        }
+
+        return $rechecked;
     }
 
     private function resolveTrustedRoot(string $root): string

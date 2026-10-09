@@ -80,30 +80,9 @@ final class FileWatcher
             return self::snapshotViaFlysystem($normalized, $recursive);
         }
 
-        $entries = [];
-        $iterator = $recursive
-            ? new RecursiveIteratorIterator(new RecursiveDirectoryIterator($normalized, FilesystemIterator::SKIP_DOTS))
-            : new FilesystemIterator($normalized, FilesystemIterator::SKIP_DOTS);
-
-        foreach ($iterator as $item) {
-            if (!$item instanceof \SplFileInfo || $item->isDir()) {
-                continue;
-            }
-
-            $mtime = $item->getMTime();
-            $size = $item->getSize();
-            if (!is_int($mtime) || !is_int($size)) {
-                continue;
-            }
-
-            $filePath = PathHelper::normalize($item->getPathname());
-            $entries[$filePath] = ['mtime' => $mtime, 'size' => $size];
-        }
-
-        ksort($entries);
-
-        return $entries;
+        return self::snapshotLocal($normalized, $recursive);
     }
+
 
     public static function watch(
         string $path,
@@ -144,6 +123,34 @@ final class FileWatcher
         }
 
         return new WatchResult($snapshot, $changeSets);
+    }
+
+    /** @return SnapshotMap */
+    private static function snapshotLocal(string $normalized, bool $recursive): array
+    {
+        $entries = [];
+        $iterator = $recursive
+            ? new RecursiveIteratorIterator(new RecursiveDirectoryIterator($normalized, FilesystemIterator::SKIP_DOTS))
+            : new FilesystemIterator($normalized, FilesystemIterator::SKIP_DOTS);
+
+        foreach ($iterator as $item) {
+            if (!$item instanceof \SplFileInfo || $item->isDir()) {
+                continue;
+            }
+
+            $mtime = $item->getMTime();
+            $size = $item->getSize();
+            if (!is_int($mtime) || !is_int($size)) {
+                continue;
+            }
+
+            $filePath = PathHelper::normalize($item->getPathname());
+            $entries[$filePath] = ['mtime' => $mtime, 'size' => $size];
+        }
+
+        ksort($entries);
+
+        return $entries;
     }
 
     /** @return SnapshotMap */

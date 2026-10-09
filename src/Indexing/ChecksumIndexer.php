@@ -78,6 +78,13 @@ final class ChecksumIndexer
         }
     }
 
+    private static function closeIfResource(mixed $stream): void
+    {
+        if (is_resource($stream)) {
+            fclose($stream);
+        }
+    }
+
     /**
      * @param list<string> $paths
      * @param list<string> $linked
@@ -150,12 +157,8 @@ final class ChecksumIndexer
         $first = fopen($firstPath, 'rb');
         $second = fopen($secondPath, 'rb');
         if (!is_resource($first) || !is_resource($second)) {
-            if (is_resource($first)) {
-                fclose($first);
-            }
-            if (is_resource($second)) {
-                fclose($second);
-            }
+            self::closeIfResource($first);
+            self::closeIfResource($second);
 
             return false;
         }

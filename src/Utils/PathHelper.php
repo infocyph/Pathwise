@@ -512,25 +512,7 @@ class PathHelper
             return $scheme . '://';
         }
 
-        $stack = [];
-
-        foreach ($parts as $part) {
-            if ($part === '.') {
-                continue;
-            }
-
-            if ($part === '..') {
-                if ($stack !== []) {
-                    array_pop($stack);
-                }
-
-                continue;
-            }
-
-            $stack[] = $part;
-        }
-
-        $normalized = implode('/', $stack);
+        $normalized = implode('/', self::normalizePathParts($location, true));
         if ($leadingSlash && $normalized !== '') {
             $normalized = '/' . $normalized;
         }

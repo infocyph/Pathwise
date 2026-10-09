@@ -98,23 +98,36 @@ final class PolicyEngine
         }
 
         foreach ($this->rules as $rule) {
-            if ($rule['operation'] !== '*' && $rule['operation'] !== $operation) {
-                continue;
+            if ($this->ruleMatches($rule, $operation, $path, $normalizedPath, $caseInsensitive, $context)) {
+                $decision = $rule['allow'];
             }
-            $pattern = str_replace('\\', '/', $rule['pattern']);
-            if ($caseInsensitive) {
-                $pattern = strtolower($pattern);
-            }
-            if (!fnmatch($pattern, $normalizedPath)) {
-                continue;
-            }
-            if ($rule['condition'] !== null && !($rule['condition'])($operation, $path, $context)) {
-                continue;
-            }
-
-            $decision = $rule['allow'];
         }
 
         return $decision;
     }
+    /**
+     * @param array{operation: string, pattern: string, allow: bool, condition: (callable(string, string, array<string, mixed>): bool)|null} $rule
+     * @param array<string, mixed> $context
+     */
+    private function ruleMatches(
+        array $rule,
+        string $operation,
+        string $path,
+        string $normalizedPath,
+        bool $caseInsensitive,
+        array $context,
+    ): bool {
+        if ($rule['operation'] !== '*' && $rule['operation'] !== $operation) {
+            return false;
+        }
+
+        $pattern = str_replace('\\', '/', $rule['pattern']);
+        if ($caseInsensitive) {
+            $pattern = strtolower($pattern);
+        }
+
+        return fnmatch($pattern, $normalizedPath)
+            && ($rule['condition'] === null || ($rule['condition'])($operation, $path, $context));
+    }
+
 }
