@@ -266,10 +266,15 @@ function loadClient(int $port, string $output, int $index): void
         // Warm every payload/range path and OPcache before declaring this client ready.
         for ($warm = 0; $warm < 100; $warm++) {
             [$path, $range, $status, $body] = $workload[$warm % 3];
-            if (loadRequest($socket, $path, $range, $close) !== [$status, $body]) {
+            $response = loadRequest($socket, $path, $range, $close);
+            if ($response !== [$status, $body]) {
                 throw new RuntimeException('Invalid mixed-workload warmup.');
             }
         }
+        // Other clients may warm for longer than the host's idle/header timeout.
+        fclose($socket);
+        $socket = null;
+        $close = true;
         fwrite(STDOUT, "ready\n");
         $stop = (int) trim(fgets(STDIN));
         $usage = getrusage();
@@ -278,11 +283,15 @@ function loadClient(int $port, string $output, int $index): void
             [$path, $range, $status, $body] = $workload[$index++ % 3];
             $start = hrtime(true);
             if ($close) {
-                fclose($socket);
+                if (is_resource($socket)) {
+                    fclose($socket);
+                }
                 $socket = loadConnect($port);
             }
-            if (loadRequest($socket, $path, $range, $close) !== [$status, $body]) {
-                throw new RuntimeException('Incorrect HTTP status/body under load.');
+            $response = loadRequest($socket, $path, $range, $close);
+            if ($response !== [$status, $body]) {
+                throw new RuntimeException(sprintf('Incorrect HTTP response for %s: status=%d expected=%d bytes=%d expected=%d sha256=%s.',
+                    $path, $response[0], $status, strlen($response[1]), strlen($body), hash('sha256', $response[1])));
             }
             $latencies[] = (hrtime(true) - $start) / 1_000_000;
         }
@@ -377,15 +386,6 @@ function loadPhase(LoadHost $host, int $concurrency, int $seconds): array
             'load_generator_cpu_percent' => 100 * $clientCpu / $elapsed,
             'steady_rss_kb' => $after['rss_kb'],
             'live_process_tree_samples' => $samples];
-        if ($errors !== []) {
-            throw new RuntimeException('HTTP request errors: ' . json_encode($errors));
-        }
-        foreach (['p99_ms', 'peak_rss_kb', 'rss_growth_kb', 'fd_growth'] as $key) {
-            if ($report[$key] > LOAD_BUDGETS[$key]) {
-                throw new RuntimeException('HTTP load exceeded budget: ' . $key . '=' . $report[$key]);
-            }
-        }
-
         return $report;
     } finally {
         foreach ($clients as $client) {
@@ -403,6 +403,18 @@ function loadPhase(LoadHost $host, int $concurrency, int $seconds): array
             unlink($root . '/client.log');
         }
         rmdir($root);
+    }
+}
+
+function loadValidate(array $report): void
+{
+    if ($report['errors'] !== []) {
+        throw new RuntimeException('HTTP request errors: ' . json_encode($report['errors']));
+    }
+    foreach (['p99_ms', 'peak_rss_kb', 'rss_growth_kb', 'fd_growth'] as $key) {
+        if ($report[$key] > LOAD_BUDGETS[$key]) {
+            throw new RuntimeException('HTTP load exceeded budget: ' . $key . '=' . $report[$key]);
+        }
     }
 }
 
@@ -432,6 +444,8 @@ try {
             foreach ($order as $name) {
                 $trial = loadPhase($hosts[$name], $concurrency, 10);
                 $trials[$name][] = $trial;
+                $report['profiles'][$concurrency]['trials'] = $trials;
+                loadValidate($trial);
                 printf("HTTP %s c%d: %.0f RPM, p99 %.1fms\n", $name, $concurrency, $trial['rpm'], $trial['p99_ms']);
             }
         }
@@ -459,6 +473,7 @@ try {
     $hosts = ['bound' => new LoadHost($candidate, true)];
     $report['readiness']['bound'] = $hosts['bound']->ready();
     $report['bound_soak'] = loadPhase($hosts['bound'], 32, 30);
+    loadValidate($report['bound_soak']);
 } catch (Throwable $exception) {
     $report['pass'] = false;
     $report['error'] = $exception->getMessage();

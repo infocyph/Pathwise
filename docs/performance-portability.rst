@@ -261,6 +261,11 @@ deployment, transport/backpressure policy and storage workload need their own
 representative acceptance measurements.
 
 The HTTP profile enables and warms CLI OPcache and every payload/range path.
+Clients close warmup connections before waiting at the readiness barrier and
+open fresh connections during measurement, so slow peer warmup cannot consume
+the host's idle/header timeout. Host timeout and error budgets remain active;
+failed response diagnostics include status, length and digest, and artifacts
+retain completed trial metrics before failing a response or resource budget.
 Both revisions use the same two physical worker cores; when a third core is
 available, load clients run apart from those cores and their SMT siblings.
 Reports include the actual affinity, trial spread and load-generator CPU so

@@ -352,6 +352,86 @@ test('benchmark revision selection overrides optimized Composer maps and rejects
     }
 });
 
+test('HTTP load clients discard an expired warmup connection before measurement', function (): void {
+    $server = stream_socket_server('tcp://127.0.0.1:0');
+    $port = substr(strrchr(stream_socket_get_name($server, false), ':'), 1);
+    $output = $this->runwireRoot . DIRECTORY_SEPARATOR . 'http-client.json';
+    $process = proc_open([
+        PHP_BINARY, dirname(__DIR__) . '/Support/FoundationHostLoad.php', '--client', $port, $output, '0',
+    ], [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['file', $output . '.log', 'a']], $pipes);
+    $connection = null;
+    $respond = static function ($socket, bool $expire = false): bool {
+        $line = fgets($socket);
+        if ($line === false) {
+            return false;
+        }
+        $path = explode(' ', $line)[1];
+        while (($header = fgets($socket)) !== "\r\n") {
+            if ($header === false) {
+                throw new RuntimeException('Synthetic HTTP request headers were incomplete.');
+            }
+        }
+        $large = str_repeat('0123456789abcdef', 16384);
+        $body = match ($path) {
+            '/small' => str_repeat('matched-foundation-request-', 32),
+            '/large' => $large,
+            '/range' => substr($large, 4099, 8190),
+        };
+        $status = $path === '/range' ? 206 : 200;
+        $response = "HTTP/1.1 {$status} OK\r\nContent-Length: " . strlen($body) . "\r\n\r\n" . $body;
+        if ($expire) {
+            $response .= "HTTP/1.1 408 Request Timeout\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        }
+        $offset = 0;
+        while ($offset < strlen($response)) {
+            $written = fwrite($socket, substr($response, $offset));
+            if (!is_int($written) || $written === 0) {
+                throw new RuntimeException('Synthetic HTTP response write failed.');
+            }
+            $offset += $written;
+        }
+
+        return true;
+    };
+    try {
+        $connection = stream_socket_accept($server, 5);
+        stream_set_timeout($connection, 5);
+        for ($warm = 0; $warm < 101; $warm++) {
+            expect($respond($connection, $warm === 100))->toBeTrue();
+        }
+        stream_set_timeout($pipes[1], 5);
+        expect(trim(fgets($pipes[1])))->toBe('ready');
+        fclose($connection);
+        $connection = null;
+        fwrite($pipes[0], (hrtime(true) + 200_000_000) . "\n");
+        fclose($pipes[0]);
+        $connection = stream_socket_accept($server, 5);
+        expect($connection)->toBeResource();
+        stream_set_timeout($connection, 5);
+        $measured = 0;
+        while ($respond($connection)) {
+            $measured++;
+        }
+        expect(proc_close($process))->toBe(0);
+        $result = json_decode(file_get_contents($output), true, 512, JSON_THROW_ON_ERROR);
+        expect($result['error'])->toBeNull()->and($result['latencies'])->not->toBeEmpty()->toHaveCount($measured);
+    } finally {
+        if (is_resource($process)) {
+            proc_terminate($process);
+            proc_close($process);
+        }
+        foreach ($pipes as $pipe) {
+            if (is_resource($pipe)) {
+                fclose($pipe);
+            }
+        }
+        if (is_resource($connection)) {
+            fclose($connection);
+        }
+        fclose($server);
+    }
+});
+
 test('borrowed waits honor a shorter request deadline with and without coroutine capability', function (bool $cooperative): void {
     $runtime = RuntimeContext::fromCapabilities(
         new RuntimeCapabilities(RuntimeDriver::NATIVE, supportsRunwireCoroutines: $cooperative),
