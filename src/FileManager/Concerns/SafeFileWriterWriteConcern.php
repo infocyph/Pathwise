@@ -5,29 +5,12 @@ declare(strict_types=1);
 namespace Infocyph\Pathwise\FileManager\Concerns;
 
 use Infocyph\Pathwise\Exceptions\FileAccessException;
+use Infocyph\Pathwise\Utils\SerializedValueValidator;
 use SimpleXMLElement;
 use SplFileObject;
 
 trait SafeFileWriterWriteConcern
 {
-    private function isSafeSerializedValue(mixed $value, int $depth = 0): bool
-    {
-        if ($depth > 256) {
-            return false;
-        }
-        if (is_float($value)) {
-            return is_finite($value);
-        }
-        if ($value === null || is_bool($value) || is_int($value) || is_string($value)) {
-            return true;
-        }
-        if (!is_array($value)) {
-            return false;
-        }
-
-        return array_all($value, fn(mixed $item): bool => $this->isSafeSerializedValue($item, $depth + 1));
-    }
-
     /**
      * @param list<mixed> $params
      */
@@ -364,7 +347,7 @@ trait SafeFileWriterWriteConcern
      */
     private function writeSerializedData(mixed $data): int|false
     {
-        if (!$this->isSafeSerializedValue($data)) {
+        if (SerializedValueValidator::containsUnsupportedValue($data)) {
             throw new FileAccessException('Serialized values must contain only safe scalar and array types.');
         }
         $serializedData = serialize($data);
