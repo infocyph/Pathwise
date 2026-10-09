@@ -309,12 +309,13 @@ test('an exclusive upgrade acquires actual exclusive ownership', function (): vo
 });
 
 test('closing an atomic writer after a shared lock preserves the destination', function (): void {
-    file_put_contents($this->tempFilePath, 'original');
-    $writer = (new SafeFileWriter($this->tempFilePath))->enableAtomicWrite();
+    $target = $this->mountRoot . DIRECTORY_SEPARATOR . 'atomic.txt';
+    file_put_contents($target, 'original');
+    $writer = (new SafeFileWriter($target))->enableAtomicWrite();
     $writer->lock(LOCK_SH);
     $writer->close();
-    expect(file_get_contents($this->tempFilePath))->toBe('original')
-        ->and(glob($this->tempFilePath . '.tmp_*'))->toBe([]);
+    expect(file_get_contents($target))->toBe('original')
+        ->and(scandir($this->mountRoot))->toBe(['.', '..', 'atomic.txt']);
 });
 
 test('closing an adapter writer after a shared lock preserves the destination', function (): void {

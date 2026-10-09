@@ -485,7 +485,8 @@ test('cancelled atomic lock acquisition discards uninitialized staging on close'
         expect(function () use ($runtime, $request, $writer): void {
             (new CoroutineRuntime())->run(function (CoroutineScope $scope) use ($runtime, $request, $writer): void {
                 $scope->spawn(function () use ($scope, $request): void {
-                    while ((glob($this->runwireFile . '.tmp_*') ?: []) === []) {
+                    $end = hrtime(true) + 1_000_000_000;
+                    while (count(glob($this->runwireRoot . DIRECTORY_SEPARATOR . '*') ?: []) < 2 && hrtime(true) < $end) {
                         $scope->yieldNow();
                     }
                     $request->cancel(CancellationReason::HOST_CANCELLED);
@@ -498,7 +499,7 @@ test('cancelled atomic lock acquisition discards uninitialized staging on close'
         $writer->close();
     }
     expect(file_get_contents($this->runwireFile))->toBe('abcdefghijklmnop')
-        ->and(glob($this->runwireFile . '.tmp_*'))->toBe([]);
+        ->and(scandir($this->runwireRoot))->toBe(['.', '..', 'download.txt']);
 });
 
 test('a committed extraction remains successful when its host request is cancelled afterwards', function (): void {

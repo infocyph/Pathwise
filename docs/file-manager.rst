@@ -104,6 +104,8 @@ handle, after the first exclusive acquisition. Unlocking and reacquiring never
 truncates data already written. ``withRunwire($execution, $operation)`` makes retry
 delays cooperative inside a supplied capable host scope and observes borrowed
 deadlines and cancellation. The normal path keeps bounded synchronous retries.
+Atomic and adapter staging modes lock their working file. Applications needing
+serialized publication to one destination must coordinate publishers separately.
 
 ``FileCompression``
 -------------------
