@@ -243,3 +243,71 @@ test('materialization failure removes a partially written staging file', functio
     $remaining = glob($this->stagingDir . DIRECTORY_SEPARATOR . 'pathwise-upload-*');
     expect($remaining === false ? [] : $remaining)->toBe([]);
 });
+
+test('bounded stream staging reads no more than limit plus one byte from caller streams', function (?int $declaredSize): void {
+    $this->processor->setValidationSettings(['text/plain'], 16);
+    $stream = fopen('php://temp', 'w+b');
+    if (!is_resource($stream)) {
+        throw new RuntimeException('Unable to allocate stream source.');
+    }
+    fwrite($stream, str_repeat('x', 1024 * 1024));
+    rewind($stream);
+
+    try {
+        $source = UploadSource::fromStream($stream, 'bounded.txt', size: $declaredSize);
+        expect(fn () => $this->processor->ingestSource($source))
+            ->toThrow(FileSizeExceededException::class, 'Exceeded file size limit')
+            ->and(ftell($stream))->toBe(17)
+            ->and(is_resource($stream))->toBeTrue()
+            ->and(glob($this->stagingDir . DIRECTORY_SEPARATOR . 'pathwise-upload-*'))->toBe([]);
+    } finally {
+        fclose($stream);
+    }
+})->with(['understated size' => 1, 'unknown size' => null]);
+
+test('bounded materialization permits exactly the configured byte ceiling', function (): void {
+    $this->processor->setValidationSettings(['text/plain'], 4);
+    $stream = fopen('php://temp', 'w+b');
+    if (!is_resource($stream)) {
+        throw new RuntimeException('Unable to allocate stream source.');
+    }
+    fwrite($stream, 'four');
+    rewind($stream);
+
+    try {
+        $destination = $this->processor->ingestSource(UploadSource::fromStream($stream, 'exact.txt'));
+        expect(file_get_contents($destination))->toBe('four')
+            ->and(is_resource($stream))->toBeTrue();
+    } finally {
+        fclose($stream);
+    }
+});
+
+test('bounded path staging retains an owned source when limit is exceeded', function (): void {
+    $this->processor->setValidationSettings(['text/plain'], 4);
+    $path = PathHelper::join($this->sourceDir, 'owned-bounded.txt');
+    file_put_contents($path, 'five!');
+
+    expect(fn () => $this->processor->ingestSource(
+        UploadSource::fromPath($path, clientFilename: 'owned-bounded.txt', size: 1, owned: true),
+    ))->toThrow(FileSizeExceededException::class, 'Exceeded file size limit')
+        ->and(file_get_contents($path))->toBe('five!')
+        ->and(glob($this->stagingDir . DIRECTORY_SEPARATOR . 'pathwise-upload-*'))->toBe([]);
+});
+
+test('strict untrusted upload limit cannot be disabled before invoking a mover', function (): void {
+    $this->processor->setTrustProfile(\Infocyph\Pathwise\StreamHandler\UploadTrustProfile::UNTRUSTED_DATA);
+    $this->processor->setValidationSettings(['text/plain'], 0);
+    $called = false;
+    $source = UploadSource::fromMover(
+        static function (string $target) use (&$called): void {
+            $called = true;
+            file_put_contents($target, 'should-not-be-staged');
+        },
+        clientFilename: 'strict.txt',
+    );
+
+    expect(fn () => $this->processor->ingestSource($source))
+        ->toThrow(UploadException::class, 'finite total file size limit')
+        ->and($called)->toBeFalse();
+});
