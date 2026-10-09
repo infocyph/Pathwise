@@ -240,26 +240,37 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
         if (!in_array($lockType, [LOCK_EX, LOCK_SH], true)) {
             throw new FileAccessException("Invalid lock type for file {$this->filename}.");
         }
+        if ($retries < 1 || $delay < 0 || $delay > 60_000) {
+            throw new FileAccessException('Lock retries and delay must be finite and non-negative.');
+        }
+        if ($this->isLocked) {
+            return;
+        }
 
-        $this->initiate($this->append ? 'a' : 'w');
+        // c+ opens without truncation; a waiting or rejected lock cannot destroy data.
+        $this->initiate($this->append ? 'a' : 'c+');
         $file = $this->requireFileHandle();
-        $attempt = 0;
+        $attempts = $waitForLock ? $retries : 1;
 
-        do {
-            $lockMode = $waitForLock ? $lockType : $lockType | LOCK_NB;
-            if ($file->flock($lockMode)) {
+        for ($attempt = 0; $attempt < $attempts; $attempt++) {
+            if ($file->flock($lockType | LOCK_NB)) {
                 $this->isLocked = true;
+                if (!$this->append && $lockType === LOCK_EX) {
+                    if (!$file->ftruncate(0) || $file->fseek(0) !== 0) {
+                        $this->unlock();
+
+                        throw new FileAccessException("Unable to initialize locked file {$this->filename}.");
+                    }
+                }
 
                 return;
             }
-            if (!$waitForLock) {
-                break;
+            if ($waitForLock && $attempt + 1 < $attempts && $delay > 0) {
+                usleep($delay * 1_000);
             }
-            usleep($delay * 1000);
-            $attempt++;
-        } while ($attempt < $retries);
+        }
 
-        throw new FileAccessException("Failed to acquire lock on file {$this->filename} after $retries attempts.");
+        throw new FileAccessException("Failed to acquire lock on file {$this->filename} after {$attempts} attempts.");
     }
 
     /**
