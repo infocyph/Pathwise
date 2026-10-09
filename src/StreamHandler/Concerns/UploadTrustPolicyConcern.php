@@ -48,6 +48,13 @@ trait UploadTrustPolicyConcern
         }
     }
 
+    private function assertStrictUploadSizeLimitConfigured(): void
+    {
+        if ($this->isStrictUntrustedProfile() && $this->maxFileSize <= 0) {
+            throw new UploadException('Strict untrusted uploads require a finite total file size limit.');
+        }
+    }
+
     private function isStrictUntrustedProfile(): bool
     {
         return $this->trustProfile === UploadTrustProfile::UNTRUSTED_DATA;
