@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\Native;
 
+use FilesystemIterator;
+use Infocyph\Pathwise\Exceptions\CompressionException;
 use Infocyph\Pathwise\Results\NativeExecutionResult;
+use RecursiveDirectoryIterator;
+use RecursiveIteratorIterator;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 
@@ -50,6 +54,7 @@ final class NativeOperationsAdapter
         if (!NativeCommandRunner::commandExists('zip')) {
             return self::unsupportedResult();
         }
+        self::assertZipSourceWithoutLinks($source);
 
         if (is_dir($source)) {
             $command = ['zip', '-q', '-r', $zipPath, '.'];
@@ -120,6 +125,26 @@ final class NativeOperationsAdapter
         return NativeCommandRunner::commandExists('grep')
             ? self::run(['grep', '-i', '-F', '--', $term, PathHelper::normalize($path)], limits: $limits)
             : self::unsupportedResult();
+    }
+
+    private static function assertZipSourceWithoutLinks(string $source): void
+    {
+        if (is_link($source)) {
+            throw new CompressionException('Symbolic links are not followed during ZIP creation.');
+        }
+        if (!is_dir($source)) {
+            return;
+        }
+
+        $entries = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($source, FilesystemIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::SELF_FIRST,
+        );
+        foreach ($entries as $entry) {
+            if ($entry->isLink()) {
+                throw new CompressionException('Symbolic links are not followed during ZIP creation.');
+            }
+        }
     }
 
     /** @param list<string> $command */
