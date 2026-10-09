@@ -9,6 +9,13 @@ on:
   pull_request:
     branches: [ "main", "master", "develop", "development" ]
 
+
+# Cancel superseded PR revisions; retain complete checks for the newest head.
+# Push-to-main, scheduled and release-tag workflows are never cancelled here.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
