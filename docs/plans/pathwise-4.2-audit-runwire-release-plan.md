@@ -261,8 +261,8 @@ Branch: `feature/runwire-2.1.1`. Review baseline: `eead7cc6a1ac498a602f7f0ac0b3f
 
 | Batch / gate | Findings and scope | Implementation | QA / CI | Commit evidence |
 | --- | --- | --- | --- | --- |
-| Prepare | Draft PR, tracker, preserve tagged 4.1 audit reference | Done | Plan/PR metadata checked | Initial plan setup |
-| A1 | P01 local containment, P02 bounded upload/materialization + cumulative chunks | Not started | Pending | — |
+| Prepare | Draft PR, tracker, preserve tagged 4.1 audit reference | Done | Plan/PR metadata checked | `faf02f7` · [PR #24](https://github.com/infocyph/Pathwise/pull/24) |
+| A1 | P01 local containment, P02 bounded upload/materialization + cumulative chunks | Implemented, **QA in progress** | [Candidate `41788162`](https://github.com/infocyph/Pathwise/actions/runs/37905096399) queued; [preceding `c8f41884`](https://github.com/infocyph/Pathwise/actions/runs/37904951939) failed 5 exception-wrapping assertions, corrected; baseline PHPStan 12 findings remain open for P12 | `947f34a` through `4178816` (source + regressions) |
 | A2 | P03 serialized graph work, P04 native ZIP, P05 lock correctness | Not started | Pending | — |
 | A3 | P06 ClamAV, P11 deduplication | Not started | Pending | — |
 | B | P07–P10 Windows/queue/framing/native args, P12 analyzers/clones/deps/docs | Not started | Pending | — |
