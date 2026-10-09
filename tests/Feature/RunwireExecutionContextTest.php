@@ -6,6 +6,8 @@ use Infocyph\Pathwise\Integration\Runwire\RunwireExecutionContext;
 use Infocyph\Pathwise\StreamHandler\DownloadProcessor;
 use Infocyph\Pathwise\StreamHandler\UploadProcessor;
 use Infocyph\Pathwise\StreamHandler\UploadSource;
+use Infocyph\Runwire\Coroutine\CoroutineRuntime;
+use Infocyph\Runwire\Coroutine\CoroutineScope;
 use Infocyph\Runwire\Exception\CancelledException;
 use Infocyph\Runwire\RequestContext;
 use Infocyph\Runwire\Runtime\Enum\CancellationReason;
@@ -162,4 +164,58 @@ test('borrowed checksum traversal checks host cancellation between files', funct
         }
     })->toThrow(CancelledException::class);
     expect($received)->toBe(1);
+});
+
+test('real Runwire coroutine scopes support explicit intermediary forwarding and reject stale reuse', function (): void {
+    $capabilities = new RuntimeCapabilities(RuntimeDriver::NATIVE, supportsRunwireCoroutines: true);
+    $runtime = RuntimeContext::fromCapabilities($capabilities, 'host-test', generation: 3);
+    $request = RequestContext::create($runtime);
+    $download = new DownloadProcessor();
+    $execution = null;
+    $childResult = null;
+
+    $forward = static function (
+        RunwireExecutionContext $borrowed,
+        DownloadProcessor $owner,
+        string $path,
+    ): int {
+        return $owner->withRunwire(
+            $borrowed,
+            static fn (DownloadProcessor $bound): int => $bound->prepareDownload($path)->size,
+        );
+    };
+
+    $result = (new CoroutineRuntime())->run(function (CoroutineScope $scope) use (
+        $runtime,
+        $request,
+        $download,
+        $forward,
+        &$execution,
+        &$childResult,
+    ): int {
+        $execution = new RunwireExecutionContext($runtime, $request, $scope, checkpointEvery: 1);
+
+        $task = $scope->spawn(function () use (
+            $execution,
+            $download,
+            $forward,
+            &$childResult,
+        ): void {
+            $childResult = $forward($execution, $download, $this->runwireFile);
+        });
+
+        $size = $forward($execution, $download, $this->runwireFile);
+        $task->await();
+
+        return $size;
+    });
+
+    expect($result)->toBe(16)
+        ->and($childResult)->toBe(16)
+        ->and($request->completed())->toBeFalse();
+
+    expect(fn () => $download->withRunwire(
+        $execution,
+        static fn (DownloadProcessor $bound): int => $bound->prepareDownload($this->runwireFile)->size,
+    ))->toThrow(LogicException::class);
 });
