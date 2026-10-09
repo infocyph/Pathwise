@@ -24,7 +24,7 @@ use Infocyph\Pathwise\Utils\PathHelper;
  */
 trait UploadProcessorChunkConcern
 {
-    private function appendChunkToStream(string $chunkPath, mixed $output, int $index): void
+    private function appendChunkToStream(string $chunkPath, mixed $output, int $index, ?int $remaining): int
     {
         if (!is_resource($output)) {
             throw new UploadException("Invalid merge stream for chunk index {$index}.");
@@ -36,9 +36,49 @@ trait UploadProcessorChunkConcern
         }
 
         try {
-            stream_copy_to_stream($input, $output);
+            $length = $remaining === null || $remaining === PHP_INT_MAX ? -1 : $remaining + 1;
+            $copied = stream_copy_to_stream($input, $output, $length);
+            if (!is_int($copied)) {
+                throw new UploadException("Unable to merge chunk at index {$index}.");
+            }
+            if ($remaining !== null && $copied > $remaining) {
+                throw new FileSizeExceededException('Exceeded file size limit.');
+            }
+
+            return $copied;
         } finally {
             fclose($input);
+        }
+    }
+
+    private function assertChunkAggregateSize(
+        string $chunkDirectory,
+        int $totalChunks,
+        ?int $replacingIndex = null,
+        int $replacementBytes = 0,
+    ): void {
+        if ($this->maxFileSize <= 0) {
+            return;
+        }
+
+        $remaining = $this->maxFileSize - $replacementBytes;
+        if ($remaining < 0) {
+            throw new FileSizeExceededException('Exceeded file size limit.');
+        }
+
+        for ($index = 0; $index < $totalChunks; $index++) {
+            if ($index === $replacingIndex) {
+                continue;
+            }
+            $path = PathHelper::join($chunkDirectory, sprintf('chunk_%06d.part', $index));
+            if (!$this->storageFileExists($path)) {
+                continue;
+            }
+            $size = $this->storageSize($path);
+            if ($size < 0 || $size > $remaining) {
+                throw new FileSizeExceededException('Exceeded file size limit.');
+            }
+            $remaining -= $size;
         }
     }
 
@@ -132,9 +172,13 @@ trait UploadProcessorChunkConcern
         /** @var resource $output */
 
         try {
+            $remaining = $this->maxFileSize > 0 ? $this->maxFileSize : null;
             for ($i = 0; $i < $totalChunks; $i++) {
                 $chunkPath = $this->resolveChunkPath($chunkDirectory, $i);
-                $this->appendChunkToStream($chunkPath, $output, $i);
+                $copied = $this->appendChunkToStream($chunkPath, $output, $i, $remaining);
+                if ($remaining !== null) {
+                    $remaining -= $copied;
+                }
             }
 
             rewind($output);
@@ -186,6 +230,7 @@ trait UploadProcessorChunkConcern
         if ($this->maxChunkCount > 0 && $totalChunks > $this->maxChunkCount) {
             throw new UploadException('Total chunks exceed configured limit.');
         }
+        $this->assertChunkAggregateSize($chunkDirectory, $totalChunks);
 
         return [$manifest, $totalChunks];
     }
