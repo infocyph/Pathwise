@@ -134,6 +134,8 @@ trait UploadProcessorValidationConcern
     /** Ensure the upload directory exists. */
     private function ensureUploadDirectoryExists(): void
     {
+        // Validate local context containment before any adapter mutation.
+        $this->storageDirectLocalPath($this->uploadDir);
         if (!$this->storageDirectoryExists($this->uploadDir)) {
             $this->storageCreateDirectory($this->uploadDir);
         }
