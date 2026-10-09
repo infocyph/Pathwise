@@ -85,6 +85,17 @@ final readonly class ClamAvDaemonScanner implements MalwareScannerInterface, Mal
         }
     }
 
+    /** @param resource $socket */
+    private function assertTimeRemaining(mixed $socket, float $deadline): void
+    {
+        $remaining = $this->remainingSeconds($deadline);
+        $seconds = (int) floor($remaining);
+        $microseconds = max(1, (int) (($remaining - $seconds) * 1_000_000));
+        if (!stream_set_timeout($socket, $seconds, $microseconds)) {
+            throw new MalwareScannerException('Unable to configure ClamAV socket timeout.');
+        }
+    }
+
     /** @return resource */
     private function connect(float $deadline): mixed
     {
@@ -191,6 +202,16 @@ final readonly class ClamAvDaemonScanner implements MalwareScannerInterface, Mal
         throw new MalwareScannerException('ClamAV response exceeds the configured limit.');
     }
 
+    private function remainingSeconds(float $deadline): float
+    {
+        $remaining = $deadline - hrtime(true) / 1_000_000_000;
+        if ($remaining <= 0) {
+            throw new MalwareScannerException('ClamAV operation timed out.');
+        }
+
+        return $remaining;
+    }
+
     private function validateConfiguration(): void
     {
         $this->validateLimits();
@@ -249,27 +270,6 @@ final readonly class ClamAvDaemonScanner implements MalwareScannerInterface, Mal
         if ($this->maxStreamBytes < 1) {
             throw new \InvalidArgumentException('ClamAV stream limit must be positive.');
         }
-    }
-
-    /** @param resource $socket */
-    private function assertTimeRemaining(mixed $socket, float $deadline): void
-    {
-        $remaining = $this->remainingSeconds($deadline);
-        $seconds = (int) floor($remaining);
-        $microseconds = max(1, (int) (($remaining - $seconds) * 1_000_000));
-        if (!stream_set_timeout($socket, $seconds, $microseconds)) {
-            throw new MalwareScannerException('Unable to configure ClamAV socket timeout.');
-        }
-    }
-
-    private function remainingSeconds(float $deadline): float
-    {
-        $remaining = $deadline - hrtime(true) / 1_000_000_000;
-        if ($remaining <= 0) {
-            throw new MalwareScannerException('ClamAV operation timed out.');
-        }
-
-        return $remaining;
     }
 
     /** @param resource $stream */
