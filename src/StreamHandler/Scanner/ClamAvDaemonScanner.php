@@ -54,25 +54,7 @@ final readonly class ClamAvDaemonScanner implements MalwareScannerInterface, Mal
         try {
             $socket = $this->connect($deadline);
             $this->writeFully($socket, "zINSTREAM\0", $deadline);
-            $remaining = $this->maxStreamBytes;
-
-            while (!feof($input)) {
-                $this->assertTimeRemaining($socket, $deadline);
-                $length = min($this->chunkSize, $remaining === PHP_INT_MAX ? $remaining : $remaining + 1);
-                $chunk = fread($input, $length);
-                if (!is_string($chunk) || ($chunk === '' && !feof($input))) {
-                    throw new MalwareScannerException('Unable to read ClamAV scan input.');
-                }
-                if ($chunk === '') {
-                    break;
-                }
-                $bytes = strlen($chunk);
-                if ($bytes > $remaining) {
-                    throw new MalwareScannerException('ClamAV scan input exceeds the configured stream limit.');
-                }
-                $remaining -= $bytes;
-                $this->writeFully($socket, pack('N', $bytes) . $chunk, $deadline);
-            }
+            $this->sendScanInput($input, $socket, $deadline);
 
             $this->writeFully($socket, pack('N', 0), $deadline);
 
@@ -210,6 +192,33 @@ final readonly class ClamAvDaemonScanner implements MalwareScannerInterface, Mal
         }
 
         return $remaining;
+    }
+
+    /**
+     * @param resource $input
+     * @param resource $socket
+     */
+    private function sendScanInput(mixed $input, mixed $socket, float $deadline): void
+    {
+        $remaining = $this->maxStreamBytes;
+        while (!feof($input)) {
+            $this->assertTimeRemaining($socket, $deadline);
+            $length = max(1, min($this->chunkSize, $remaining === PHP_INT_MAX ? $remaining : $remaining + 1));
+            $chunk = fread($input, $length);
+            if (!is_string($chunk) || ($chunk === '' && !feof($input))) {
+                throw new MalwareScannerException('Unable to read ClamAV scan input.');
+            }
+            if ($chunk === '') {
+                break;
+            }
+
+            $bytes = strlen($chunk);
+            if ($bytes > $remaining) {
+                throw new MalwareScannerException('ClamAV scan input exceeds the configured stream limit.');
+            }
+            $remaining -= $bytes;
+            $this->writeFully($socket, pack('N', $bytes) . $chunk, $deadline);
+        }
     }
 
     private function validateConfiguration(): void
