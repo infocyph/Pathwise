@@ -139,6 +139,11 @@ test('hard link dedup never uses a canonical or target symlink as a regular file
             ->and(file_get_contents($canonical))->toBe('same-content')
             ->and($report->linked)->toBe([]);
     } finally {
+        foreach ([$canonical, $candidate] as $path) {
+            if (is_link($path) || is_file($path)) {
+                unlink($path);
+            }
+        }
         if (is_file($outside)) {
             unlink($outside);
         }
