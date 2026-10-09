@@ -58,6 +58,7 @@ final readonly class UploadSource
             $error,
             static function (string $target, ?int $maxBytes) use ($mover): void {
                 // Arbitrary host movers own their own streaming/quota enforcement.
+                unset($maxBytes);
                 $mover($target);
             },
         );
@@ -143,12 +144,7 @@ final readonly class UploadSource
 
     public function materialize(?string $preferredTempDirectory = null, ?int $maxBytes = null): UploadMaterialization
     {
-        if ($maxBytes !== null && $maxBytes < 0) {
-            throw new UploadException('Materialization byte limit must be non-negative.');
-        }
-        if ($maxBytes !== null && $this->size !== null && $this->size > $maxBytes) {
-            throw new FileSizeExceededException('Exceeded file size limit.');
-        }
+        self::assertWithinMaterializationLimit($maxBytes, $this->size);
 
         $root = self::materializationRoot($preferredTempDirectory);
         $directory = self::allocateStagingDirectory($root);
@@ -163,9 +159,7 @@ final readonly class UploadSource
 
             clearstatcache(true, $target);
             $size = filesize($target);
-            if (is_int($size) && $maxBytes !== null && $size > $maxBytes) {
-                throw new FileSizeExceededException('Exceeded file size limit.');
-            }
+            self::assertWithinMaterializationLimit($maxBytes, is_int($size) ? $size : null);
             $sha256 = hash_file('sha256', $target);
             if (!is_int($size) || !is_string($sha256)) {
                 throw new UploadException('Unable to determine materialized upload identity.');
@@ -189,6 +183,19 @@ final readonly class UploadSource
             }
 
             throw new UploadException('Unable to materialize upload source.', 0, $exception);
+        }
+    }
+
+    private static function assertWithinMaterializationLimit(?int $maxBytes, ?int $actualSize): void
+    {
+        if ($maxBytes === null) {
+            return;
+        }
+        if ($maxBytes < 0) {
+            throw new UploadException('Materialization byte limit must be non-negative.');
+        }
+        if ($actualSize !== null && $actualSize > $maxBytes) {
+            throw new FileSizeExceededException('Exceeded file size limit.');
         }
     }
 
