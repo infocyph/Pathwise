@@ -261,21 +261,19 @@ Branch: `feature/runwire-2.1.1`. Review baseline: `eead7cc6a1ac498a602f7f0ac0b3f
 
 | Batch / gate | Findings and scope | Implementation | QA / CI | Commit evidence |
 | --- | --- | --- | --- | --- |
-| Prepare | Draft PR, tracker, preserve tagged 4.1 audit reference | Done | Plan/PR metadata checked | `faf02f7` · [PR #24](https://github.com/infocyph/Pathwise/pull/24) |
-| A1 | P01 local containment, P02 bounded upload/materialization + cumulative chunks | **Implementation and functional QA verified**; full release QA remains open | [`a6a153b` workflow](https://github.com/infocyph/Pathwise/actions/runs/37905549989): all four PHPForge QA matrices, Windows 8.4/8.5, adapters, clean install and both benchmarks passed. PHPStan analysis still reports the same 12 preexisting complexity errors (P12), release stress remains running, security-report job skipped after analysis failure. | P01: `947f34a`, `354135b`, `81e5fc9`; P02: `e10a590`–`a6a153b` |
-| A2 | P03 serialized graph work, P04 native ZIP, P05 lock correctness | Not started | Pending | — |
-| A3 | P06 ClamAV, P11 deduplication | Not started | Pending | — |
-| B | P07–P10 Windows/queue/framing/native args, P12 analyzers/clones/deps/docs | Not started | Pending | — |
-| Remediation gate | Full PHPForge, security fixtures, Windows CI and matched baseline | Not started | Pending | — |
-| Runwire integration | Exact 2.1.1 borrowed context; nested/Fiber safety, cancellation, Foundation 3 host chain | Not started | Pending | — |
-| Final 4.2.0 candidate | Hosted matrix, security, adapters, performance, soak/release checklist | Not started | Pending | — |
+| Preparation | Draft PR, plan tracker, baseline | Complete | PR verified, no merge | [Draft PR #24](https://github.com/infocyph/Pathwise/pull/24), `faf02f7` |
+| **Remediation batch A** | P01–P06, P11; all security/data-integrity fixes and regressions | **In progress** — P01/P02 verified functionally; P03/P04/P05/P06/P11 changes awaiting full regression | [A1 baseline/head `200cfd5`](https://github.com/infocyph/Pathwise/actions/runs/37905794865): four quality matrices, Windows 8.4/8.5, adapters, benchmarks, stress, clean install passed. PHPStan two jobs failed on 12 known P12 findings; report skipped. New batch-A changes need fresh QA | P01/P02 `947f34a`–`a6a153b`; P03–P06/P11 `3be1f60` onward |
+| **Remediation batch B** | P07–P10 and P12, analyzer/clone/toolchain/docs | Not started | Pending | — |
+| Remediation checkpoint | Full PHPForge, security, Windows, matched performance baseline | Not started | Pending | — |
+| Runwire integration batch | Optional Runwire 2.1.1 borrowed context and host fixtures | Not started | Pending | — |
+| Final 4.2.0 candidate | Exact candidate hosted QA, performance, soak, security reports | Not started | Pending | — |
 
-### Batch A1 verification record
+### Remediation batch A: earlier P01/P02 verification
 
 - **P01:** Distinguish local capability from local-path containment; propagate containment denials rather than falling back to the adapter; check local upload root before creating directory. Regression coverage includes default/named local disks and nested symlink escapes.
 - **P02:** Bound framework-controlled stream/path staging to the actual configured byte ceiling with one-byte over-read, retain borrowed streams and owned-source failure semantics, fail closed when strict total limits are disabled, and reject aggregate/replacement excess under the chunk-session lock before merge. Mover callback limits remain the host's responsibility; Pathwise checks resulting staged size before hashing.
 - **Hosted QA:** Initial candidate `c8f41884` failed five expected `FileSizeExceededException` tests because materialization wrapped the exception; `4178816` corrected this. Subsequent `0e376dc` passed Pest but failed Pint ordering/blank-line rules; `a6a153b` corrected formatting. On [`a6a153b`](https://github.com/infocyph/Pathwise/actions/runs/37905549989), PHP 8.4/8.5 prefer-stable and prefer-lowest QA, Windows 8.4/8.5, optional adapters, clean install and both benchmarks passed. PHPStan reported only the twelve previously documented findings; full workflow remains non-green and release stress is still running.
-- **Open release blockers:** Original twelve PHPStan cognitive-complexity findings (P12); uncompleted release stress, matched host RPM and final-candidate verification. Batch A1's focused correctness QA is verified, but **the PR is not release-ready** and the complete remediation gate remains open.
+- **Open release blockers:** Original twelve PHPStan cognitive-complexity findings (P12); matched host RPM and final-candidate verification. P01/P02 focused correctness QA is verified, but **the PR is not release-ready** and the complete remediation gate remains open.
 
 ### Tracker policy
 
