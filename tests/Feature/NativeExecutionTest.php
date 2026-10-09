@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Infocyph\Pathwise\Core\ExecutionStrategy;
+use Infocyph\Pathwise\Exceptions\CompressionException;
 use Infocyph\Pathwise\Exceptions\NativeExecutionException;
 use Infocyph\Pathwise\Exceptions\UnsupportedStorageOperationException;
 use Infocyph\Pathwise\FileManager\FileOperations;
@@ -239,4 +240,31 @@ test('forced native file operations reject mounted paths', function () {
 
     expect(fn () => $operations->copy($this->nativeRoot . DIRECTORY_SEPARATOR . 'copy.txt'))
         ->toThrow(UnsupportedStorageOperationException::class, 'local filesystem paths');
+});
+
+test('native ZIP refuses file and directory symlinks without archiving outside content', function (): void {
+    if (PHP_OS_FAMILY === 'Windows' || !NativeOperationsAdapter::canUseNativeZipCompression()) {
+        expect(true)->toBeTrue();
+
+        return;
+    }
+
+    $source = $this->nativeRoot . DIRECTORY_SEPARATOR . 'source';
+    mkdir($source);
+    $outside = $this->nativeRoot . DIRECTORY_SEPARATOR . 'outside-secret.txt';
+    file_put_contents($outside, 'never-archive-this');
+    $link = $source . DIRECTORY_SEPARATOR . 'linked-file.txt';
+    symlink($outside, $link);
+    $destination = $this->nativeRoot . DIRECTORY_SEPARATOR . 'out.zip';
+
+    expect(fn () => NativeOperationsAdapter::compressToZip($source, $destination))
+        ->toThrow(CompressionException::class, 'Symbolic links are not followed')
+        ->and(file_exists($destination))->toBeFalse();
+
+    unlink($link);
+    symlink(dirname($outside), $source . DIRECTORY_SEPARATOR . 'linked-directory');
+
+    expect(fn () => NativeOperationsAdapter::compressToZip($source, $destination))
+        ->toThrow(CompressionException::class, 'Symbolic links are not followed')
+        ->and(file_exists($destination))->toBeFalse();
 });
