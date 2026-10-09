@@ -199,8 +199,8 @@ Pathwise is protected by [PHPForge](https://github.com/infocyph/PHPForge), which
 Runwire is an **optional host runtime**, pinned to `2.1.1` for integration development and suggested for deployments using the bridge. Normal Pathwise use does not instantiate or activate Runwire. The host owns its runtime, request, scope and cancellation.
 
 ```php
-use Infocyph\\Pathwise\\Integration\\Runwire\\RunwireExecutionContext;
-use Infocyph\\Pathwise\\StreamHandler\\DownloadProcessor;
+use Infocyph\Pathwise\Integration\Runwire\RunwireExecutionContext;
+use Infocyph\Pathwise\StreamHandler\DownloadProcessor;
 
 // $runtime and $request are supplied by the active host; Pathwise does not create them.
 $execution = new RunwireExecutionContext($runtime, $request, $scope ?? null);
