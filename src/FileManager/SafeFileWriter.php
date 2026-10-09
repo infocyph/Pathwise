@@ -247,30 +247,8 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
             return;
         }
 
-        // c+ opens without truncation; a waiting or rejected lock cannot destroy data.
         $this->initiate($this->append ? 'a' : 'c+');
-        $file = $this->requireFileHandle();
-        $attempts = $waitForLock ? $retries : 1;
-
-        for ($attempt = 0; $attempt < $attempts; $attempt++) {
-            if ($file->flock($lockType | LOCK_NB)) {
-                $this->isLocked = true;
-                if (!$this->append && $lockType === LOCK_EX) {
-                    if (!$file->ftruncate(0) || $file->fseek(0) !== 0) {
-                        $this->unlock();
-
-                        throw new FileAccessException("Unable to initialize locked file {$this->filename}.");
-                    }
-                }
-
-                return;
-            }
-            if ($waitForLock && $attempt + 1 < $attempts && $delay > 0) {
-                usleep($delay * 1_000);
-            }
-        }
-
-        throw new FileAccessException("Failed to acquire lock on file {$this->filename} after {$attempts} attempts.");
+        $this->acquireLock($this->requireFileHandle(), $lockType, $waitForLock ? $retries : 1, $waitForLock ? $delay : 0);
     }
 
     /**
@@ -418,6 +396,35 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
         }
 
         return $this->performWrite('xml', fn(): int|false => $this->writeXmlData($element));
+    }
+
+    private function acquireLock(SplFileObject $file, int $lockType, int $attempts, int $delay): void
+    {
+        for ($attempt = 0; $attempt < $attempts; $attempt++) {
+            if ($file->flock($lockType | LOCK_NB)) {
+                $this->isLocked = true;
+                $this->initializeLockedWrite($file, $lockType);
+
+                return;
+            }
+            if ($attempt + 1 < $attempts && $delay > 0) {
+                usleep($delay * 1_000);
+            }
+        }
+
+        throw new FileAccessException("Failed to acquire lock on file {$this->filename} after {$attempts} attempts.");
+    }
+
+    private function initializeLockedWrite(SplFileObject $file, int $lockType): void
+    {
+        if ($this->append || $lockType !== LOCK_EX) {
+            return;
+        }
+        if (!$file->ftruncate(0) || $file->fseek(0) !== 0) {
+            $this->unlock();
+
+            throw new FileAccessException("Unable to initialize locked file {$this->filename}.");
+        }
     }
 
     private function createAtomicTempFilePath(): string
