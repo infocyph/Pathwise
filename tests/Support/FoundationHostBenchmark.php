@@ -70,7 +70,7 @@ try {
         'successes' => $iterations,
         'host' => 'Foundation 3.0.1 + Webrick filesystem response (in-process, synthetic)',
     ];
-    echo json_encode($report, JSON_THROW_ON_ERROR) . "\n";
+    fwrite(STDOUT, json_encode($report, JSON_THROW_ON_ERROR) . "\n");
 } finally {
     unlink($root . '/public/assets/fixture.txt');
     rmdir($root . '/public/assets');
