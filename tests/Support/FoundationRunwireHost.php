@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 require dirname(__DIR__, 2) . '/vendor/autoload.php';
 
+use Infocyph\Foundation\Filesystem\FilesystemResponseFactory;
 use Infocyph\Foundation\Filesystem\FilesystemTransferFactory;
 use Infocyph\Foundation\Filesystem\StorageRegistry;
 use Infocyph\Foundation\Foundation;
@@ -16,6 +17,7 @@ use Infocyph\Runwire\Runtime\Enum\CancellationReason;
 use Infocyph\Runwire\Runtime\Enum\RuntimeDriver;
 use Infocyph\Runwire\RuntimeCapabilities;
 use Infocyph\Runwire\RuntimeContext;
+use Infocyph\Webrick\Request\Request;
 
 function requireHost(bool $condition, string $message): void
 {
@@ -64,6 +66,19 @@ try {
 
     requireHost($storageA->disk('uploads')->read('host/fixture.txt') === 'host-proof', 'Host A storage changed.');
     requireHost($storageB->disk('uploads')->read('host/fixture.txt') === 'other-host', 'Host B storage changed.');
+
+    mkdir($rootA . '/public/assets', 0700, true);
+    file_put_contents($rootA . '/public/assets/fixture.txt', 'webrick-response');
+    $request = Request::fake(
+        headers: ['Host' => 'localhost'],
+        uri: 'http://localhost/assets/fixture.txt',
+    );
+    $response = $appA->make(FilesystemResponseFactory::class)->publicFile($request, 'assets/fixture.txt');
+    requireHost(
+        $response->getStatusCode() === 200
+        && $response->getFileBody()?->read(strlen('webrick-response')) === 'webrick-response',
+        'Foundation/Webrick public response did not preserve Pathwise transfer semantics.',
+    );
 
     $capabilities = new RuntimeCapabilities(RuntimeDriver::NATIVE, supportsRunwireCoroutines: true);
     $runtime = RuntimeContext::fromCapabilities($capabilities, 'foundation3-host', generation: 1);
@@ -120,7 +135,48 @@ try {
     requireHost(!$requestB->completed(), 'Pathwise completed a host-owned request.');
     $requestA->complete();
     $requestB->complete();
-    fwrite(STDOUT, "Foundation 3.0.1 / Runwire 2.1.1 host integration, isolation and cancellation PASS\n");
+
+    // Persistent host: reuse both app contexts and processors across 1,500 request lifecycles.
+    $memoryBefore = memory_get_usage(true);
+    for ($i = 0; $i < 1500; $i++) {
+        $request = RequestContext::create($runtime);
+        $borrowed = new RunwireExecutionContext($runtime, $request);
+        $owner = $i % 2 === 0 ? $downA : $downB;
+        $expected = $i % 2 === 0 ? 'host-proof' : 'other-host';
+        if ($i % 17 === 0) {
+            $request->cancel(CancellationReason::HOST_CANCELLED);
+            $blocked = false;
+            try {
+                $owner->withRunwire(
+                    $borrowed,
+                    static fn ($download): mixed => $download->prepareDownload('uploads://host/fixture.txt'),
+                );
+            } catch (CancelledException) {
+                $blocked = true;
+            }
+            requireHost($blocked, 'Cancelled worker request was accepted.');
+        } else {
+            $body = $owner->withRunwire(
+                $borrowed,
+                static function ($download): string {
+                    $prepared = $download->prepareDownload('uploads://host/fixture.txt');
+
+                    return implode('', iterator_to_array($download->streamChunks($prepared), false));
+                },
+            );
+            requireHost($body === $expected, 'Persistent worker crossed application storage boundaries.');
+        }
+
+        requireHost(!$request->completed(), 'Pathwise completed a request owned by the host.');
+        $request->complete();
+        if ($i % 100 === 0) {
+            gc_collect_cycles();
+        }
+    }
+    gc_collect_cycles();
+    requireHost(memory_get_usage(true) - $memoryBefore <= 16 * 1024 * 1024,
+        'Worker retained excessive request-scoped memory after 1,500 lifecycles.');
+    fwrite(STDOUT, "Foundation 3.0.1 / Runwire 2.1.1 host, Webrick response, cancellation and 1,500 worker lifecycles PASS\n");
 } finally {
     cleanupHost($rootA);
     cleanupHost($rootB);
