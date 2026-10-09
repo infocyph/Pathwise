@@ -234,3 +234,35 @@ test('serialized validation uses a finite total work budget for shared reference
         ->and(fn () => (new SafeFileWriter($this->tempFilePath))->writeSerialized($sharedGraph))
         ->toThrow(FileAccessException::class, 'safe scalar and array types');
 });
+
+test('failed and timed lock attempts do not truncate an existing local file', function (): void {
+    if (PHP_OS_FAMILY === 'Windows') {
+        expect(PHP_OS_FAMILY)->toBe('Windows');
+
+        return;
+    }
+
+    file_put_contents($this->tempFilePath, 'preserve-until-locked');
+    $holder = fopen($this->tempFilePath, 'c+');
+    if (!is_resource($holder)) {
+        throw new RuntimeException('Unable to open lock fixture.');
+    }
+
+    try {
+        expect(flock($holder, LOCK_EX | LOCK_NB))->toBeTrue();
+        $writer = new SafeFileWriter($this->tempFilePath);
+        expect(fn () => $writer->lock(LOCK_EX, true, 2, 5))
+            ->toThrow(FileAccessException::class, 'Failed to acquire lock')
+            ->and(file_get_contents($this->tempFilePath))->toBe('preserve-until-locked');
+
+        flock($holder, LOCK_UN);
+        $writer->lock();
+        $writer->writeLine('committed-after-lock');
+        $writer->close();
+
+        expect(file_get_contents($this->tempFilePath))->toBe('committed-after-lock' . PHP_EOL);
+    } finally {
+        flock($holder, LOCK_UN);
+        fclose($holder);
+    }
+});
