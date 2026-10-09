@@ -400,8 +400,10 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
 
     private function acquireLock(SplFileObject $file, int $lockType, int $attempts, int $delay): void
     {
+        $nonBlockingMode = $lockType === LOCK_EX ? LOCK_EX | LOCK_NB : LOCK_SH | LOCK_NB;
+
         for ($attempt = 0; $attempt < $attempts; $attempt++) {
-            if ($file->flock($lockType | LOCK_NB)) {
+            if ($file->flock($nonBlockingMode)) {
                 $this->isLocked = true;
                 $this->initializeLockedWrite($file, $lockType);
 
