@@ -219,3 +219,18 @@ test('fixed-width and serialized writers reject unsafe values', function () {
     expect(fn () => $writer->writeFixedWidth(['x'], [0]))->toThrow(FileAccessException::class)
         ->and(fn () => $writer->writeSerialized((object) ['x' => 1]))->toThrow(FileAccessException::class);
 });
+
+test('serialized validation uses a finite total work budget for shared reference graphs', function (): void {
+    $parts = [['leaf']];
+    for ($depth = 0; $depth < 25; $depth++) {
+        $parent = count($parts) - 1;
+        $parts[] = [&$parts[$parent], &$parts[$parent]];
+    }
+    $sharedGraph = $parts[array_key_last($parts)];
+    $validator = \Infocyph\Pathwise\Utils\SerializedValueValidator::class;
+
+    expect($validator::containsUnsupportedValue(['safe' => ['value' => 123]]))->toBeFalse()
+        ->and($validator::containsUnsupportedValue($sharedGraph))->toBeTrue()
+        ->and(fn () => (new SafeFileWriter($this->tempFilePath))->writeSerialized($sharedGraph))
+        ->toThrow(FileAccessException::class, 'safe scalar and array types');
+});
