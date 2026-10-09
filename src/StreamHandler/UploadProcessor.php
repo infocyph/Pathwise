@@ -48,9 +48,9 @@ use Psr\Log\LoggerInterface;
  */
 class UploadProcessor
 {
+    use RunwireScopedConcern;
     use UploadProcessorChunkConcern;
     use UploadProcessorValidationConcern;
-    use RunwireScopedConcern;
 
     private const array VALIDATION_PROFILES = [
         'image' => [

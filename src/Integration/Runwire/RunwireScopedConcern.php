@@ -19,6 +19,15 @@ trait RunwireScopedConcern
     /** @var array<string, int> */
     private array $runwireLatestGenerations = [];
 
+    protected function checkpointRunwire(): void
+    {
+        $context = $this->currentRunwireContext();
+        if ($context !== null) {
+            $this->assertRunwireGeneration($context);
+            $context->checkpoint();
+        }
+    }
+
     /**
      * @template T
      * @param callable(static): T $operation
@@ -40,15 +49,6 @@ trait RunwireScopedConcern
             return $operation($this);
         } finally {
             $this->storeRunwireContext($fiber, $previous);
-        }
-    }
-
-    protected function checkpointRunwire(): void
-    {
-        $context = $this->currentRunwireContext();
-        if ($context !== null) {
-            $this->assertRunwireGeneration($context);
-            $context->checkpoint();
         }
     }
 

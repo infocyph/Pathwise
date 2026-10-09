@@ -17,8 +17,8 @@ use Infocyph\Pathwise\Utils\PathHelper;
 
 class DownloadProcessor
 {
-    use StorageContextRoutingConcern;
     use RunwireScopedConcern;
+    use StorageContextRoutingConcern;
 
     /** @var list<string> */
     private array $allowedExtensions = [];

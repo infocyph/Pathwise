@@ -97,7 +97,7 @@ test('production dependency surface stays filesystem focused and runtime neutral
     );
 });
 
-test('production source exposes no Runwire types', function (): void {
+test('only the optional Runwire integration imports host runtime types', function (): void {
     $sourceRoot = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'src';
     $iterator = new RecursiveIteratorIterator(
         new RecursiveDirectoryIterator($sourceRoot, FilesystemIterator::SKIP_DOTS),
@@ -109,7 +109,10 @@ test('production source exposes no Runwire types', function (): void {
         }
 
         $source = file_get_contents($entry->getPathname());
-        expect($source)->toBeString()
-            ->and($source)->not->toContain('Runwire\\');
+        expect($source)->toBeString();
+        $relative = substr($entry->getPathname(), strlen($sourceRoot) + 1);
+        if (!str_starts_with(str_replace('\\', '/', $relative), 'Integration/Runwire/')) {
+            expect($source)->not->toContain('Infocyph\\Runwire\\');
+        }
     }
 });

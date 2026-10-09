@@ -21,10 +21,10 @@
     },
     "suggest": {
         "ext-posix": "required if you want to use permissions.",
-        "infocyph/runwire": "2.1.1 for optional borrowed runtime, request and coroutine context.",
         "ext-simplexml": "required if you want to use XML parsing.",
         "ext-xmlreader": "required if you want to use XML parsing.",
         "ext-zip": "required if you want to use compression.",
+        "infocyph/runwire": "2.1.1 for optional borrowed runtime, request and coroutine context.",
         "league/flysystem-async-aws-s3": "required for AsyncAWS S3 adapter support.",
         "league/flysystem-aws-s3-v3": "required for AWS S3 adapter support.",
         "league/flysystem-azure-blob-storage": "required for Azure Blob Storage adapter support.",
