@@ -97,6 +97,59 @@ jobs:
           }
           '
 
+  source-security-report:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
+    name: "Security report / production dependencies and source contracts"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: "fileinfo, pcntl, posix, zip"
+          coverage: none
+          tools: composer:v2
+      - name: Install dependencies for audited lock resolution
+        run: composer install --no-interaction --prefer-dist
+      - name: Audit production dependencies (strict)
+        run: |
+          composer audit --no-dev --format=json > "$RUNNER_TEMP/pathwise-security.json"
+          cat "$RUNNER_TEMP/pathwise-security.json"
+      - name: Run filesystem trust-boundary and Runwire contract tests
+        run: |
+          vendor/bin/pest tests/Feature/ArchiveSecurityTest.php tests/Feature/UploadTrustBoundaryTest.php tests/Feature/ClamAvDaemonScannerTest.php tests/Feature/RunwireExecutionContextTest.php
+      - name: Publish production dependency security report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pathwise-production-security-report
+          path: ${{ runner.temp }}/pathwise-security.json
+          if-no-files-found: warn
+
+  foundation-3-host:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
+    name: "Foundation 3.0.1 / Runwire 2.1.1 host and isolation"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: "fileinfo, pcntl, posix, simplexml, xmlreader, zip"
+          coverage: none
+          tools: composer:v2
+      - name: Install Pathwise and exact Foundation host
+        run: |
+          composer install --no-interaction --prefer-dist
+          composer require --dev --no-interaction --prefer-dist infocyph/foundation:3.0.1
+      - name: Exercise composed Foundation and Runwire runtime
+        run: php tests/Support/FoundationRunwireHost.php
+
   adapter-contracts:
     if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
     name: "Optional adapter contracts"
