@@ -64,17 +64,19 @@ test('cancellation between yielded download chunks aborts before further reads',
     $processor->setChunkSize(4);
     $received = [];
 
-    expect(fn () => $processor->withRunwire($execution, function (DownloadProcessor $bound) use (
-        $request,
-        &$received,
-    ): void {
-        $preparation = $bound->prepareDownload($this->runwireFile);
-        foreach ($bound->streamChunks($preparation) as $chunk) {
-            $received[] = $chunk;
-            $request->cancel(CancellationReason::HOST_CANCELLED);
-        }
-    }))->toThrow(CancelledException::class)
-        ->and($received)->toBe(['abcd']);
+    expect(function () use ($processor, $execution, $request, &$received): void {
+        $processor->withRunwire($execution, function (DownloadProcessor $bound) use (
+            $request,
+            &$received,
+        ): void {
+            $preparation = $bound->prepareDownload($this->runwireFile);
+            foreach ($bound->streamChunks($preparation) as $chunk) {
+                $received[] = $chunk;
+                $request->cancel(CancellationReason::HOST_CANCELLED);
+            }
+        });
+    })->toThrow(CancelledException::class);
+    expect($received)->toBe(['abcd']);
 
     // The owner retained no cancellation state after the scoped invocation.
     expect($processor->prepareDownload($this->runwireFile)->size)->toBe(16);
