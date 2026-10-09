@@ -68,6 +68,7 @@ final class RunwireExecutionContext
         }
         $this->assertActive();
     }
+
     /**
      * @return \Generator<int, array{checksum: string, path: string}>
      */
@@ -79,6 +80,4 @@ final class RunwireExecutionContext
 
             yield $entry;
         }
-    }
-
-}
+    }}
