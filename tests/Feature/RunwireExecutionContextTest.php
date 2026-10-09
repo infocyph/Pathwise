@@ -388,6 +388,7 @@ test('cancellation of a cooperative lock wait preserves the existing file and ho
                 static fn($owner) => $owner->lock(LOCK_EX, true, 5, 1000)))->toThrow(CancelledException::class);
             expect($scope->cancellation()->isCancelled())->toBeFalse();
         });
+        flock($holder, LOCK_UN);
         expect(file_get_contents($this->runwireFile))->toBe('abcdefghijklmnop');
     } finally {
         $writer->close();

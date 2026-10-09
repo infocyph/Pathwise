@@ -41,6 +41,32 @@ Good fit:
 * Local worker processes sharing one filesystem host.
 * Deterministic local job orchestration in scripts and tools.
 
+Distributed deployments
+-----------------------
+
+Workers sharing one queue file on the same host coordinate through its lock.
+Different machines or containers with independent local disks have independent
+queues, even when configured with the same path. Jobs do not replicate between
+them, and another host cannot reclaim jobs from an unavailable host's disk.
+
+A network filesystem mounted at a local-looking path can pass the path check;
+this does not certify cross-host locking, atomic replacement, clock agreement
+or failover. NFS/SMB queue sharing is outside this queue's supported contract.
+Borrowed Runwire contexts and Flysystem storage adapters do not turn the queue
+into a distributed service.
+
+For distributed work, let the application/framework own a shared broker and its
+worker lifecycle. Workers can use Pathwise for filesystem operations inside
+each job. Pass shared storage keys or object identifiers in job payloads;
+a producer's local file path is useful only if the receiving worker can access
+that same file.
+
+Make handlers idempotent or deduplicate their external effects. A worker may
+perform an effect and crash before acknowledgement, or continue running after
+its lease expires. Lease tokens reject stale queue mutations; they do not undo
+those effects or guarantee exactly-once execution. This also applies to local
+workers, independently of the broker chosen for distributed work.
+
 Simple processing
 -----------------
 

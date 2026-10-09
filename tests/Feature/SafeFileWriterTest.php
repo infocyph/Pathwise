@@ -285,9 +285,12 @@ test('reacquiring and changing a writer lock preserves initialized contents', fu
     $writer->flush();
     $writer->unlock();
     $writer->lock();
+    $writer->unlock();
     expect(file_get_contents($this->tempFilePath))->toBe('preserved');
+    $writer->lock();
     $writer->lock(LOCK_SH);
     $writer->lock(LOCK_EX);
+    $writer->unlock();
     expect(file_get_contents($this->tempFilePath))->toBe('preserved');
     $writer->close();
 });
