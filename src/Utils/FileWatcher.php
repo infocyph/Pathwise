@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Infocyph\Pathwise\Utils;
 
 use FilesystemIterator;
+
+use Infocyph\Pathwise\Integration\Runwire\RunwireExecutionContext;
 use Infocyph\Pathwise\Results\SnapshotDiff;
 use Infocyph\Pathwise\Results\WatchResult;
 use InvalidArgumentException;
@@ -89,6 +91,7 @@ final class FileWatcher
         int $durationSeconds = 5,
         int $intervalMilliseconds = 500,
         bool $recursive = true,
+        ?RunwireExecutionContext $execution = null,
     ): WatchResult {
         if ($durationSeconds < 1) {
             throw new InvalidArgumentException('Watcher duration must be at least one second.');
@@ -97,21 +100,28 @@ final class FileWatcher
             throw new InvalidArgumentException('Watcher interval must be at least 10 milliseconds.');
         }
 
+        $execution?->checkpoint();
         $snapshot = self::snapshot($path, $recursive);
-        $endAt = microtime(true) + $durationSeconds;
+        $endAt = hrtime(true) / 1_000_000_000 + $durationSeconds;
         $changeSets = 0;
 
         while (true) {
-            $remainingMicroseconds = (int) floor(($endAt - microtime(true)) * 1_000_000);
-            if ($remainingMicroseconds <= 0) {
+            $remaining = $endAt - hrtime(true) / 1_000_000_000;
+            if ($remaining <= 0) {
                 break;
             }
 
-            usleep(min($intervalMilliseconds * 1000, $remainingMicroseconds));
-            if (microtime(true) >= $endAt) {
+            $pause = min($intervalMilliseconds / 1_000, $remaining);
+            if ($execution === null) {
+                usleep(max(1, (int) ($pause * 1_000_000)));
+            } else {
+                $execution->sleep($pause);
+            }
+            if (hrtime(true) / 1_000_000_000 >= $endAt) {
                 break;
             }
 
+            $execution?->checkpoint();
             $current = self::snapshot($path, $recursive);
             $diff = self::diff($snapshot, $current);
             if (!$diff->isEmpty()) {

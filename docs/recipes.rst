@@ -26,7 +26,9 @@ Recipe 1: Framework Upload -> Scan -> Object Storage
    $uploader->setMalwareScanMode(MalwareScanMode::REQUIRED);
 
    $source = UploadSource::fromMover(
-       fn (string $target): void => $uploadedFile->moveTo($target),
+       static function (string $target) use ($uploadedFile): void {
+           $uploadedFile->moveTo($target);
+       },
        $uploadedFile->getClientFilename() ?? 'upload.bin',
        $uploadedFile->getSize(),
        $uploadedFile->getClientMediaType(),

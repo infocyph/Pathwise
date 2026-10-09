@@ -10,6 +10,7 @@ use Infocyph\Pathwise\FileManager\FileOperations;
 use Infocyph\Pathwise\FileManager\SafeFileReader;
 use Infocyph\Pathwise\FileManager\SafeFileWriter;
 use Infocyph\Pathwise\Indexing\ChecksumIndexer;
+use Infocyph\Pathwise\Integration\Runwire\RunwireExecutionContext;
 use Infocyph\Pathwise\Observability\AuditSink;
 use Infocyph\Pathwise\Observability\AuditTrail;
 use Infocyph\Pathwise\Queue\FileJobQueue;
@@ -127,8 +128,9 @@ final class PathwiseFacade
         int $durationSeconds = 5,
         int $intervalMilliseconds = 500,
         bool $recursive = true,
+        ?RunwireExecutionContext $execution = null,
     ): WatchResult {
-        return FileWatcher::watch($path, $onChange, $durationSeconds, $intervalMilliseconds, $recursive);
+        return FileWatcher::watch($path, $onChange, $durationSeconds, $intervalMilliseconds, $recursive, $execution);
     }
 
     public function compression(bool $create = false): FileCompression

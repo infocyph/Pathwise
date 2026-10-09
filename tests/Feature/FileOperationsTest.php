@@ -158,3 +158,31 @@ test('it writes and verifies checksum', function () {
 
     expect($this->fileOperations->verifyChecksum(hash('sha256', 'new-content')))->toBeTrue();
 });
+
+test('rollback refuses to restore or remove a relative target redirected by a cwd change', function (bool $existing): void {
+    $root = $this->filePath . '.workspace';
+    mkdir($root);
+    mkdir($root . DIRECTORY_SEPARATOR . 'first');
+    mkdir($root . DIRECTORY_SEPARATOR . 'second');
+    $first = $root . DIRECTORY_SEPARATOR . 'first' . DIRECTORY_SEPARATOR . 'target.txt';
+    $second = $root . DIRECTORY_SEPARATOR . 'second' . DIRECTORY_SEPARATOR . 'target.txt';
+    $previous = getcwd();
+    try {
+        if ($existing) {
+            file_put_contents($first, 'original');
+        }
+        file_put_contents($second, 'outside');
+        chdir(dirname($first));
+        $journal = new \Infocyph\Pathwise\FileManager\FileTransactionJournal('target.txt');
+        $journal->record('target.txt');
+        file_put_contents($first, 'changed');
+        chdir(dirname($second));
+        expect(fn() => $journal->rollback(new RuntimeException('operation failed')))
+            ->toThrow(\Infocyph\Pathwise\Exceptions\TransactionRollbackException::class);
+        expect(file_get_contents($second))->toBe('outside')
+            ->and(file_get_contents($first))->toBe('changed');
+    } finally {
+        chdir($previous);
+        (new \Infocyph\Pathwise\DirectoryManager\DirectoryOperations($root))->delete(true);
+    }
+})->with([false, true]);

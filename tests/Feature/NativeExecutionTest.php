@@ -283,3 +283,26 @@ test('native copy treats leading dashes and colons as local operands', function 
     expect($result->success)->toBeTrue()
         ->and(file_get_contents($destination))->toBe('literal-operand');
 });
+
+test('native ZIP resolves relative and leading dash destinations before changing directory', function (): void {
+    if (!NativeOperationsAdapter::canUseNativeZipCompression()) {
+        expect(NativeOperationsAdapter::canUseNativeZipCompression())->toBeFalse();
+
+        return;
+    }
+    $source = $this->nativeRoot . DIRECTORY_SEPARATOR . 'source';
+    mkdir($source);
+    file_put_contents($source . DIRECTORY_SEPARATOR . 'input.txt', 'zip-operand');
+    $previous = getcwd();
+    chdir($this->nativeRoot);
+    try {
+        foreach (['relative.zip', '-archive.zip'] as $name) {
+            (new \Infocyph\Pathwise\DirectoryManager\DirectoryOperations($source))
+                ->setExecutionStrategy(ExecutionStrategy::NATIVE)->zip($name);
+            expect(is_file($this->nativeRoot . DIRECTORY_SEPARATOR . $name))->toBeTrue()
+                ->and(is_file($source . DIRECTORY_SEPARATOR . $name))->toBeFalse();
+        }
+    } finally {
+        chdir($previous);
+    }
+});

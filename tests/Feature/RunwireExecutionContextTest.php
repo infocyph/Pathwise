@@ -219,3 +219,248 @@ test('real Runwire coroutine scopes support explicit intermediary forwarding and
         fn (DownloadProcessor $bound): int => $bound->prepareDownload($this->runwireFile)->size,
     ))->toThrow(LogicException::class);
 });
+
+test('archive cancellation rolls back published entries and removes owned staging', function (bool $directoryOwner): void {
+    $archive = $this->runwireRoot . DIRECTORY_SEPARATOR . 'cancel.zip';
+    $output = $this->runwireRoot . DIRECTORY_SEPARATOR . 'extracted';
+    mkdir($output);
+    file_put_contents($output . DIRECTORY_SEPARATOR . 'first.txt', 'original');
+    $zip = new ZipArchive();
+    $zip->open($archive, ZipArchive::CREATE);
+    $zip->addFromString('first.txt', 'changed');
+    $zip->addFromString('second.txt', str_repeat('second-payload', 20_000));
+    $zip->setCompressionName('second.txt', ZipArchive::CM_STORE);
+    $zip->close();
+    $runtime = RuntimeContext::fromCapabilities(
+        new RuntimeCapabilities(RuntimeDriver::NATIVE, supportsRunwireCoroutines: true),
+        'archive-test',
+    );
+    $request = RequestContext::create($runtime);
+    try {
+        expect(function () use ($runtime, $request, $archive, $output, $directoryOwner): void {
+            (new CoroutineRuntime())->run(function (CoroutineScope $scope) use ($runtime, $request, $archive, $output, $directoryOwner): void {
+                $execution = new RunwireExecutionContext($runtime, $request, $scope, checkpointEvery: 1);
+                $scope->spawn(static function () use ($scope, $request, $output): void {
+                    while (file_get_contents($output . DIRECTORY_SEPARATOR . 'first.txt') !== 'changed') {
+                        $scope->yieldNow();
+                    }
+                    $request->cancel(CancellationReason::HOST_CANCELLED);
+                });
+                if ($directoryOwner) {
+                    (new \Infocyph\Pathwise\DirectoryManager\DirectoryOperations($output))->withRunwire(
+                        $execution,
+                        static fn($owner) => $owner->unzip($archive),
+                    );
+                } else {
+                    (new \Infocyph\Pathwise\FileManager\FileCompression($archive))->withRunwire(
+                        $execution,
+                        static fn($owner) => $owner->decompress($output),
+                    );
+                }
+            });
+        })->toThrow(CancelledException::class);
+        expect(file_get_contents($output . DIRECTORY_SEPARATOR . 'first.txt'))->toBe('original')
+            ->and(is_file($output . DIRECTORY_SEPARATOR . 'second.txt'))->toBeFalse()
+            ->and(glob($output . DIRECTORY_SEPARATOR . '.pathwise-zip-*'))->toBe([]);
+    } finally {
+        (new \Infocyph\Pathwise\DirectoryManager\DirectoryOperations($output))->delete(true);
+    }
+})->with([false, true]);
+
+test('writer contention waits allow the host coroutine to release its lock', function (): void {
+    $runtime = RuntimeContext::fromCapabilities(
+        new RuntimeCapabilities(RuntimeDriver::NATIVE, supportsRunwireCoroutines: true),
+        'lock-test',
+    );
+    $request = RequestContext::create($runtime);
+    $holder = fopen($this->runwireFile, 'c+');
+    flock($holder, LOCK_EX);
+    $writer = new \Infocyph\Pathwise\FileManager\SafeFileWriter($this->runwireFile);
+    try {
+        (new CoroutineRuntime())->run(function (CoroutineScope $scope) use ($runtime, $request, $holder, $writer): void {
+            $scope->spawn(static function () use ($scope, $holder): void {
+                $scope->sleep(0.01);
+                flock($holder, LOCK_UN);
+            });
+            $writer->withRunwire(
+                new RunwireExecutionContext($runtime, $request, $scope),
+                static fn($owner) => $owner->lock(LOCK_EX, true, 10, 10),
+            );
+            $writer->writeBinary('cooperative');
+            $writer->close();
+        });
+        expect(file_get_contents($this->runwireFile))->toBe('cooperative');
+    } finally {
+        $writer->close();
+        flock($holder, LOCK_UN);
+        fclose($holder);
+    }
+});
+
+test('watcher intervals permit host progress and propagate request cancellation', function (): void {
+    $runtime = RuntimeContext::fromCapabilities(
+        new RuntimeCapabilities(RuntimeDriver::NATIVE, supportsRunwireCoroutines: true),
+        'watch-test',
+    );
+    $request = RequestContext::create($runtime);
+    $observed = false;
+    expect(function () use ($runtime, $request, &$observed): void {
+        (new CoroutineRuntime())->run(function (CoroutineScope $scope) use ($runtime, $request, &$observed): void {
+            $scope->spawn(function () use ($scope): void {
+                $scope->sleep(0.01);
+                file_put_contents($this->runwireRoot . DIRECTORY_SEPARATOR . 'created.txt', 'created');
+            });
+            \Infocyph\Pathwise\PathwiseFacade::watch(
+                $this->runwireRoot,
+                static function ($diff) use ($request, &$observed): void {
+                    $observed = $diff->created !== [];
+                    $request->cancel(CancellationReason::HOST_CANCELLED);
+                },
+                durationSeconds: 1,
+                intervalMilliseconds: 10,
+                execution: new RunwireExecutionContext($runtime, $request, $scope),
+            );
+        });
+    })->toThrow(CancelledException::class);
+    expect($observed)->toBeTrue();
+});
+
+test('benchmark revision selection overrides optimized Composer maps and rejects mixed sources', function (): void {
+    $root = $this->runwireRoot . DIRECTORY_SEPARATOR . 'selected';
+    $directory = $root . DIRECTORY_SEPARATOR . 'StreamHandler';
+    mkdir($directory, 0700, true);
+    foreach (['DownloadProcessor', 'PublicFileResolver'] as $class) {
+        file_put_contents($directory . DIRECTORY_SEPARATOR . $class . '.php',
+            '<?php namespace Infocyph\\Pathwise\\StreamHandler; final class ' . $class . ' {}');
+    }
+    $command = [PHP_BINARY, dirname(__DIR__) . '/Support/FoundationHostBenchmark.php', $root, '200', '--verify-source'];
+    try {
+        $process = new \Symfony\Component\Process\Process($command);
+        $process->mustRun();
+        $loaded = json_decode($process->getOutput(), true, 512, JSON_THROW_ON_ERROR);
+        expect($loaded)->toHaveCount(2);
+        foreach ($loaded as $entry) {
+            expect(str_starts_with($entry['file'], realpath($root) . DIRECTORY_SEPARATOR))->toBeTrue();
+        }
+        unlink($directory . DIRECTORY_SEPARATOR . 'PublicFileResolver.php');
+        $process = new \Symfony\Component\Process\Process($command);
+        $process->run();
+        expect($process->isSuccessful())->toBeFalse()
+            ->and($process->getErrorOutput())->toContain('Selected Pathwise revision has no class');
+    } finally {
+        (new \Infocyph\Pathwise\DirectoryManager\DirectoryOperations($root))->delete(true);
+    }
+});
+
+test('borrowed waits honor a shorter request deadline with and without coroutine capability', function (bool $cooperative): void {
+    $runtime = RuntimeContext::fromCapabilities(
+        new RuntimeCapabilities(RuntimeDriver::NATIVE, supportsRunwireCoroutines: $cooperative),
+        'deadline-wait',
+    );
+    $request = RequestContext::create($runtime, new \Infocyph\Runwire\Runtime\RequestExecutionPolicy(maxExecutionSeconds: 0.02));
+    $started = hrtime(true);
+    expect(function () use ($runtime, $request, $cooperative): void {
+        if ($cooperative) {
+            (new CoroutineRuntime())->run(static function (CoroutineScope $scope) use ($runtime, $request): void {
+                (new RunwireExecutionContext($runtime, $request, $scope))->sleep(1);
+            });
+        } else {
+            (new RunwireExecutionContext($runtime, $request))->sleep(1);
+        }
+    })->toThrow(CancelledException::class);
+    expect((hrtime(true) - $started) / 1_000_000_000)->toBeLessThan(0.5)
+        ->and($request->completed())->toBeFalse();
+})->with([false, true]);
+
+test('cancellation of a cooperative lock wait preserves the existing file and host scope', function (): void {
+    $runtime = RuntimeContext::fromCapabilities(new RuntimeCapabilities(RuntimeDriver::NATIVE, supportsRunwireCoroutines: true), 'cancel-lock');
+    $request = RequestContext::create($runtime);
+    $holder = fopen($this->runwireFile, 'c+');
+    flock($holder, LOCK_EX);
+    $writer = new \Infocyph\Pathwise\FileManager\SafeFileWriter($this->runwireFile);
+    try {
+        (new CoroutineRuntime())->run(function (CoroutineScope $scope) use ($runtime, $request, $writer): void {
+            $scope->spawn(static function () use ($scope, $request): void {
+                $scope->sleep(0.01);
+                $request->cancel(CancellationReason::HOST_CANCELLED);
+            });
+            expect(fn() => $writer->withRunwire(new RunwireExecutionContext($runtime, $request, $scope),
+                static fn($owner) => $owner->lock(LOCK_EX, true, 5, 1000)))->toThrow(CancelledException::class);
+            expect($scope->cancellation()->isCancelled())->toBeFalse();
+        });
+        expect(file_get_contents($this->runwireFile))->toBe('abcdefghijklmnop');
+    } finally {
+        $writer->close();
+        flock($holder, LOCK_UN);
+        fclose($holder);
+    }
+});
+
+test('a committed extraction remains successful when its host request is cancelled afterwards', function (): void {
+    $archive = $this->runwireRoot . DIRECTORY_SEPARATOR . 'committed.zip';
+    $output = $this->runwireRoot . DIRECTORY_SEPARATOR . 'committed';
+    $zip = new ZipArchive();
+    $zip->open($archive, ZipArchive::CREATE);
+    $zip->addFromString('done.txt', 'committed');
+    $zip->close();
+    $runtime = RuntimeContext::standalone();
+    $request = RequestContext::create($runtime);
+    try {
+        $result = (new \Infocyph\Pathwise\FileManager\FileCompression($archive))->withRunwire(
+            new RunwireExecutionContext($runtime, $request),
+            static function ($owner) use ($request, $output): bool {
+                $owner->decompress($output);
+                $request->cancel(CancellationReason::HOST_CANCELLED);
+
+                return true;
+            },
+        );
+        expect($result)->toBeTrue()->and(file_get_contents($output . DIRECTORY_SEPARATOR . 'done.txt'))->toBe('committed');
+    } finally {
+        (new \Infocyph\Pathwise\DirectoryManager\DirectoryOperations($output))->delete(true);
+    }
+});
+
+test('cancellation interrupts a partially copied ZIP entry before publication', function (): void {
+    $archive = $this->runwireRoot . DIRECTORY_SEPARATOR . 'copy.zip';
+    $output = $this->runwireRoot . DIRECTORY_SEPARATOR . 'copy';
+    mkdir($output);
+    file_put_contents($output . DIRECTORY_SEPARATOR . 'large.bin', 'original');
+    $zip = new ZipArchive();
+    $zip->open($archive, ZipArchive::CREATE);
+    $zip->addFromString('large.bin', random_bytes(1_048_576));
+    $zip->setCompressionName('large.bin', ZipArchive::CM_STORE);
+    $zip->close();
+    $runtime = RuntimeContext::fromCapabilities(new RuntimeCapabilities(RuntimeDriver::NATIVE, supportsRunwireCoroutines: true), 'zip-copy');
+    $request = RequestContext::create($runtime);
+    $copied = false;
+    try {
+        expect(function () use ($runtime, $request, $archive, $output, &$copied): void {
+            (new CoroutineRuntime())->run(function (CoroutineScope $scope) use ($runtime, $request, $archive, $output, &$copied): void {
+                $scope->spawn(static function () use ($scope, $request, $output, &$copied): void {
+                    while (true) {
+                        foreach (glob($output . DIRECTORY_SEPARATOR . '.pathwise-zip-*.tmp') ?: [] as $temporary) {
+                            clearstatcache(true, $temporary);
+                            if (filesize($temporary) > 0) {
+                                $copied = true;
+                                $request->cancel(CancellationReason::HOST_CANCELLED);
+
+                                return;
+                            }
+                        }
+                        $scope->yieldNow();
+                    }
+                });
+                (new \Infocyph\Pathwise\FileManager\FileCompression($archive))->withRunwire(
+                    new RunwireExecutionContext($runtime, $request, $scope, checkpointEvery: 1),
+                    static fn($owner) => $owner->decompress($output),
+                );
+            });
+        })->toThrow(CancelledException::class);
+        expect($copied)->toBeTrue()
+            ->and(file_get_contents($output . DIRECTORY_SEPARATOR . 'large.bin'))->toBe('original')
+            ->and(glob($output . DIRECTORY_SEPARATOR . '.pathwise-zip-*'))->toBe([]);
+    } finally {
+        (new \Infocyph\Pathwise\DirectoryManager\DirectoryOperations($output))->delete(true);
+    }
+});

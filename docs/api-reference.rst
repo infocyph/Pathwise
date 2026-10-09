@@ -237,6 +237,14 @@ See :doc:`native-execution` and :doc:`trust-boundaries`.
 Utilities
 ---------
 
+``Integration\Runwire\RunwireExecutionContext``
+   Optional borrowed runtime/request/scope integration. Constructor parameters:
+   ``runtime``, ``request = null``, ``scope = null``, ``checkpointEvery = 256``.
+   Methods: ``assertActive()``, ``checkpoint()``, ``sleep()`` and
+   ``iterateChecksums()``. Relevant owners expose ``withRunwire()``; static
+   watcher helpers accept an optional trailing ``execution`` argument.
+   See :doc:`trust-boundaries` for ownership and capability fallback.
+
 ``Utils\PathHelper``
    Path normalization/join/validation/relative/temp helpers. Normalization does
    not retain request-derived paths in process-global cache state.

@@ -92,6 +92,14 @@ jobs:
               if ($prepared->size !== 7) { exit(1); }
               $uploader = new \Infocyph\Pathwise\StreamHandler\UploadProcessor();
               if (!method_exists($uploader, "withRunwire")) { exit(1); }
+              $writer = new \Infocyph\Pathwise\FileManager\SafeFileWriter($source);
+              $writer->lock();
+              $writer->writeBinary("preserved");
+              $writer->unlock();
+              $writer->lock();
+              $writer->close();
+              if (file_get_contents($source) !== "preserved") { exit(1); }
+              \Infocyph\Pathwise\Utils\FileWatcher::watch(dirname($source), static function (): void {}, durationSeconds: 1, recursive: false);
           } finally {
               unlink($source);
           }
@@ -119,6 +127,8 @@ jobs:
           cat "$RUNNER_TEMP/pathwise-security.json"
       - name: Run filesystem trust-boundary and Runwire contract tests via PHPForge
         run: composer ic:test:code
+      - name: Verify documented PHP examples
+        run: php tests/Support/CheckDocumentation.php
       - name: Publish production dependency security report
         if: always()
         uses: actions/upload-artifact@v4
@@ -153,15 +163,22 @@ jobs:
           git archive 4.1 src | tar -x -C "$RUNNER_TEMP/pathwise41"
       - name: Compare matched host request throughput, tail latency and memory
         run: |
-          python3 tests/Support/CompareFoundationHostPerformance.py \
+          php tests/Support/CompareFoundationHostPerformance.php \
             "$RUNNER_TEMP/pathwise41/src" "$PWD/src" \
             "$RUNNER_TEMP/pathwise-host-performance.json"
+      - name: Compare sustained HTTP concurrency and bound-worker resource budgets
+        run: |
+          php tests/Support/FoundationHostLoad.php \
+            "$RUNNER_TEMP/pathwise41/src" "$PWD/src" \
+            "$RUNNER_TEMP/pathwise-host-http-load.json"
       - name: Publish matched host performance evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: foundation-host-performance
-          path: ${{ runner.temp }}/pathwise-host-performance.json
+          path: |
+            ${{ runner.temp }}/pathwise-host-performance.json
+            ${{ runner.temp }}/pathwise-host-http-load.json
           if-no-files-found: warn
 
   foundation-3-host:

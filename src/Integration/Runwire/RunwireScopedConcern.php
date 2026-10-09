@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\Integration\Runwire;
 
+use Closure;
 use Fiber;
 use LogicException;
 use WeakMap;
@@ -50,6 +51,23 @@ trait RunwireScopedConcern
             $this->assertRunwireGeneration($context);
             $context->checkpoint();
         }
+    }
+
+    protected function runwireCheckpoint(): ?Closure
+    {
+        return $this->currentRunwireContext() === null ? null : $this->checkpointRunwire(...);
+    }
+
+    protected function sleepRunwire(float $seconds): void
+    {
+        $context = $this->currentRunwireContext();
+        if ($context === null) {
+            usleep((int) ($seconds * 1_000_000));
+
+            return;
+        }
+        $this->assertRunwireGeneration($context);
+        $context->sleep($seconds);
     }
 
     private function assertRunwireGeneration(RunwireExecutionContext $context): void

@@ -13,6 +13,14 @@ use Infocyph\Pathwise\Utils\PathHelper;
  */
 final class LocalPathContainment
 {
+    /** Canonical snapshot key, including destinations that do not exist yet. */
+    public static function canonicalKey(string $path): ?string
+    {
+        $canonical = self::canonicalPath($path);
+
+        return $canonical === null ? null : self::comparisonKey($canonical);
+    }
+
     public static function isSameOrDescendant(string $root, string $candidate): bool
     {
         $canonicalRoot = self::canonicalPath($root);

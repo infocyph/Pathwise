@@ -81,4 +81,28 @@ final class RunwireExecutionContext
             yield $entry;
         }
     }
+
+    public function sleep(float $seconds): void
+    {
+        if (!is_finite($seconds) || $seconds < 0 || $seconds > 86_400) {
+            throw new InvalidArgumentException('Runwire wait must be finite and between zero and 86400 seconds.');
+        }
+        $this->assertActive();
+        $end = hrtime(true) / 1_000_000_000 + $seconds;
+        while (($remaining = $end - hrtime(true) / 1_000_000_000) > 0) {
+            // The request and scope may have different cancellation sources; check both promptly.
+            $pause = max(0.000001, min(
+                $remaining,
+                0.05,
+                $this->request?->deadline()->remainingSeconds() ?? $remaining,
+                $this->scope?->cancellation()->deadline()->remainingSeconds() ?? $remaining,
+            ));
+            if ($this->scope !== null && $this->runtime->supports(RuntimeCapability::RUNWIRE_COROUTINES)) {
+                $this->scope->sleep($pause);
+            } else {
+                usleep(max(1, (int) ($pause * 1_000_000)));
+            }
+            $this->assertActive();
+        }
+    }
 }

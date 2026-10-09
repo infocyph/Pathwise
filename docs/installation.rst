@@ -24,6 +24,11 @@ Optional extensions:
 * ``ext-posix`` for richer Unix ownership details.
 * ``ext-xmlreader`` and ``ext-simplexml`` for XML helpers.
 
+Runwire ``2.1.1`` is optional for host-composed runtime/request/task integration.
+Pathwise does not install or start it for ordinary use. Development pins
+Runwire ``2.1.1`` and Foundation ``3.0.1`` to verify composition;
+``composer install --no-dev`` excludes both. See :doc:`trust-boundaries`.
+
 Optional adapter packages (choose per driver):
 
 * AWS S3: ``league/flysystem-aws-s3-v3`` + ``aws/aws-sdk-php``

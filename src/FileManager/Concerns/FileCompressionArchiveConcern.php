@@ -361,7 +361,7 @@ trait FileCompressionArchiveConcern
         string $destination,
         bool $isRemoteDestination,
     ): void {
-        ZipArchiveExtractor::extractToLocal($this->zip, $entries, $extractDestination);
+        ZipArchiveExtractor::extractToLocal($this->zip, $entries, $extractDestination, $this->runwireCheckpoint());
 
         if ($isRemoteDestination) {
             $this->copyLocalDirectoryToFlysystem($extractDestination, $destination);

@@ -50,8 +50,8 @@ final class NativeOperationsAdapter
         string $zipPath,
         ?NativeExecutionLimits $limits = null,
     ): NativeExecutionResult {
-        $source = PathHelper::normalize($source);
-        $zipPath = PathHelper::normalize($zipPath);
+        $source = PathHelper::toAbsolutePath(PathHelper::normalize($source));
+        $zipPath = PathHelper::toAbsolutePath(PathHelper::normalize($zipPath));
         if (!NativeCommandRunner::commandExists('zip')) {
             return self::unsupportedResult();
         }

@@ -226,7 +226,7 @@ trait DirectoryOperationsZipConcern
 
         try {
             if ($this->isLocalPath($this->path)) {
-                ZipArchiveExtractor::extractToLocal($zip, $validatedEntries, $this->path);
+                ZipArchiveExtractor::extractToLocal($zip, $validatedEntries, $this->path, $this->runwireCheckpoint());
 
                 return;
             }
@@ -236,7 +236,7 @@ trait DirectoryOperationsZipConcern
                 throw new DirectoryOperationException('Unable to create secure ZIP extraction staging directory.');
             }
 
-            ZipArchiveExtractor::extractToLocal($zip, $validatedEntries, $stage);
+            ZipArchiveExtractor::extractToLocal($zip, $validatedEntries, $stage, $this->runwireCheckpoint());
             $this->copyZipStageToStorage($stage);
         } finally {
             $zip->close();

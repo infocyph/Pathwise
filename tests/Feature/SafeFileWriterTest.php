@@ -277,3 +277,30 @@ test('serialized line framing rejects embedded line breaks without writing', fun
     $reader = new \Infocyph\Pathwise\FileManager\SafeFileReader($this->tempFilePath);
     expect(iterator_to_array($reader->serializedValues()))->toBe([['safe' => 'value']]);
 });
+
+test('reacquiring and changing a writer lock preserves initialized contents', function (): void {
+    $writer = new SafeFileWriter($this->tempFilePath);
+    $writer->lock();
+    $writer->writeBinary('preserved');
+    $writer->flush();
+    $writer->unlock();
+    $writer->lock();
+    expect(file_get_contents($this->tempFilePath))->toBe('preserved');
+    $writer->lock(LOCK_SH);
+    $writer->lock(LOCK_EX);
+    expect(file_get_contents($this->tempFilePath))->toBe('preserved');
+    $writer->close();
+});
+
+test('an exclusive upgrade acquires actual exclusive ownership', function (): void {
+    $writer = new SafeFileWriter($this->tempFilePath);
+    $writer->lock(LOCK_SH);
+    $writer->lock(LOCK_EX);
+    $other = fopen($this->tempFilePath, 'rb');
+    try {
+        expect(flock($other, LOCK_SH | LOCK_NB))->toBeFalse();
+    } finally {
+        fclose($other);
+        $writer->close();
+    }
+});
