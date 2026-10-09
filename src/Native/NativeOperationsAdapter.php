@@ -7,10 +7,10 @@ namespace Infocyph\Pathwise\Native;
 use FilesystemIterator;
 use Infocyph\Pathwise\Exceptions\CompressionException;
 use Infocyph\Pathwise\Results\NativeExecutionResult;
-use RecursiveDirectoryIterator;
-use RecursiveIteratorIterator;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
+use RecursiveDirectoryIterator;
+use RecursiveIteratorIterator;
 
 final class NativeOperationsAdapter
 {
