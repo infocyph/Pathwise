@@ -236,3 +236,18 @@ test('Windows ZIP segments reject ADS, device names and trailing-name aliases', 
         }
     }
 });
+
+test('Windows NTFS extraction rejects unsafe archive entries before creating files', function (): void {
+    if (PHP_OS_FAMILY !== 'Windows') {
+        expect(PHP_OS_FAMILY)->not->toBe('Windows');
+
+        return;
+    }
+
+    foreach (['file.txt:payload', 'CON.txt', 'file.txt.', 'folder /child.txt'] as $entry) {
+        ($this->writeArchive)($entry, 'must-not-write');
+        expect(fn () => (new FileCompression($this->archivePath))->decompress($this->extractPath))
+            ->toThrow(UnsafeArchiveEntryException::class)
+            ->and(scandir($this->extractPath))->toBe(['.', '..']);
+    }
+});

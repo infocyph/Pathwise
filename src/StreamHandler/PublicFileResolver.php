@@ -55,6 +55,21 @@ final class PublicFileResolver
         );
     }
 
+    private function assertWindowsLocalSegment(string $segment): void
+    {
+        if (
+            PHP_OS_FAMILY === 'Windows'
+            && (
+                str_contains($segment, ':')
+                || str_ends_with($segment, '.')
+                || str_ends_with($segment, ' ')
+                || preg_match('/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\\..*)?$/iD', $segment) === 1
+            )
+        ) {
+            throw new DownloadException('Unsafe Windows public-file path segment.');
+        }
+    }
+
     private function containsSymbolicLink(string $root, string $relativePath): bool
     {
         $candidate = $root;
@@ -92,6 +107,7 @@ final class PublicFileResolver
                 throw new DownloadException('Public-file traversal is not allowed.');
             }
 
+            $this->assertWindowsLocalSegment($segment);
             $segments[] = $segment;
         }
 

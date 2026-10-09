@@ -127,6 +127,7 @@ final class StorageContext
         }
 
         $root = PathHelper::normalize($root);
+        self::assertWindowsLocalSegments($location);
         $localPath = $location === '' ? $root : PathHelper::join($root, $location);
         if (!LocalPathContainment::isSameOrDescendant($root, $localPath)) {
             throw new \InvalidArgumentException(
@@ -157,6 +158,24 @@ final class StorageContext
         [$resolvedName, $location] = $this->resolveIdentity($path, $name);
 
         return [$this->filesystem($resolvedName), $location];
+    }
+
+    private static function assertWindowsLocalSegments(string $location): void
+    {
+        if (PHP_OS_FAMILY !== 'Windows') {
+            return;
+        }
+
+        foreach (explode('/', $location) as $segment) {
+            if (
+                str_contains($segment, ':')
+                || str_ends_with($segment, '.')
+                || str_ends_with($segment, ' ')
+                || preg_match('/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\\..*)?$/iD', $segment) === 1
+            ) {
+                throw new \InvalidArgumentException('Unsafe Windows local storage path segment.');
+            }
+        }
     }
 
     private static function isAbsoluteLogicalPath(string $path): bool

@@ -185,3 +185,23 @@ test('local context rejects nested upload symlink before publication and cleans 
         FlysystemHelper::deleteDirectory($stage);
     }
 });
+
+test('Windows local storage resolution rejects ADS, reserved devices and ambiguous trailing segments', function (): void {
+    if (PHP_OS_FAMILY !== 'Windows') {
+        expect(PHP_OS_FAMILY)->not->toBe('Windows');
+
+        return;
+    }
+
+    $root = processorContextTempDirectory('pathwise_ntfs_root_');
+    try {
+        $context = new StorageContext(['primary' => ['driver' => 'local', 'root' => $root]], 'primary');
+        foreach (['report.txt:extra', 'CON.txt', 'folder /file.txt', 'file.txt.'] as $name) {
+            expect(fn () => $context->localPath($name))
+                ->toThrow(InvalidArgumentException::class, 'Unsafe Windows local storage');
+        }
+        expect($context->localPath('valid/file.txt'))->toBeString();
+    } finally {
+        FlysystemHelper::deleteDirectory($root);
+    }
+});
