@@ -11,6 +11,7 @@ use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
+use SplFileInfo;
 
 final class NativeOperationsAdapter
 {
@@ -141,7 +142,7 @@ final class NativeOperationsAdapter
             RecursiveIteratorIterator::SELF_FIRST,
         );
         foreach ($entries as $entry) {
-            if ($entry->isLink()) {
+            if ($entry instanceof SplFileInfo && $entry->isLink()) {
                 throw new CompressionException('Symbolic links are not followed during ZIP creation.');
             }
         }
