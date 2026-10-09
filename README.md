@@ -15,7 +15,7 @@ Pathwise 4 is a framework-neutral PHP 8.4+ filesystem toolkit built on Flysystem
 
 - PHP `>=8.4`
 - `ext-fileinfo`
-- `league/flysystem ^3.35.2`
+- `league/flysystem ^3.36`
 - `psr/log ^3.0.2`
 
 ZIP, POSIX ownership, XML parsing, and remote Flysystem adapters are optional capabilities. Install only the extensions/adapters your application uses.
@@ -156,7 +156,7 @@ Pathwise 4 includes explicit controls for:
 - queue state size/payload/job limits and lease ownership;
 - policy enforcement, audit sinks, retention, indexing, and watcher workloads.
 
-Generic application use of `NativeCommandRunner` is deprecated in 4.1; Foundation/application process work belongs to Runwire. Pathwise has no production dependency on Runwire, Webrick, Foundation, InterMix, or ReqShield.
+Generic application use of `NativeCommandRunner` is deprecated as of 4.1; application process work belongs to the host runtime. Runwire 2.1.1 is an optional host integration target for the 4.2 development plan, not a required Pathwise runtime dependency. Pathwise does not own host schedulers, worker lifecycles or process managers.
 
 Security-sensitive behavior is fail-closed where a configured capability is required. Local/remote capabilities remain explicit rather than silently emulated. Pathwise makes filesystem artifacts safe to treat as **data according to policy**; it does not make arbitrary uploaded/source/binary content safe to execute. See the documentation's **Trust Boundaries and Persistent Runtimes** guide for the full ownership model.
 

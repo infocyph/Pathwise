@@ -175,7 +175,10 @@ final readonly class ClamAvDaemonScanner implements MalwareScannerInterface, Mal
         throw new MalwareScannerException('ClamAV response exceeds the configured limit.');
     }
 
-    /** @param resource $socket */
+    /**
+     * @param resource $socket
+     * @param int<1, max> $readLength
+     */
     private function readResponseChunk(mixed $socket, int $readLength): ?string
     {
         $chunk = fread($socket, $readLength);
