@@ -184,7 +184,7 @@ final readonly class UploadSource
             self::unlinkSilently($target);
             self::removeDirectorySilently($directory);
 
-            if ($exception instanceof UploadException) {
+            if ($exception instanceof UploadException || $exception instanceof FileSizeExceededException) {
                 throw $exception;
             }
 
