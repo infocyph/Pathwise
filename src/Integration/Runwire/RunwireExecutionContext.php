@@ -56,6 +56,18 @@ final class RunwireExecutionContext
         }
     }
 
+    public function checkpoint(): void
+    {
+        $this->assertActive();
+        if (
+            $this->scope !== null
+            && $this->runtime->supports(RuntimeCapability::RUNWIRE_COROUTINES)
+            && ++$this->checkpoints % $this->checkpointEvery === 0
+        ) {
+            $this->scope->yieldNow();
+        }
+        $this->assertActive();
+    }
     /**
      * @return \Generator<int, array{checksum: string, path: string}>
      */
@@ -69,16 +81,4 @@ final class RunwireExecutionContext
         }
     }
 
-    public function checkpoint(): void
-    {
-        $this->assertActive();
-        if (
-            $this->scope !== null
-            && $this->runtime->supports(RuntimeCapability::RUNWIRE_COROUTINES)
-            && ++$this->checkpoints % $this->checkpointEvery === 0
-        ) {
-            $this->scope->yieldNow();
-        }
-        $this->assertActive();
-    }
 }

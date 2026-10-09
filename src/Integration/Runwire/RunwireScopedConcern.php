@@ -14,19 +14,10 @@ trait RunwireScopedConcern
     /** @var WeakMap<Fiber<mixed, mixed, mixed, mixed>, RunwireExecutionContext>|null */
     private ?WeakMap $runwireFiberContexts = null;
 
-    private ?RunwireExecutionContext $runwireMainContext = null;
-
     /** @var array<string, int> */
     private array $runwireLatestGenerations = [];
 
-    protected function checkpointRunwire(): void
-    {
-        $context = $this->currentRunwireContext();
-        if ($context !== null) {
-            $this->assertRunwireGeneration($context);
-            $context->checkpoint();
-        }
-    }
+    private ?RunwireExecutionContext $runwireMainContext = null;
 
     /**
      * @template T
@@ -49,6 +40,15 @@ trait RunwireScopedConcern
             return $operation($this);
         } finally {
             $this->storeRunwireContext($fiber, $previous);
+        }
+    }
+
+    protected function checkpointRunwire(): void
+    {
+        $context = $this->currentRunwireContext();
+        if ($context !== null) {
+            $this->assertRunwireGeneration($context);
+            $context->checkpoint();
         }
     }
 

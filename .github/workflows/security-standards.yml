@@ -85,8 +85,7 @@ jobs:
               exit(1);
           }
           $processor = new \Infocyph\Pathwise\StreamHandler\DownloadProcessor();
-          $source = tempnam(sys_get_temp_dir(), "pathwise_prod_");
-          if (!is_string($source)) { exit(1); }
+          $source = sys_get_temp_dir() . "/pathwise_prod_" . bin2hex(random_bytes(8)) . ".txt";
           try {
               file_put_contents($source, "unbound");
               $prepared = $processor->prepareDownload($source);
