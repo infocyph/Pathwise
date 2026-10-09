@@ -167,6 +167,34 @@ final class ZipEntryValidator
     }
 
     /**
+     * @param array<string, true> $filePaths
+     * @param array<string, true> $ancestorPaths
+     */
+    private static function assertNoFileAncestor(
+        string $canonical,
+        string $entry,
+        array &$filePaths,
+        array &$ancestorPaths,
+    ): void {
+        $segments = explode('/', $canonical);
+        $ancestor = '';
+        $lastIndex = count($segments) - 1;
+        foreach ($segments as $index => $segment) {
+            if ($segment === '') {
+                continue;
+            }
+            $ancestor = $ancestor === '' ? $segment : $ancestor . '/' . $segment;
+            if ($index === $lastIndex) {
+                break;
+            }
+            if (isset($filePaths[$ancestor])) {
+                throw new UnsafeArchiveEntryException("ZIP entry is nested below an archive file: {$entry}");
+            }
+            $ancestorPaths[$ancestor] = true;
+        }
+    }
+
+    /**
      * @param array<string, bool> $seenPaths
      * @param array<string, true> $filePaths
      * @param array<string, true> $ancestorPaths
@@ -273,34 +301,6 @@ final class ZipEntryValidator
             || preg_match('/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\\..*)?$/iD', $segment) === 1
         ) {
             throw new UnsafeArchiveEntryException("Unsafe Windows ZIP entry segment detected: {$entry}");
-        }
-    }
-
-    /**
-     * @param array<string, true> $filePaths
-     * @param array<string, true> $ancestorPaths
-     */
-    private static function assertNoFileAncestor(
-        string $canonical,
-        string $entry,
-        array &$filePaths,
-        array &$ancestorPaths,
-    ): void {
-        $segments = explode('/', $canonical);
-        $ancestor = '';
-        $lastIndex = count($segments) - 1;
-        foreach ($segments as $index => $segment) {
-            if ($segment === '') {
-                continue;
-            }
-            $ancestor = $ancestor === '' ? $segment : $ancestor . '/' . $segment;
-            if ($index === $lastIndex) {
-                break;
-            }
-            if (isset($filePaths[$ancestor])) {
-                throw new UnsafeArchiveEntryException("ZIP entry is nested below an archive file: {$entry}");
-            }
-            $ancestorPaths[$ancestor] = true;
         }
     }
 

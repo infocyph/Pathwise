@@ -335,9 +335,8 @@ trait UploadProcessorValidationConcern
         return $normalized;
     }
 
-    /** @return array{string, bool} */
     private function performMalwareScan(
-        MalwareScannerInterface $scanner,
+        \Infocyph\Pathwise\StreamHandler\MalwareScannerInterface $scanner,
         MalwareScanRequest $request,
     ): MalwareScanVerdict {
         try {
@@ -347,6 +346,7 @@ trait UploadProcessorValidationConcern
         }
     }
 
+    /** @return array{string, bool} */
     private function prepareImagePathForInspection(string $filePath): array
     {
         $directLocalPath = $this->storageDirectLocalPath($filePath);

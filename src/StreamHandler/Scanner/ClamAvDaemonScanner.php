@@ -186,6 +186,16 @@ final readonly class ClamAvDaemonScanner implements MalwareScannerInterface, Mal
         return $chunk;
     }
 
+    private function remainingSeconds(float $deadline): float
+    {
+        $remaining = $deadline - hrtime(true) / 1_000_000_000;
+        if ($remaining <= 0) {
+            throw new MalwareScannerException('ClamAV operation timed out.');
+        }
+
+        return $remaining;
+    }
+
     /** @param resource $socket */
     private function responseReadEnded(mixed $socket, mixed $chunk): bool
     {
@@ -198,16 +208,6 @@ final readonly class ClamAvDaemonScanner implements MalwareScannerInterface, Mal
         }
 
         return feof($socket);
-    }
-
-    private function remainingSeconds(float $deadline): float
-    {
-        $remaining = $deadline - hrtime(true) / 1_000_000_000;
-        if ($remaining <= 0) {
-            throw new MalwareScannerException('ClamAV operation timed out.');
-        }
-
-        return $remaining;
     }
 
     /**

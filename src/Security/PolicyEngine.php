@@ -107,7 +107,7 @@ final class PolicyEngine
     }
 
     /**
-     * @param array{ string, pattern: string, allow: bool, condition: (callable(string, string, array<string, mixed>): bool)|null} $rule
+     * @param array{operation: string, pattern: string, allow: bool, condition: (callable(string, string, array<string, mixed>): bool)|null} $rule
      * @param array<string, mixed> $context
      */
     private function ruleMatches(
@@ -130,5 +130,4 @@ final class PolicyEngine
         return fnmatch($pattern, $normalizedPath)
             && ($rule['condition'] === null || ($rule['condition'])($operation, $path, $context));
     }
-
 }
