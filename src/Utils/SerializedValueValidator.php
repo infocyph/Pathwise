@@ -30,12 +30,11 @@ final class SerializedValueValidator
             return true;
         }
 
-        foreach ($value as $item) {
-            if (self::isUnsupported($item, $depth + 1, $remaining)) {
-                return true;
-            }
-        }
-
-        return false;
+        return array_any(
+            $value,
+            static function (mixed $item) use ($depth, &$remaining): bool {
+                return self::isUnsupported($item, $depth + 1, $remaining);
+            },
+        );
     }
 }
