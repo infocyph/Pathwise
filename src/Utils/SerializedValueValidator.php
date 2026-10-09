@@ -6,9 +6,18 @@ namespace Infocyph\Pathwise\Utils;
 
 final class SerializedValueValidator
 {
+    private const int MAX_VISITS = 4096;
+
     public static function containsUnsupportedValue(mixed $value, int $depth = 0): bool
     {
-        if ($depth > 256) {
+        $remaining = self::MAX_VISITS;
+
+        return self::isUnsupported($value, $depth, $remaining);
+    }
+
+    private static function isUnsupported(mixed $value, int $depth, int &$remaining): bool
+    {
+        if ($depth > 256 || --$remaining < 0) {
             return true;
         }
         if (is_float($value)) {
@@ -21,6 +30,12 @@ final class SerializedValueValidator
             return true;
         }
 
-        return array_any($value, static fn(mixed $item): bool => self::containsUnsupportedValue($item, $depth + 1));
+        foreach ($value as $item) {
+            if (self::isUnsupported($item, $depth + 1, $remaining)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
