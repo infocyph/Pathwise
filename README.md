@@ -193,3 +193,22 @@ Pathwise is protected by [PHPForge](https://github.com/infocyph/PHPForge), which
   <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=documentation.md">Documentation</a> •
   <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=maintenance.md">Maintenance</a>
 </div>
+
+## Optional borrowed Runwire 2.1.1 integration
+
+Runwire is an **optional host runtime**, pinned to `2.1.1` for integration development and suggested for deployments using the bridge. Normal Pathwise use does not instantiate or activate Runwire. The host owns its runtime, request, scope and cancellation.
+
+```php
+use Infocyph\\Pathwise\\Integration\\Runwire\\RunwireExecutionContext;
+use Infocyph\\Pathwise\\StreamHandler\\DownloadProcessor;
+
+// $runtime and $request are supplied by the active host; Pathwise does not create them.
+$execution = new RunwireExecutionContext($runtime, $request, $scope ?? null);
+$download = new DownloadProcessor();
+$result = $download->withRunwire(
+    $execution,
+    static fn (DownloadProcessor $bound) => $bound->prepareDownload($path),
+);
+```
+
+The same execution object may be explicitly forwarded through intermediary services. Bind separately inside newly created Fibers; bindings never implicitly inherit. Calls that return lazy generators must be **consumed inside** the scoped callback. Checkpoints validate the live request/deadline and optionally yield only inside a supplied, capable Runwire task. Blocking adapter operations, native subprocesses, arbitrary movers and filesystem calls remain synchronous; no owned cancellation source, scheduler or host lifecycle is introduced. Cancellation is checked before publication where Pathwise has a safe boundary; successfully committed publications are not retroactively reported as cancelled. Host performance evidence is still required before release acceptance.
