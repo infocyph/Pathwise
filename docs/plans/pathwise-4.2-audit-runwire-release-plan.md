@@ -257,13 +257,13 @@ Last updated: 2026-10-09 (Asia/Dhaka).
 Pull request: [#24 (draft)](https://github.com/infocyph/Pathwise/pull/24).
 Branch: `feature/runwire-2.1.1`. Review baseline: `eead7cc6a1ac498a602f7f0ac0b3ff316ea979d9` (tag 4.1).
 
-**State:** Draft PR opened; remediation implementation and candidate acceptance remain open. The 4.1 successful hosted run is historical baseline evidence only, not approval of this branch.
+**State:** Draft PR #24 open, unmerged. Remediation A implemented and functional/stress QA verified; Remediation B has working changes and passing intermediate analyzer results, but exact-head acceptance, clone/development-dependency triage and remediation checkpoint are still open. Historical 4.1 CI is not release evidence for 4.2.
 
 | Batch / gate | Findings and scope | Implementation | QA / CI | Commit evidence |
 | --- | --- | --- | --- | --- |
 | Preparation | Draft PR, plan tracker, baseline | Complete | PR verified, no merge | [Draft PR #24](https://github.com/infocyph/Pathwise/pull/24), `faf02f7` |
-| **Remediation batch A** | P01–P06, P11; focused security/data-integrity regressions | **All seven findings implemented; functional QA passed; final batch QA pending** | [Code candidate `99b0055`](https://github.com/infocyph/Pathwise/actions/runs/37943088261): all four PHPForge QA matrices, Windows 8.4/8.5, optional adapters, clean install and both benchmarks passed. PHPStan **8.4 and 8.5 each failed on exactly 12 preexisting P12 complexity findings, with no new analyzer findings**; release stress is still in progress. Security report cannot be treated as passed while analysis fails. | P01/P02 `947f34a`–`a6a153b`; P03 `3be1f60`–`2ce1c87`; P04 `6ed9b1b`–`1ba96ed`; P05 `55f6b3d`–`99b0055`; P06 `9014db7`–`96bfed2`; P11 `c343e78`–`ef674a3` |
-| **Remediation batch B** | P07–P10 and P12, analyzer/clone/toolchain/docs | Not started | Pending | — |
+| **Remediation batch A** | P01–P06, P11; security/data-integrity and regressions | **Implemented; functional and stress QA complete** | [Code candidate `99b0055`](https://github.com/infocyph/Pathwise/actions/runs/37943088261): Windows 8.4/8.5, adapter contracts, four PHPForge QA matrices, clean install, both benchmarks and release stress passed. Its PHPStan blockers were the twelve already assigned to B/P12; later [`4c9fb31` code candidate](https://github.com/infocyph/Pathwise/commit/4c9fb31c923485556cb610f48e98a7c0a72d64b6) passes both analyzer matrices. | P01/P02 `947f34a`–`a6a153b`; P03–P06/P11 `3be1f60`–`99b0055` |
+| **Remediation batch B** | P07–P10 and P12, static analyzers, clone/toolchain/docs and Windows NTFS | **Implementation and focused regressions in progress** | [`4c9fb31` workflow](https://github.com/infocyph/Pathwise/commit/4c9fb31c923485556cb610f48e98a7c0a72d64b6): all four PHPForge QA configurations, PHPStan and Psalm 8.4/8.5, adapters, Windows, clean install and benchmarks passed; stress in progress. [`8b6eeb6` NTFS additions](https://github.com/infocyph/Pathwise/commit/8b6eeb617765337f101824fd6fd9c70aaa2f0962) require exact-head QA. Dev-only doctrine/annotations abandonment still requires upstream-chain triage; clone groups require disposition. | `30555c9`, `e52ce77`, `5a742a9`, `89a08ea`, `4c9fb31`, `8b6eeb6` |
 | Remediation checkpoint | Full PHPForge, security, Windows, matched performance baseline | Not started | Pending | — |
 | Runwire integration batch | Optional Runwire 2.1.1 borrowed context and host fixtures | Not started | Pending | — |
 | Final 4.2.0 candidate | Exact candidate hosted QA, performance, soak, security reports | Not started | Pending | — |
@@ -284,6 +284,16 @@ Branch: `feature/runwire-2.1.1`. Review baseline: `eead7cc6a1ac498a602f7f0ac0b3f
 - **P11:** Dedup canonical and target entries must be regular, non-symlink files at mutation checks; regression covers canonical and target links with an outside fixture. Path-based checks do not promise fully race-free hard-link publication.
 - **QA on code candidate `99b0055`:** [GitHub workflow](https://github.com/infocyph/Pathwise/actions/runs/37943088261). Four PHPForge quality matrices, two Windows jobs, optional adapter contracts, clean install and PHP 8.4/8.5 benchmarks **passed**. PHPStan 8.4 and 8.5 each reported exactly twelve preexisting P12 complexity errors; release stress had not completed at the last check. No PHPForge thresholds, skip directives or gate scripts were weakened.
 - **Acceptance rule:** Batch A is functionally verified but stays **QA pending** until stress/analysis dispositions and any new regression are accounted for. The twelve baseline analyzer failures must be resolved in Remediation batch B before the full remediation checkpoint; do not claim release readiness until the exact-final-candidate CI and security report pass.
+
+### Remediation batch B implementation and QA record
+
+- **P07:** Reject ADS, reserved NTFS device names and trailing-dot/space aliases on Windows ZIP extraction, local storage and public-file resolution; preserve valid POSIX paths. New Windows tests include actual extraction denial with no destination artifacts. NTFS candidate `8b6eeb6` is not yet fully verified.
+- **P08:** Normalize invalid UTF-8 without mbstring and cap failure messages on valid code-point boundaries *before* reservation failure transition; tests cover 4095-byte/emoji and invalid bytes.
+- **P09:** Preserve JSON scalar zero in line reading; reject multiline serialized payloads before modifying the writer's line-based storage.
+- **P10:** Escape native `cp` operands with `--`, normalize rsync local paths to absolute operands to disambiguate colons, and handle leading-dash ZIP source names.
+- **P12 analyzer:** Refactored required complexity owners without changing limits, skip policies or disabling PHPForge; the `4c9fb31` PHPStan/Psalm and all four quality matrices pass, resolving the initial 12 findings. This result must be reconfirmed on the final code revision.
+- **P12 remaining:** Eight clone groups identified in the audit need reasoned triage against the live duplicate checker (the `4c9fb31` QA duplicate-code gate passed). The `doctrine/annotations` warning belongs to the PHPBench/PHPForge development dependency chain; record upstream remediation availability without adding a runtime workaround. README Flysystem dependency now matches `^3.36`.
+- **No release signoff yet:** Batch B latest Windows additions and final exact-head QA are outstanding; full remediation checkpoint, matched host RPM and optional Runwire integration remain subsequent original gates.
 
 ### Tracker policy
 
