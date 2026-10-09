@@ -116,7 +116,16 @@ final class ChecksumIndexer
             return;
         }
 
-        if (self::filesAreIdentical($canonical, $temporary) && self::runSilently(static fn(): bool => link($canonical, $path))) {
+        if (
+            self::isLocalFile($canonical)
+            && self::isLocalFile($temporary)
+            && !file_exists($path)
+            && !is_link($path)
+            && self::filesAreIdentical($canonical, $temporary)
+            && self::isLocalFile($canonical)
+            && self::isLocalFile($temporary)
+            && self::runSilently(static fn(): bool => link($canonical, $path))
+        ) {
             self::unlinkSilently($temporary);
             $linked[] = $path;
 
@@ -192,7 +201,7 @@ final class ChecksumIndexer
 
     private static function isLocalFile(string $path): bool
     {
-        return !PathHelper::hasScheme($path) && is_file($path);
+        return !PathHelper::hasScheme($path) && !is_link($path) && is_file($path);
     }
 
     /** @return \Generator<int, string> */
