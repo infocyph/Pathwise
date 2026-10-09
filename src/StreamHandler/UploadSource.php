@@ -96,6 +96,7 @@ final readonly class UploadSource
                     if (!is_resource($input)) {
                         throw new UploadException('Unable to read upload path stream.');
                     }
+
                     try {
                         self::copyStreamToTarget($input, $target, $maxBytes);
                     } finally {
@@ -186,6 +187,18 @@ final readonly class UploadSource
         }
     }
 
+    private static function allocateStagingDirectory(string $root): string
+    {
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $directory = PathHelper::join($root, 'pathwise-upload-' . bin2hex(random_bytes(16)));
+            if (self::runSilently(static fn(): bool => mkdir($directory, 0700))) {
+                return $directory;
+            }
+        }
+
+        throw new UploadException('Unable to allocate upload staging directory.');
+    }
+
     private static function assertWithinMaterializationLimit(?int $maxBytes, ?int $actualSize): void
     {
         if ($maxBytes === null) {
@@ -197,18 +210,6 @@ final readonly class UploadSource
         if ($actualSize !== null && $actualSize > $maxBytes) {
             throw new FileSizeExceededException('Exceeded file size limit.');
         }
-    }
-
-    private static function allocateStagingDirectory(string $root): string
-    {
-        for ($attempt = 0; $attempt < 5; $attempt++) {
-            $directory = PathHelper::join($root, 'pathwise-upload-' . bin2hex(random_bytes(16)));
-            if (self::runSilently(static fn(): bool => mkdir($directory, 0700))) {
-                return $directory;
-            }
-        }
-
-        throw new UploadException('Unable to allocate upload staging directory.');
     }
 
     private static function copyStreamToTarget(mixed $stream, string $target, ?int $maxBytes): void
