@@ -117,9 +117,8 @@ jobs:
         run: |
           composer audit --no-dev --format=json > "$RUNNER_TEMP/pathwise-security.json"
           cat "$RUNNER_TEMP/pathwise-security.json"
-      - name: Run filesystem trust-boundary and Runwire contract tests
-        run: |
-          vendor/bin/pest tests/Feature/ArchiveSecurityTest.php tests/Feature/UploadTrustBoundaryTest.php tests/Feature/ClamAvDaemonScannerTest.php tests/Feature/RunwireExecutionContextTest.php
+      - name: Run filesystem trust-boundary and Runwire contract tests via PHPForge
+        run: composer ic:test:code
       - name: Publish production dependency security report
         if: always()
         uses: actions/upload-artifact@v4
@@ -146,9 +145,7 @@ jobs:
           coverage: none
           tools: composer:v2
       - name: Install identical Foundation host dependencies
-        run: |
-          composer install --no-interaction --prefer-dist
-          composer require --dev --no-interaction --prefer-dist infocyph/foundation:3.0.1
+        run: composer install --no-interaction --prefer-dist
       - name: Retrieve the immediate 4.1 release source
         run: |
           mkdir -p "$RUNNER_TEMP/pathwise41"
@@ -182,10 +179,8 @@ jobs:
           extensions: "fileinfo, pcntl, posix, simplexml, xmlreader, zip"
           coverage: none
           tools: composer:v2
-      - name: Install Pathwise and exact Foundation host
-        run: |
-          composer install --no-interaction --prefer-dist
-          composer require --dev --no-interaction --prefer-dist infocyph/foundation:3.0.1
+      - name: Install Pathwise and pinned Foundation host
+        run: composer install --no-interaction --prefer-dist
       - name: Exercise composed Foundation and Runwire runtime
         run: php tests/Support/FoundationRunwireHost.php
 

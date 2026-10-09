@@ -120,7 +120,7 @@ try {
     requireHost(!$requestB->completed(), 'Pathwise completed a host-owned request.');
     $requestA->complete();
     $requestB->complete();
-    echo "Foundation 3.0.1 / Runwire 2.1.1 host integration, isolation and cancellation PASS\n";
+    fwrite(STDOUT, "Foundation 3.0.1 / Runwire 2.1.1 host integration, isolation and cancellation PASS\n");
 } finally {
     cleanupHost($rootA);
     cleanupHost($rootB);
