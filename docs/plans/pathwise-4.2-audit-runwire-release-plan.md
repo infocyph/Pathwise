@@ -13,7 +13,7 @@ This plan follows [PHPForge engineering principles](../../vendor/infocyph/phpfor
 
 Keep required remediation, consumer-optional Runwire integration and deferred optimization distinct within the single release. Measure performance-sensitive changes using representative sustained successful host RPM; component benchmarks are supporting evidence. Prefer the simpler implementation when measured results are practically equivalent.
 
-The [4.1 trust-boundary plan](pathwise-4.1-upload-filesystem-trust-boundary-plan.md) remains the reference for filesystem ownership. The proposed 4.2 integration deliberately revises its prohibition on public Runwire types at an optional boundary. Host ownership of workers, event loops, requests, cancellation sources and task scopes remains intact. Generic subprocess orchestration stays outside Pathwise's filesystem responsibilities.
+The [4.1 trust-boundary plan](https://github.com/infocyph/Pathwise/blob/4.1/docs/plans/pathwise-4.1-upload-filesystem-trust-boundary-plan.md) remains the reference for filesystem ownership. The proposed 4.2 integration deliberately revises its prohibition on public Runwire types at an optional boundary. Host ownership of workers, event loops, requests, cancellation sources and task scopes remains intact. Generic subprocess orchestration stays outside Pathwise's filesystem responsibilities.
 
 ## Audit coverage and current evidence
 
@@ -250,6 +250,33 @@ Use bounded persistent-worker smoke/soak runs to check request/scope reset, file
 Consider additive framed serialization if real consumers need multiline records. Consider explicit early-exit XML reader cleanup and bounded malformed-input behavior after confirming the documented parser contract. Consider native strategy tuning only after repeated matched measurements; the single audit copy sample favored PHP, but establishes no general strategy change.
 
 Do not perform broad reorganizations, replace all traits, introduce a backend manager, parallelize filesystem work automatically, or create pools/workers merely because the optional runtime exists. There is no evidence justifying a 5.0 rewrite or mandatory Runwire dependency.
+
+## Implementation progress tracker
+
+Last updated: 2026-10-09 (Asia/Dhaka).
+Pull request: [#24 (draft)](https://github.com/infocyph/Pathwise/pull/24).
+Branch: `feature/runwire-2.1.1`. Review baseline: `eead7cc6a1ac498a602f7f0ac0b3ff316ea979d9` (tag 4.1).
+
+**State:** Draft PR opened; remediation implementation and candidate acceptance remain open. The 4.1 successful hosted run is historical baseline evidence only, not approval of this branch.
+
+| Batch / gate | Findings and scope | Implementation | QA / CI | Commit evidence |
+| --- | --- | --- | --- | --- |
+| Prepare | Draft PR, tracker, preserve tagged 4.1 audit reference | Done | Plan/PR metadata checked | Initial plan setup |
+| A1 | P01 local containment, P02 bounded upload/materialization + cumulative chunks | Not started | Pending | — |
+| A2 | P03 serialized graph work, P04 native ZIP, P05 lock correctness | Not started | Pending | — |
+| A3 | P06 ClamAV, P11 deduplication | Not started | Pending | — |
+| B | P07–P10 Windows/queue/framing/native args, P12 analyzers/clones/deps/docs | Not started | Pending | — |
+| Remediation gate | Full PHPForge, security fixtures, Windows CI and matched baseline | Not started | Pending | — |
+| Runwire integration | Exact 2.1.1 borrowed context; nested/Fiber safety, cancellation, Foundation 3 host chain | Not started | Pending | — |
+| Final 4.2.0 candidate | Hosted matrix, security, adapters, performance, soak/release checklist | Not started | Pending | — |
+
+### Tracker policy
+
+- Implement scoped fixes, add faithful regression tests, and run focused QA **before** claiming a batch complete.
+- Resolve valid PHPForge, static-analysis, regression and hosted CI failures instead of bypassing gates.
+- Record commit SHA, test command/outcome, workflow URL and remaining concerns for each completed batch.
+- Run full verification between remediation and Runwire work; preserve public API, performance and native security parity.
+- This PR remains draft and unmerged; no final release tag is created during implementation.
 
 ## Completion record
 
