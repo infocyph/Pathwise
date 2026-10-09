@@ -415,18 +415,6 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
         throw new FileAccessException("Failed to acquire lock on file {$this->filename} after {$attempts} attempts.");
     }
 
-    private function initializeLockedWrite(SplFileObject $file, int $lockType): void
-    {
-        if ($this->append || $lockType !== LOCK_EX) {
-            return;
-        }
-        if (!$file->ftruncate(0) || $file->fseek(0) !== 0) {
-            $this->unlock();
-
-            throw new FileAccessException("Unable to initialize locked file {$this->filename}.");
-        }
-    }
-
     private function createAtomicTempFilePath(): string
     {
         $directory = dirname($this->filename);
@@ -479,6 +467,18 @@ class SafeFileWriter implements Countable, Stringable, JsonSerializable
         }
 
         return $this->filename;
+    }
+
+    private function initializeLockedWrite(SplFileObject $file, int $lockType): void
+    {
+        if ($this->append || $lockType !== LOCK_EX) {
+            return;
+        }
+        if (!$file->ftruncate(0) || $file->fseek(0) !== 0) {
+            $this->unlock();
+
+            throw new FileAccessException("Unable to initialize locked file {$this->filename}.");
+        }
     }
 
     private function initializeRemoteWorkingPath(): void
