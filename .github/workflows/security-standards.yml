@@ -128,6 +128,45 @@ jobs:
           path: ${{ runner.temp }}/pathwise-security.json
           if-no-files-found: warn
 
+  foundation-host-performance:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
+    name: "Foundation 3 host / matched 4.1 vs 4.2 performance"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: "fileinfo, pcntl, posix, simplexml, xmlreader, zip"
+          coverage: none
+          tools: composer:v2
+      - name: Install identical Foundation host dependencies
+        run: |
+          composer install --no-interaction --prefer-dist
+          composer require --dev --no-interaction --prefer-dist infocyph/foundation:3.0.1
+      - name: Retrieve the immediate 4.1 release source
+        run: |
+          mkdir -p "$RUNNER_TEMP/pathwise41"
+          git fetch --depth=1 origin refs/tags/4.1:refs/tags/4.1
+          git archive 4.1 src | tar -x -C "$RUNNER_TEMP/pathwise41"
+      - name: Compare matched host request throughput, tail latency and memory
+        run: |
+          python3 tests/Support/CompareFoundationHostPerformance.py \
+            "$RUNNER_TEMP/pathwise41/src" "$PWD/src" \
+            "$RUNNER_TEMP/pathwise-host-performance.json"
+      - name: Publish matched host performance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: foundation-host-performance
+          path: ${{ runner.temp }}/pathwise-host-performance.json
+          if-no-files-found: warn
+
   foundation-3-host:
     if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
     name: "Foundation 3.0.1 / Runwire 2.1.1 host and isolation"
