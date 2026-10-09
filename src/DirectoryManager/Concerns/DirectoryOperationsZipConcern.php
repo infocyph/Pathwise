@@ -35,6 +35,7 @@ trait DirectoryOperationsZipConcern
         );
 
         foreach ($iterator as $file) {
+            $this->checkpointRunwire();
             if (!$file instanceof SplFileInfo) {
                 continue;
             }
@@ -332,6 +333,7 @@ trait DirectoryOperationsZipConcern
 
         try {
             foreach ($entries as $entry) {
+                $this->checkpointRunwire();
                 $this->publishRemoteZipEntry($entry, $createdFiles, $createdDirectories);
             }
         } catch (\Throwable $exception) {

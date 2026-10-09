@@ -146,3 +146,20 @@ test('cancelled request prevents uploading before arbitrary mover is invoked', f
     ))->toThrow(CancelledException::class)
         ->and($called)->toBeFalse();
 });
+
+test('borrowed checksum traversal checks host cancellation between files', function (): void {
+    file_put_contents($this->runwireRoot . DIRECTORY_SEPARATOR . 'second.txt', 'second');
+    $runtime = RuntimeContext::standalone();
+    $request = RequestContext::create($runtime);
+    $execution = new RunwireExecutionContext($runtime, $request, checkpointEvery: 1);
+    $received = 0;
+
+    expect(function () use ($execution, $request, &$received): void {
+        foreach ($execution->iterateChecksums($this->runwireRoot) as $entry) {
+            expect($entry['checksum'])->toHaveLength(64);
+            $received++;
+            $request->cancel(CancellationReason::HOST_CANCELLED);
+        }
+    })->toThrow(CancelledException::class);
+    expect($received)->toBe(1);
+});

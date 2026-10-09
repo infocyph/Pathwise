@@ -205,12 +205,14 @@ class FileCompression
         );
         $manifestByPath = [];
         foreach ($manifest as $entry) {
+            $this->checkpointRunwire();
             $manifestByPath[$entry->path] = $entry;
         }
 
         $selected = [];
         $selectedTargets = [];
         foreach ($files as $zipPath => $localPath) {
+            $this->checkpointRunwire();
             $zipPath = ZipEntryValidator::validate($zipPath, $destination);
             $localPath = ZipEntryValidator::validate($localPath, $destination);
             $entry = $manifestByPath[$zipPath] ?? null;

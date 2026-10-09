@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\Integration\Runwire;
 
+use Infocyph\Pathwise\Indexing\ChecksumIndexer;
 use Infocyph\Runwire\Coroutine\CoroutineScope;
 use Infocyph\Runwire\Coroutine\TaskLocal;
 use Infocyph\Runwire\RequestContext;
@@ -52,6 +53,19 @@ final class RunwireExecutionContext
             // A Runwire 2.1.1 public guard checks the live scheduler/task and closed scope.
             $this->scope->hasLocal($this->scopeProbe);
             $this->scope->cancellation()->throwIfCancelled();
+        }
+    }
+
+    /**
+     * @return \Generator<int, array{checksum: string, path: string}>
+     */
+    public function iterateChecksums(string $directory, string $algorithm = 'sha256'): \Generator
+    {
+        $this->checkpoint();
+        foreach (ChecksumIndexer::iterate($directory, $algorithm) as $entry) {
+            $this->checkpoint();
+
+            yield $entry;
         }
     }
 

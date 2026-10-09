@@ -254,6 +254,7 @@ trait FileCompressionArchiveConcern
         );
 
         foreach ($iterator as $item) {
+            $this->checkpointRunwire();
             if (!$item instanceof \SplFileInfo) {
                 continue;
             }
@@ -451,6 +452,7 @@ trait FileCompressionArchiveConcern
 
         try {
             foreach ($entries as $entry) {
+                $this->checkpointRunwire();
                 $this->publishRemoteExtractionEntry($entry, $createdFiles, $createdDirectories);
             }
         } catch (\Throwable $exception) {

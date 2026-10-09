@@ -613,6 +613,7 @@ class DirectoryOperations
         $sourceLocation = $this->storageLocation($this->path);
 
         foreach ($this->listStorageEntries($this->path, $deep) as $item) {
+            $this->checkpointRunwire();
             if ($filesOnly && $this->entryType($item) !== 'file') {
                 continue;
             }
