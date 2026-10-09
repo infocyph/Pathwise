@@ -292,8 +292,30 @@ Branch: `feature/runwire-2.1.1`. Review baseline: `eead7cc6a1ac498a602f7f0ac0b3f
 - **P09:** Preserve JSON scalar zero in line reading; reject multiline serialized payloads before modifying the writer's line-based storage.
 - **P10:** Escape native `cp` operands with `--`, normalize rsync local paths to absolute operands to disambiguate colons, and handle leading-dash ZIP source names.
 - **P12 analyzer:** Refactored required complexity owners without changing limits, skip policies or disabling PHPForge; the `4c9fb31` PHPStan/Psalm and all four quality matrices pass, resolving the initial 12 findings. This result must be reconfirmed on the final code revision.
-- **P12 remaining:** Eight clone groups identified in the audit need reasoned triage against the live duplicate checker (the `4c9fb31` QA duplicate-code gate passed). The `doctrine/annotations` warning belongs to the PHPBench/PHPForge development dependency chain; record upstream remediation availability without adding a runtime workaround. README Flysystem dependency now matches `^3.36`.
+- **P12 duplicate review:** The existing PHPForge duplicate-code gate passes. All eight reported similarity groups have individual disposition notes below; none warrants collapsing two public protocols or changing their security boundaries merely to reduce matched lines. Reassess any group if the live detector flags a new actionable duplicate.
+- **P12 development toolchain:** `phpbench/phpbench ^1.7` is required by PHPForge tooling, and `doctrine/annotations` is a known abandoned **transitive development dependency**, not a Pathwise production runtime requirement. An upstream-compatible chain update remains unresolved; no runtime substitution, audit exclusion, version bypass or fabricated clearance was applied. README Flysystem dependency now matches `^3.36`.
 - **No release signoff yet:** Batch B latest Windows additions and final exact-head QA are outstanding; full remediation checkpoint, matched host RPM and optional Runwire integration remain subsequent original gates.
+
+### Duplicate-code audit dispositions (P12)
+
+The existing PHPForge quality suite reports **PASS** for its duplicate-code check on [the `4c9fb31` candidate](https://github.com/infocyph/Pathwise/commit/4c9fb31c923485556cb610f48e98a7c0a72d64b6). Review of the eight audit-reported similarity groups:
+
+| Group | Disposition | Justification / next gate |
+| --- | --- | --- |
+| Remote ZIP publication | Retain distinct entry owners | Archive *creation/publication* and secure extraction have different rollback/overwrite contracts; reuse shared archive validation, not a generic publication wrapper |
+| Extraction-limit checks | Preserve layered checks | Manifest metadata validation and streamed extractor byte enforcement operate at different trust boundaries; an early bound cannot replace the streaming bound |
+| Queue enqueue / upload manifest shapes | Separate contracts | Lease-owned queue state and chunk-upload sessions must not share a mutable storage-shape abstraction merely because array fields look similar |
+| Benchmark fixtures | Test-local duplication tolerated | Fixtures intentionally isolate workloads; runtime size or quality must not regress through shared mutable test state |
+| Queue fail/release lease removal | Preserve explicit transitions | A failed job and a released lease change different queue buckets and fields; both validate lease ownership before mutation |
+| Storage option normalization | Separate configuration and factory ownership | Context-local normalized locations and adapter factory options are separate authority and lifetime boundaries |
+| Permissions paths | Retain platform-specific policy | POSIX mode/ownership changes and adapter visibility operations carry distinct capabilities and failure contracts |
+| Native-runner cleanup | Retain resource-lifetime clarity | Per-process failure, timeout and output cleanup must remain explicit and bounded; do not obscure teardown in a generic lifecycle abstraction |
+
+These are **triage dispositions**, not permission to bypass a future detector failure. If PHPForge reports an actionable clone, resolve the common mechanics within their appropriate owner and rerun every affected consumer. No detector configuration or suppression was changed.
+
+### Upstream development-dependency disposition (P12)
+
+PHPForge currently requires `phpbench/phpbench ^1.7`, which brings a deprecated Doctrine annotations chain in development installations. Pathwise directly requires neither PHPBench nor Doctrine at runtime. The package is retained solely through `infocyph/phpforge dev-main@dev`. Audit the upstream PHPBench/PHPForge support path when a compatible release eliminates the abandoned package; do not modify application runtime dependencies or weaken the Composer audit. **Upstream warning remains recorded and unresolved** until verified with a fresh dependency install.
 
 ### Tracker policy
 
