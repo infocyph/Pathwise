@@ -67,7 +67,10 @@ final class NativeOperationsAdapter
             return self::run($command, $source, $limits);
         }
 
-        return self::run(['zip', '-q', '-r', $zipPath, basename($source)], dirname($source), $limits);
+        $basename = basename($source);
+        $operand = str_starts_with($basename, '-') ? './' . $basename : $basename;
+
+        return self::run(['zip', '-q', '-r', $zipPath, $operand], dirname($source), $limits);
     }
 
     public static function copyDirectory(
@@ -86,8 +89,8 @@ final class NativeOperationsAdapter
         if ($mirror) {
             $command[] = '--delete';
         }
-        $command[] = rtrim($source, '/\\') . DIRECTORY_SEPARATOR;
-        $command[] = rtrim($destination, '/\\') . DIRECTORY_SEPARATOR;
+        $command[] = rtrim(PathHelper::toAbsolutePath($source), '/\\') . DIRECTORY_SEPARATOR;
+        $command[] = rtrim(PathHelper::toAbsolutePath($destination), '/\\') . DIRECTORY_SEPARATOR;
 
         return self::run($command, limits: $limits);
     }
@@ -101,7 +104,7 @@ final class NativeOperationsAdapter
         $destination = PathHelper::normalize($destination);
 
         return NativeCommandRunner::commandExists('cp')
-            ? self::run(['cp', '-f', $source, $destination], limits: $limits)
+            ? self::run(['cp', '-f', '--', $source, $destination], limits: $limits)
             : self::unsupportedResult();
     }
 

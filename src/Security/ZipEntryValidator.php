@@ -66,6 +66,7 @@ final class ZipEntryValidator
                 throw new UnsafeArchiveEntryException("ZIP traversal entry detected: {$entry}");
             }
 
+            self::assertWindowsSafeSegment($segment, $entry);
             $safeSegments[] = $segment;
         }
 
@@ -222,6 +223,22 @@ final class ZipEntryValidator
         $seenPaths[$canonical] = $directory;
         if (!$directory) {
             $filePaths[$canonical] = true;
+        }
+    }
+
+    private static function assertWindowsSafeSegment(string $segment, string $entry): void
+    {
+        if (PHP_OS_FAMILY !== 'Windows') {
+            return;
+        }
+
+        if (
+            str_contains($segment, ':')
+            || str_ends_with($segment, '.')
+            || str_ends_with($segment, ' ')
+            || preg_match('/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\\..*)?$/iD', $segment) === 1
+        ) {
+            throw new UnsafeArchiveEntryException("Unsafe Windows ZIP entry segment detected: {$entry}");
         }
     }
 

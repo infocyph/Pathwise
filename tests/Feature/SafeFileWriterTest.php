@@ -266,3 +266,14 @@ test('failed and timed lock attempts do not truncate an existing local file', fu
         fclose($holder);
     }
 });
+
+test('serialized line framing rejects embedded line breaks without writing', function (): void {
+    $writer = new SafeFileWriter($this->tempFilePath);
+    expect(fn () => $writer->writeSerialized("one\ntwo"))
+        ->toThrow(FileAccessException::class, 'line breaks')
+        ->and($writer->count())->toBe(0);
+    $writer->writeSerialized(['safe' => 'value']);
+    $writer->close();
+    $reader = new \Infocyph\Pathwise\FileManager\SafeFileReader($this->tempFilePath);
+    expect(iterator_to_array($reader->serializedValues()))->toBe([['safe' => 'value']]);
+});

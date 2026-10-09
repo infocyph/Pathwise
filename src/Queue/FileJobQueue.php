@@ -107,8 +107,7 @@ final readonly class FileJobQueue
     public function fail(QueueReservation $reservation, \Throwable|string $failure): void
     {
         $message = $failure instanceof \Throwable ? $failure->getMessage() : $failure;
-        $message = trim($message) === '' ? 'Queue job failed.' : $message;
-        $message = substr($message, 0, self::ERROR_MESSAGE_BYTES);
+        $message = self::normalizeFailureMessage($message);
 
         $this->mutateQueueData(function (array $data) use ($reservation, $message): array {
             $index = $this->processingIndexForLease($data, $reservation);
@@ -208,6 +207,23 @@ final readonly class FileJobQueue
     }
 
     /** @param array<array-key, mixed> $value */
+    private static function normalizeFailureMessage(string $message): string
+    {
+        $encoded = json_encode($message, JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR);
+        $message = json_decode($encoded, true, 512, JSON_THROW_ON_ERROR);
+        $message = trim($message) === '' ? 'Queue job failed.' : $message;
+        if (strlen($message) <= self::ERROR_MESSAGE_BYTES) {
+            return $message;
+        }
+
+        $message = substr($message, 0, self::ERROR_MESSAGE_BYTES);
+        while (preg_match('//u', $message) !== 1) {
+            $message = substr($message, 0, -1);
+        }
+
+        return $message;
+    }
+
     private function assertNoFailureState(array $value): void
     {
         if (isset($value['error']) || isset($value['failedAt'])) {

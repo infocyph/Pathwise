@@ -224,3 +224,15 @@ test('local ZIP creation refuses to follow symbolic links', function () {
     expect(fn () => (new FileCompression($this->archivePath, true))->compress($source))
         ->toThrow(CompressionException::class, 'Symbolic links are not followed');
 });
+
+test('Windows ZIP segments reject ADS, device names and trailing-name aliases', function (): void {
+    $root = $this->extractPath;
+    foreach (['file.txt:payload', 'CON.txt', 'LPT1.log', 'safe/.. /escape.txt', 'file.txt.', 'folder /child.txt'] as $name) {
+        if (PHP_OS_FAMILY === 'Windows') {
+            expect(fn () => ZipEntryValidator::validate($name, $root))
+                ->toThrow(UnsafeArchiveEntryException::class);
+        } else {
+            expect(ZipEntryValidator::validate($name, $root))->toBeString();
+        }
+    }
+});

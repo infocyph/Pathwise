@@ -413,7 +413,7 @@ final class SafeFileReader implements Countable
     {
         while (!$this->file->eof()) {
             $line = trim($this->file->fgets());
-            if ($line) {
+            if ($line !== '') {
                 try {
                     $decoded = json_decode($line, true, 512, JSON_THROW_ON_ERROR);
                 } catch (\JsonException $exception) {

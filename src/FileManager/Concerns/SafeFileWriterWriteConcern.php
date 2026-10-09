@@ -351,6 +351,10 @@ trait SafeFileWriterWriteConcern
             throw new FileAccessException('Serialized values must contain only safe scalar and array types.');
         }
         $serializedData = serialize($data);
+        if (str_contains($serializedData, "\n") || str_contains($serializedData, "\r")) {
+            throw new FileAccessException('Line-delimited serialized values cannot contain line breaks.');
+        }
+
         $this->writeCount++;
 
         return $this->requireFileHandle()->fwrite($serializedData . PHP_EOL);

@@ -268,3 +268,18 @@ test('native ZIP refuses file and directory symlinks without archiving outside c
         ->toThrow(CompressionException::class, 'Symbolic links are not followed')
         ->and(file_exists($destination))->toBeFalse();
 });
+
+test('native copy treats leading dashes and colons as local operands', function (): void {
+    if (!NativeOperationsAdapter::canUseNativeFileCopy()) {
+        expect(true)->toBeTrue();
+
+        return;
+    }
+
+    $source = $this->nativeRoot . DIRECTORY_SEPARATOR . '-source:local.txt';
+    $destination = $this->nativeRoot . DIRECTORY_SEPARATOR . '-destination:local.txt';
+    file_put_contents($source, 'literal-operand');
+    $result = NativeOperationsAdapter::copyFile($source, $destination);
+    expect($result->success)->toBeTrue()
+        ->and(file_get_contents($destination))->toBe('literal-operand');
+});
