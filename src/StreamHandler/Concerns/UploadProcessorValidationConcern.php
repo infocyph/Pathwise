@@ -134,6 +134,8 @@ trait UploadProcessorValidationConcern
     /** Ensure the upload directory exists. */
     private function ensureUploadDirectoryExists(): void
     {
+        // Validate local context containment before any adapter mutation.
+        $this->storageDirectLocalPath($this->uploadDir);
         if (!$this->storageDirectoryExists($this->uploadDir)) {
             $this->storageCreateDirectory($this->uploadDir);
         }
@@ -333,6 +335,17 @@ trait UploadProcessorValidationConcern
         return $normalized;
     }
 
+    private function performMalwareScan(
+        \Infocyph\Pathwise\StreamHandler\MalwareScannerInterface $scanner,
+        MalwareScanRequest $request,
+    ): MalwareScanVerdict {
+        try {
+            return $scanner->scan($request);
+        } catch (\Throwable $exception) {
+            throw new UploadException('Malware scanner failed.', 0, $exception);
+        }
+    }
+
     /** @return array{string, bool} */
     private function prepareImagePathForInspection(string $filePath): array
     {
@@ -406,11 +419,7 @@ trait UploadProcessorValidationConcern
 
             $digestBeforeScan = $this->malwareScanDigest($scanPath);
 
-            try {
-                $verdict = $this->malwareScanner->scan($request);
-            } catch (\Throwable $exception) {
-                throw new UploadException('Malware scanner failed.', 0, $exception);
-            }
+            $verdict = $this->performMalwareScan($this->malwareScanner, $request);
 
             clearstatcache(true, $scanPath);
             if (is_link($scanPath) || !is_file($scanPath)) {

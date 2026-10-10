@@ -33,7 +33,7 @@ myst_enable_extensions = [
 myst_heading_anchors = 3
 autosectionlabel_prefix_document = True
 todo_include_todos = False
-exclude_patterns = ["_build", "plans/**"]
+exclude_patterns = ["_build"]
 
 html_theme = "sphinx_book_theme"
 html_theme_options = {

@@ -162,3 +162,9 @@ test('it rejects invalid matching-line regex and non-positive fixed widths', fun
     expect(fn () => $reader->matchingLines('['))->toThrow(InvalidArgumentException::class)
         ->and(fn () => $reader->fixedWidth([0]))->toThrow(InvalidArgumentException::class);
 });
+
+test('JSON lines preserve scalar zero while ignoring blank lines', function (): void {
+    file_put_contents($this->tempFilePath, "0\nfalse\nnull\n1\n\n");
+    $reader = new SafeFileReader($this->tempFilePath);
+    expect(iterator_to_array($reader->jsonLines()))->toBe([0, false, null, 1]);
+});

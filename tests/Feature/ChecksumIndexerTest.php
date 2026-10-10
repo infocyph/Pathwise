@@ -103,3 +103,49 @@ test('it builds duplicate index for mounted paths and skips hard links there', f
         ->and($report->linked)->toBe([])
         ->and(count($report->skipped))->toBeGreaterThan(0);
 });
+
+test('hard link dedup never uses a canonical or target symlink as a regular file', function (): void {
+    if (PHP_OS_FAMILY === 'Windows') {
+        expect(PHP_OS_FAMILY)->toBe('Windows');
+
+        return;
+    }
+
+    $outside = tempnam(sys_get_temp_dir(), 'pathwise_dedup_outside_');
+    if (!is_string($outside)) {
+        throw new RuntimeException('Unable to allocate dedup symlink target.');
+    }
+    file_put_contents($outside, 'same-content');
+    $canonical = $this->checksumDir . DIRECTORY_SEPARATOR . 'a.txt';
+    $candidate = $this->checksumDir . DIRECTORY_SEPARATOR . 'b.txt';
+
+    try {
+        symlink($outside, $canonical);
+        file_put_contents($candidate, 'same-content');
+        $report = ChecksumIndexer::deduplicateWithHardLinks($this->checksumDir);
+
+        expect(is_link($canonical))->toBeTrue()
+            ->and(is_link($candidate))->toBeFalse()
+            ->and(file_get_contents($candidate))->toBe('same-content')
+            ->and($report->linked)->toBe([]);
+
+        unlink($canonical);
+        file_put_contents($canonical, 'same-content');
+        unlink($candidate);
+        symlink($outside, $candidate);
+
+        $report = ChecksumIndexer::deduplicateWithHardLinks($this->checksumDir);
+        expect(is_link($candidate))->toBeTrue()
+            ->and(file_get_contents($canonical))->toBe('same-content')
+            ->and($report->linked)->toBe([]);
+    } finally {
+        foreach ([$canonical, $candidate] as $path) {
+            if (is_link($path) || is_file($path)) {
+                unlink($path);
+            }
+        }
+        if (is_file($outside)) {
+            unlink($outside);
+        }
+    }
+});

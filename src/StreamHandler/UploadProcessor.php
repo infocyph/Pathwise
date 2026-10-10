@@ -6,6 +6,7 @@ namespace Infocyph\Pathwise\StreamHandler;
 
 use Infocyph\Pathwise\Exceptions\FileSizeExceededException;
 use Infocyph\Pathwise\Exceptions\UploadException;
+use Infocyph\Pathwise\Integration\Runwire\RunwireScopedConcern;
 use Infocyph\Pathwise\Results\ChunkUploadState;
 use Infocyph\Pathwise\StreamHandler\Concerns\UploadProcessorChunkConcern;
 use Infocyph\Pathwise\StreamHandler\Concerns\UploadProcessorValidationConcern;
@@ -47,6 +48,7 @@ use Psr\Log\LoggerInterface;
  */
 class UploadProcessor
 {
+    use RunwireScopedConcern;
     use UploadProcessorChunkConcern;
     use UploadProcessorValidationConcern;
 
@@ -123,11 +125,13 @@ class UploadProcessor
      */
     public function finalizeChunkUpload(string $uploadId): string
     {
+        $this->checkpointRunwire();
         if (!isset($this->uploadDir) || $this->uploadDir === '') {
             throw new UploadException('Upload directory is not set.');
         }
 
         $this->validateUploadId($uploadId);
+        $this->assertStrictUploadSizeLimitConfigured();
 
         return $this->withChunkSessionLock($uploadId, function () use ($uploadId): string {
             [$manifest, $totalChunks] = $this->resolveCompleteChunkState($uploadId);
@@ -218,6 +222,7 @@ class UploadProcessor
      */
     public function ingestSource(UploadSource $source, array $metadata = []): string
     {
+        $this->checkpointRunwire();
         $this->assertUploadDirectoryConfigured();
         $this->assertSourceReady($source);
 
@@ -516,8 +521,10 @@ class UploadProcessor
                 'createdAt' => time(),
             ];
             $this->assertChunkManifestIdentity($manifest, $uploadId, $originalFilename, $totalChunks);
+            $this->assertChunkAggregateSize($chunkDirectory, $totalChunks, $chunkIndex, $materialization->size);
             $this->saveChunkManifest($uploadId, $manifest);
 
+            $this->checkpointRunwire();
             $materialization->assertUnchanged();
             $chunkPath = PathHelper::join($chunkDirectory, sprintf('chunk_%06d.part', $chunkIndex));
             $this->moveIncomingFile($materialization->path, $chunkPath);
@@ -541,7 +548,14 @@ class UploadProcessor
         string $originalFilename,
         ?callable $afterPersist = null,
     ): ChunkUploadState {
-        $materialization = $source->materialize($this->tempDir);
+        $this->checkpointRunwire();
+        $this->assertStrictUploadSizeLimitConfigured();
+        $this->assertStrictChunkLimitsConfigured();
+        $maxBytes = $this->maxFileSize > 0 ? $this->maxFileSize : null;
+        if ($this->maxChunkSize > 0) {
+            $maxBytes = $maxBytes === null ? $this->maxChunkSize : min($maxBytes, $this->maxChunkSize);
+        }
+        $materialization = $source->materialize($this->tempDir, $maxBytes);
 
         try {
             $materialization->assertUnchanged();
@@ -610,9 +624,11 @@ class UploadProcessor
     /** @return array{string, string} */
     private function processMaterializedUpload(UploadMaterialization $materialization): array
     {
+        $this->checkpointRunwire();
         $materialization->assertUnchanged();
         $extension = pathinfo($materialization->clientFilename, PATHINFO_EXTENSION);
         $fileType = $this->validateUploadedPayload($materialization->path, $extension);
+        $this->checkpointRunwire();
         $materialization->assertUnchanged();
         $destination = $this->finalizeIncomingFile($materialization->path, $extension);
 
@@ -625,10 +641,14 @@ class UploadProcessor
      */
     private function processSource(UploadSource $source, array $metadata, ?callable $afterPersist = null): string
     {
+        $this->assertStrictUploadSizeLimitConfigured();
         $materialization = null;
 
         try {
-            $materialization = $source->materialize($this->tempDir);
+            $materialization = $source->materialize(
+                $this->tempDir,
+                $this->maxFileSize > 0 ? $this->maxFileSize : null,
+            );
             [$destination, $fileType] = $this->processMaterializedUpload($materialization);
             if ($afterPersist !== null) {
                 $afterPersist();

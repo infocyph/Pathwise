@@ -17,9 +17,12 @@ final class ZipArchiveExtractor
 
     /**
      * @param array<int, ZipArchiveManifestEntry> $entries
+     * @param null|callable(): void $checkpoint
      */
-    public static function extractToLocal(ZipArchive $archive, array $entries, string $root): void
+    public static function extractToLocal(ZipArchive $archive, array $entries, string $root, ?callable $checkpoint = null): void
     {
+        $checkpoint = $checkpoint === null ? null : \Closure::fromCallable($checkpoint);
+        $checkpoint?->__invoke();
         $root = PathHelper::normalize($root);
         if (PathHelper::hasScheme($root)) {
             throw new CompressionException('Secure ZIP extraction requires a local staging directory.');
@@ -35,18 +38,21 @@ final class ZipArchiveExtractor
 
         $journal = new FileTransactionJournal($root);
         $createdDirectories = [];
+        $rootKey = LocalPathContainment::canonicalKey($root);
 
         try {
             foreach ($entries as $entry) {
-                self::extractEntry($archive, $entry, $root, $journal, $createdDirectories);
+                $checkpoint?->__invoke();
+                self::extractEntry($archive, $entry, $root, $journal, $createdDirectories, $checkpoint);
             }
 
+            $checkpoint?->__invoke();
             $journal->commit();
         } catch (\Throwable $exception) {
             try {
                 $journal->rollback($exception);
             } finally {
-                self::cleanupCreatedDirectories($createdDirectories, $root, $rootExisted);
+                self::cleanupCreatedDirectories($createdDirectories, $root, $rootExisted, $rootKey);
             }
 
             throw $exception;
@@ -56,13 +62,15 @@ final class ZipArchiveExtractor
     /**
      * @param list<string> $createdDirectories
      */
-    private static function cleanupCreatedDirectories(array $createdDirectories, string $root, bool $rootExisted): void
+    private static function cleanupCreatedDirectories(array $createdDirectories, string $root, bool $rootExisted, ?string $rootKey): void
     {
+        clearstatcache(true);
+        if ($rootKey === null || LocalPathContainment::canonicalKey($root) !== $rootKey) {
+            return;
+        }
         for ($index = count($createdDirectories) - 1; $index >= 0; $index--) {
             $directory = $createdDirectories[$index];
-            if (is_dir($directory) && !is_link($directory)) {
-                self::runSilently(static fn(): bool => rmdir($directory));
-            }
+            self::cleanupDirectory($root, $directory);
         }
 
         if (!$rootExisted && is_dir($root) && !is_link($root)) {
@@ -70,14 +78,39 @@ final class ZipArchiveExtractor
         }
     }
 
+    private static function cleanupDirectory(string $root, string $directory): void
+    {
+        try {
+            ZipEntryValidator::validate(PathHelper::relativePath($root, $directory), $root);
+        } catch (UnsafeArchiveEntryException) {
+            return;
+        }
+        if (is_dir($directory) && !is_link($directory)) {
+            self::runSilently(static fn(): bool => rmdir($directory));
+        }
+    }
+
+    private static function cleanupTemporary(string $temporary, ?string $parentKey): void
+    {
+        if (!is_file($temporary) && !is_link($temporary)) {
+            return;
+        }
+        clearstatcache(true);
+        if ($parentKey !== null && LocalPathContainment::canonicalKey(dirname($temporary)) === $parentKey) {
+            self::runSilently(static fn(): bool => unlink($temporary));
+        }
+    }
+
     /**
      * @param resource $input
      * @param resource $output
+     * @param null|\Closure(): void $checkpoint
      */
-    private static function copyValidatedBytes(mixed $input, mixed $output, ZipArchiveManifestEntry $entry): void
+    private static function copyValidatedBytes(mixed $input, mixed $output, ZipArchiveManifestEntry $entry, ?\Closure $checkpoint): void
     {
         $written = 0;
         while (!feof($input)) {
+            $checkpoint?->__invoke();
             $chunk = fread($input, self::COPY_BUFFER_BYTES);
             if ($chunk === false) {
                 throw new CompressionException("Unable to read ZIP entry: {$entry->archiveName}");
@@ -93,6 +126,7 @@ final class ZipArchiveExtractor
                 );
             }
 
+            $checkpoint?->__invoke();
             self::writeChunk($output, $chunk, $entry->archiveName);
             $written += $length;
         }
@@ -140,6 +174,7 @@ final class ZipArchiveExtractor
 
     /**
      * @param list<string> $createdDirectories
+     * @param null|\Closure(): void $checkpoint
      */
     private static function extractEntry(
         ZipArchive $archive,
@@ -147,6 +182,7 @@ final class ZipArchiveExtractor
         string $root,
         FileTransactionJournal $journal,
         array &$createdDirectories,
+        ?\Closure $checkpoint,
     ): void {
         $validatedPath = ZipEntryValidator::validate($entry->path, $root);
         $relative = rtrim($validatedPath, '/');
@@ -170,9 +206,11 @@ final class ZipArchiveExtractor
 
         $journal->record($target);
         $temporary = self::temporarySibling($target);
+        $temporaryParentKey = LocalPathContainment::canonicalKey(dirname($temporary));
 
         try {
-            self::writeEntry($archive, $entry, $temporary);
+            self::writeEntry($archive, $entry, $temporary, $checkpoint);
+            $checkpoint?->__invoke();
             ZipEntryValidator::validate($entry->path, $root);
             if (is_dir($target)) {
                 throw new UnsafeArchiveEntryException("ZIP file target changed during extraction: {$entry->archiveName}");
@@ -180,9 +218,7 @@ final class ZipArchiveExtractor
 
             self::replaceTarget($temporary, $target, $entry->archiveName);
         } finally {
-            if (is_file($temporary) || is_link($temporary)) {
-                self::runSilently(static fn(): bool => unlink($temporary));
-            }
+            self::cleanupTemporary($temporary, $temporaryParentKey);
         }
     }
 
@@ -273,7 +309,8 @@ final class ZipArchiveExtractor
         }
     }
 
-    private static function writeEntry(ZipArchive $archive, ZipArchiveManifestEntry $entry, string $temporary): void
+    /** @param null|\Closure(): void $checkpoint */
+    private static function writeEntry(ZipArchive $archive, ZipArchiveManifestEntry $entry, string $temporary, ?\Closure $checkpoint): void
     {
         $input = $archive->getStream($entry->archiveName);
         $output = self::runSilently(static fn() => fopen($temporary, 'wb'));
@@ -289,7 +326,7 @@ final class ZipArchiveExtractor
         }
 
         try {
-            self::copyValidatedBytes($input, $output, $entry);
+            self::copyValidatedBytes($input, $output, $entry, $checkpoint);
             self::synchronizeOutput($output, $entry->archiveName);
         } finally {
             fclose($input);

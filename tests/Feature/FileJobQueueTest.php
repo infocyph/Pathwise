@@ -265,3 +265,25 @@ test('it rejects duplicate job identifiers across queue buckets', function () {
     expect(fn () => new FileJobQueue($this->queueFile))
         ->toThrow(QueueException::class, 'duplicate job identifier');
 });
+
+test('failed queue reservations retain bounded valid UTF-8 errors', function (): void {
+    $queue = new FileJobQueue($this->queueFile);
+    $queue->enqueue('utf8-case');
+    $reservation = $queue->reserve();
+    expect($reservation)->not->toBeNull();
+    $queue->fail($reservation, str_repeat('x', 4095) . '😀');
+    $data = json_decode(file_get_contents($this->queueFile), true, 512, JSON_THROW_ON_ERROR);
+    $message = $data['failed'][0]['error'] ?? null;
+    expect($message)->toBeString()
+        ->and(strlen($message))->toBeLessThanOrEqual(4096)
+        ->and(preg_match('//u', $message))->toBe(1)
+        ->and(count($data['processing']))->toBe(0);
+
+    $queue->enqueue('bad-byte');
+    $reservation = $queue->reserve();
+    expect($reservation)->not->toBeNull();
+    $queue->fail($reservation, "bad\xFFmessage");
+    $data = json_decode(file_get_contents($this->queueFile), true, 512, JSON_THROW_ON_ERROR);
+    expect(preg_match('//u', $data['failed'][1]['error']))->toBe(1)
+        ->and(count($data['failed']))->toBe(2);
+});

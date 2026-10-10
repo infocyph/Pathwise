@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Infocyph\Pathwise\Core\ExecutionStrategy;
+use Infocyph\Pathwise\Exceptions\CompressionException;
 use Infocyph\Pathwise\Exceptions\NativeExecutionException;
 use Infocyph\Pathwise\Exceptions\UnsupportedStorageOperationException;
 use Infocyph\Pathwise\FileManager\FileOperations;
@@ -239,4 +240,69 @@ test('forced native file operations reject mounted paths', function () {
 
     expect(fn () => $operations->copy($this->nativeRoot . DIRECTORY_SEPARATOR . 'copy.txt'))
         ->toThrow(UnsupportedStorageOperationException::class, 'local filesystem paths');
+});
+
+test('native ZIP refuses file and directory symlinks without archiving outside content', function (): void {
+    if (PHP_OS_FAMILY === 'Windows' || !NativeOperationsAdapter::canUseNativeZipCompression()) {
+        expect(true)->toBeTrue();
+
+        return;
+    }
+
+    $source = $this->nativeRoot . DIRECTORY_SEPARATOR . 'source';
+    mkdir($source);
+    $outside = $this->nativeRoot . DIRECTORY_SEPARATOR . 'outside-secret.txt';
+    file_put_contents($outside, 'never-archive-this');
+    $link = $source . DIRECTORY_SEPARATOR . 'linked-file.txt';
+    symlink($outside, $link);
+    $destination = $this->nativeRoot . DIRECTORY_SEPARATOR . 'out.zip';
+
+    expect(fn () => NativeOperationsAdapter::compressToZip($source, $destination))
+        ->toThrow(CompressionException::class, 'Symbolic links are not followed')
+        ->and(file_exists($destination))->toBeFalse();
+
+    unlink($link);
+    symlink(dirname($outside), $source . DIRECTORY_SEPARATOR . 'linked-directory');
+
+    expect(fn () => NativeOperationsAdapter::compressToZip($source, $destination))
+        ->toThrow(CompressionException::class, 'Symbolic links are not followed')
+        ->and(file_exists($destination))->toBeFalse();
+});
+
+test('native copy treats leading dashes and colons as local operands', function (): void {
+    if (!NativeOperationsAdapter::canUseNativeFileCopy()) {
+        expect(true)->toBeTrue();
+
+        return;
+    }
+
+    $source = $this->nativeRoot . DIRECTORY_SEPARATOR . '-source:local.txt';
+    $destination = $this->nativeRoot . DIRECTORY_SEPARATOR . '-destination:local.txt';
+    file_put_contents($source, 'literal-operand');
+    $result = NativeOperationsAdapter::copyFile($source, $destination);
+    expect($result->success)->toBeTrue()
+        ->and(file_get_contents($destination))->toBe('literal-operand');
+});
+
+test('native ZIP resolves relative and leading dash destinations before changing directory', function (): void {
+    if (!NativeOperationsAdapter::canUseNativeZipCompression()) {
+        expect(NativeOperationsAdapter::canUseNativeZipCompression())->toBeFalse();
+
+        return;
+    }
+    $source = $this->nativeRoot . DIRECTORY_SEPARATOR . 'source';
+    mkdir($source);
+    file_put_contents($source . DIRECTORY_SEPARATOR . 'input.txt', 'zip-operand');
+    $previous = getcwd();
+    chdir($this->nativeRoot);
+    try {
+        foreach (['relative.zip', '-archive.zip'] as $name) {
+            (new \Infocyph\Pathwise\DirectoryManager\DirectoryOperations($source))
+                ->setExecutionStrategy(ExecutionStrategy::NATIVE)->zip($name);
+            expect(is_file($this->nativeRoot . DIRECTORY_SEPARATOR . $name))->toBeTrue()
+                ->and(is_file($source . DIRECTORY_SEPARATOR . $name))->toBeFalse();
+        }
+    } finally {
+        chdir($previous);
+    }
 });

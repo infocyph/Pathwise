@@ -46,7 +46,9 @@ validation/storage/scanner failure.
    use Infocyph\Pathwise\StreamHandler\UploadSource;
 
    $source = UploadSource::fromMover(
-       mover: fn (string $target): void => $uploadedFile->moveTo($target),
+       mover: static function (string $target) use ($uploadedFile): void {
+           $uploadedFile->moveTo($target);
+       },
        clientFilename: $uploadedFile->getClientFilename() ?? 'upload.bin',
        size: $uploadedFile->getSize(),
        clientMediaType: $uploadedFile->getClientMediaType(),

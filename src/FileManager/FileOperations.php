@@ -737,21 +737,7 @@ class FileOperations
     private function performCopy(string $destination): void
     {
         if ($this->executionStrategy === ExecutionStrategy::NATIVE) {
-            if (!FlysystemHelper::isLocalPath($this->filePath) || !FlysystemHelper::isLocalPath($destination)) {
-                throw new UnsupportedStorageOperationException(
-                    'Native copy requires local filesystem paths for both source and destination.',
-                );
-            }
-            if (!NativeOperationsAdapter::canUseNativeFileCopy()) {
-                throw new NativeExecutionException('Native file copy executable is unavailable.');
-            }
-            $native = NativeOperationsAdapter::copyFile($this->filePath, $destination);
-            if (!$native->success) {
-                throw new NativeExecutionException(
-                    "Native file copy failed with exit code {$native->exitCode}: {$native->command}",
-                    $native,
-                );
-            }
+            $this->performRequiredNativeCopy($destination);
 
             return;
         }
@@ -772,6 +758,25 @@ class FileOperations
             FlysystemHelper::copy($this->filePath, $destination);
         } catch (\Throwable $e) {
             throw new FileAccessException("Unable to copy file to $destination.", 0, $e);
+        }
+    }
+
+    private function performRequiredNativeCopy(string $destination): void
+    {
+        if (!FlysystemHelper::isLocalPath($this->filePath) || !FlysystemHelper::isLocalPath($destination)) {
+            throw new UnsupportedStorageOperationException(
+                'Native copy requires local filesystem paths for both source and destination.',
+            );
+        }
+        if (!NativeOperationsAdapter::canUseNativeFileCopy()) {
+            throw new NativeExecutionException('Native file copy executable is unavailable.');
+        }
+        $native = NativeOperationsAdapter::copyFile($this->filePath, $destination);
+        if (!$native->success) {
+            throw new NativeExecutionException(
+                "Native file copy failed with exit code {$native->exitCode}: {$native->command}",
+                $native,
+            );
         }
     }
 

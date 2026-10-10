@@ -4,9 +4,14 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\Native;
 
+use FilesystemIterator;
+use Infocyph\Pathwise\Exceptions\CompressionException;
 use Infocyph\Pathwise\Results\NativeExecutionResult;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
+use RecursiveDirectoryIterator;
+use RecursiveIteratorIterator;
+use SplFileInfo;
 
 final class NativeOperationsAdapter
 {
@@ -45,11 +50,12 @@ final class NativeOperationsAdapter
         string $zipPath,
         ?NativeExecutionLimits $limits = null,
     ): NativeExecutionResult {
-        $source = PathHelper::normalize($source);
-        $zipPath = PathHelper::normalize($zipPath);
+        $source = PathHelper::toAbsolutePath(PathHelper::normalize($source));
+        $zipPath = PathHelper::toAbsolutePath(PathHelper::normalize($zipPath));
         if (!NativeCommandRunner::commandExists('zip')) {
             return self::unsupportedResult();
         }
+        self::assertZipSourceWithoutLinks($source);
 
         if (is_dir($source)) {
             $command = ['zip', '-q', '-r', $zipPath, '.'];
@@ -61,7 +67,10 @@ final class NativeOperationsAdapter
             return self::run($command, $source, $limits);
         }
 
-        return self::run(['zip', '-q', '-r', $zipPath, basename($source)], dirname($source), $limits);
+        $basename = basename($source);
+        $operand = str_starts_with($basename, '-') ? './' . $basename : $basename;
+
+        return self::run(['zip', '-q', '-r', $zipPath, $operand], dirname($source), $limits);
     }
 
     public static function copyDirectory(
@@ -80,8 +89,8 @@ final class NativeOperationsAdapter
         if ($mirror) {
             $command[] = '--delete';
         }
-        $command[] = rtrim($source, '/\\') . DIRECTORY_SEPARATOR;
-        $command[] = rtrim($destination, '/\\') . DIRECTORY_SEPARATOR;
+        $command[] = rtrim(PathHelper::toAbsolutePath($source), '/\\') . DIRECTORY_SEPARATOR;
+        $command[] = rtrim(PathHelper::toAbsolutePath($destination), '/\\') . DIRECTORY_SEPARATOR;
 
         return self::run($command, limits: $limits);
     }
@@ -95,7 +104,7 @@ final class NativeOperationsAdapter
         $destination = PathHelper::normalize($destination);
 
         return NativeCommandRunner::commandExists('cp')
-            ? self::run(['cp', '-f', $source, $destination], limits: $limits)
+            ? self::run(['cp', '-f', '--', $source, $destination], limits: $limits)
             : self::unsupportedResult();
     }
 
@@ -120,6 +129,26 @@ final class NativeOperationsAdapter
         return NativeCommandRunner::commandExists('grep')
             ? self::run(['grep', '-i', '-F', '--', $term, PathHelper::normalize($path)], limits: $limits)
             : self::unsupportedResult();
+    }
+
+    private static function assertZipSourceWithoutLinks(string $source): void
+    {
+        if (is_link($source)) {
+            throw new CompressionException('Symbolic links are not followed during ZIP creation.');
+        }
+        if (!is_dir($source)) {
+            return;
+        }
+
+        $entries = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($source, FilesystemIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::SELF_FIRST,
+        );
+        foreach ($entries as $entry) {
+            if ($entry instanceof SplFileInfo && $entry->isLink()) {
+                throw new CompressionException('Symbolic links are not followed during ZIP creation.');
+            }
+        }
     }
 
     /** @param list<string> $command */

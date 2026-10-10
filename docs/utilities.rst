@@ -74,6 +74,13 @@ File Watcher
        intervalMilliseconds: 500,
    );
 
+Pass the host's ``RunwireExecutionContext`` as the optional trailing
+``execution`` argument to share its request and task lifecycle. Polling intervals
+yield through the supplied scope when it has coroutine capability, otherwise
+use synchronous waits. Cancellation and deadlines interrupt waits without
+closing the host scope. Snapshot filesystem operations remain synchronous.
+``PathwiseFacade::watch()`` accepts and forwards the same optional argument.
+
 ``FileWatcher`` is polling, not an OS event-stream abstraction. For very large
 namespaces or long-running distributed watching, use a platform/application
 service designed for that scale and treat Pathwise snapshots as bounded

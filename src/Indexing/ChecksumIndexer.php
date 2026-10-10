@@ -78,6 +78,13 @@ final class ChecksumIndexer
         }
     }
 
+    private static function closeIfResource(mixed $stream): void
+    {
+        if (is_resource($stream)) {
+            fclose($stream);
+        }
+    }
+
     /**
      * @param list<string> $paths
      * @param list<string> $linked
@@ -116,7 +123,16 @@ final class ChecksumIndexer
             return;
         }
 
-        if (self::filesAreIdentical($canonical, $temporary) && self::runSilently(static fn(): bool => link($canonical, $path))) {
+        if (
+            self::isLocalFile($canonical)
+            && self::isLocalFile($temporary)
+            && !file_exists($path)
+            && !is_link($path)
+            && self::filesAreIdentical($canonical, $temporary)
+            && self::isLocalFile($canonical)
+            && self::isLocalFile($temporary)
+            && self::runSilently(static fn(): bool => link($canonical, $path))
+        ) {
             self::unlinkSilently($temporary);
             $linked[] = $path;
 
@@ -141,12 +157,8 @@ final class ChecksumIndexer
         $first = fopen($firstPath, 'rb');
         $second = fopen($secondPath, 'rb');
         if (!is_resource($first) || !is_resource($second)) {
-            if (is_resource($first)) {
-                fclose($first);
-            }
-            if (is_resource($second)) {
-                fclose($second);
-            }
+            self::closeIfResource($first);
+            self::closeIfResource($second);
 
             return false;
         }
@@ -190,9 +202,10 @@ final class ChecksumIndexer
         }
     }
 
+    /** @phpstan-impure */
     private static function isLocalFile(string $path): bool
     {
-        return !PathHelper::hasScheme($path) && is_file($path);
+        return !PathHelper::hasScheme($path) && !is_link($path) && is_file($path);
     }
 
     /** @return \Generator<int, string> */

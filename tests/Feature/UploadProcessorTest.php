@@ -480,3 +480,37 @@ test('failed finalization preserves chunks for a retry and removes assembly outp
             . DIRECTORY_SEPARATOR . 'retry_session' . DIRECTORY_SEPARATOR . 'chunk_000000.part'))->toBeTrue()
         ->and(glob($this->uploadDir . DIRECTORY_SEPARATOR . 'upload_*.png'))->toBe([]);
 });
+
+test('chunk sessions enforce the cumulative upload limit before persisting replacement or finalizing', function (): void {
+    $this->uploadProcessor->setDirectorySettings($this->uploadDir, false, $this->uploadDir);
+    $this->uploadProcessor->setValidationSettings(['text/plain'], 5);
+    $uploadId = 'bounded_chunk_session';
+    $source = static fn (string $content): \Infocyph\Pathwise\StreamHandler\UploadSource
+        => \Infocyph\Pathwise\StreamHandler\UploadSource::fromMover(
+            static function (string $target) use ($content): void {
+                file_put_contents($target, $content);
+            },
+            clientFilename: 'chunk.part',
+        );
+
+    $initial = $this->uploadProcessor->processChunkUploadSource(
+        $source('abc'), $uploadId, 0, 2, 'merged.txt',
+    );
+    $chunkRoot = $this->uploadDir . DIRECTORY_SEPARATOR . 'pathwise_chunks'
+        . DIRECTORY_SEPARATOR . $uploadId;
+
+    expect($initial->receivedChunks)->toBe(1)
+        ->and(file_get_contents($chunkRoot . DIRECTORY_SEPARATOR . 'chunk_000000.part'))->toBe('abc');
+
+    expect(fn () => $this->uploadProcessor->processChunkUploadSource(
+        $source('def'), $uploadId, 1, 2, 'merged.txt',
+    ))->toThrow(FileSizeExceededException::class, 'Exceeded file size limit')
+        ->and(is_file($chunkRoot . DIRECTORY_SEPARATOR . 'chunk_000001.part'))->toBeFalse()
+        ->and(file_get_contents($chunkRoot . DIRECTORY_SEPARATOR . 'chunk_000000.part'))->toBe('abc');
+
+    $this->uploadProcessor->processChunkUploadSource($source('ab'), $uploadId, 0, 2, 'merged.txt');
+    $this->uploadProcessor->processChunkUploadSource($source('def'), $uploadId, 1, 2, 'merged.txt');
+    $destination = $this->uploadProcessor->finalizeChunkUpload($uploadId);
+
+    expect(file_get_contents($destination))->toBe('abdef');
+});

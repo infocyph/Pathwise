@@ -113,11 +113,19 @@ trait StorageContextRoutingConcern
     private function storageDirectLocalPath(string $path): ?string
     {
         if ($this->storageUsesContext($path)) {
-            try {
-                return $this->storageContext?->localPath($path);
-            } catch (\InvalidArgumentException) {
+            $context = $this->storageContext;
+            if ($context === null) {
                 return null;
             }
+
+            $qualified = $context->path($path);
+            $name = strstr($qualified, '://', true);
+            if (!is_string($name) || !$context->isLocal($name)) {
+                return null;
+            }
+
+            // Local containment failures must not become adapter publication.
+            return $context->localPath($path);
         }
 
         return FlysystemHelper::isLocalPath($path) ? PathHelper::normalize($path) : null;

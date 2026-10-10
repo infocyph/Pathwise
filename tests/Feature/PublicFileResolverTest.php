@@ -114,3 +114,17 @@ test('public resolver applies an explicit in-root symlink policy', function (): 
 
     expect($resolution->path)->toBe(realpath($this->publicRoot . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'app.txt'));
 });
+
+test('Windows public-file resolution rejects alternate streams and device aliases', function (): void {
+    if (PHP_OS_FAMILY !== 'Windows') {
+        expect(PHP_OS_FAMILY)->not->toBe('Windows');
+
+        return;
+    }
+
+    $resolver = new PublicFileResolver();
+    foreach (['assets/app.txt:payload', 'assets/CON.txt', 'assets/app.txt.', 'assets /app.txt'] as $name) {
+        expect(fn () => $resolver->resolve($this->publicRoot, $name))
+            ->toThrow(DownloadException::class, 'Unsafe Windows public-file');
+    }
+});

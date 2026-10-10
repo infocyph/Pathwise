@@ -293,3 +293,45 @@ test('clamav daemon scanner rejects remote TCP unless explicitly allowed', funct
     expect(fn () => new ClamAvDaemonScanner('tcp://192.0.2.10:3310'))
         ->toThrow(InvalidArgumentException::class, 'allowRemoteTcp=true');
 });
+
+test('ClamAV TCP loopback policy rejects misleading host prefixes and malformed numeric hosts', function (string $endpoint): void {
+    expect(fn () => new ClamAvDaemonScanner($endpoint))
+        ->toThrow(InvalidArgumentException::class, 'allowRemoteTcp=true');
+})->with([
+    'fake loopback hostname' => 'tcp://127.attacker.example:3310',
+    'invalid loopback number' => 'tcp://127.0.0.999:3310',
+    'remote IPv4' => 'tcp://192.0.2.10:3310',
+]);
+
+test('ClamAV accepts correctly parsed numeric loopback addresses', function (): void {
+    expect(new ClamAvDaemonScanner('tcp://127.23.45.67:3310'))
+        ->toBeInstanceOf(ClamAvDaemonScanner::class)
+        ->and(new ClamAvDaemonScanner('tcp://[::1]:3310'))
+        ->toBeInstanceOf(ClamAvDaemonScanner::class);
+});
+
+test('ClamAV rejects nonfinite and unrepresentable timeout configuration', function (float $seconds): void {
+    expect(fn () => new ClamAvDaemonScanner('tcp://127.0.0.1:3310', ioTimeoutSeconds: $seconds))
+        ->toThrow(InvalidArgumentException::class, 'timeouts must be positive');
+})->with([
+    'nan' => NAN,
+    'infinity' => INF,
+    'oversized' => 1.0e12,
+    'zero' => 0.0,
+]);
+
+test('ClamAV counts actual bytes even when scan request file grows after metadata creation', function (): void {
+    $server = startFakeClamd("stream: OK\0");
+    $request = clamAvRequest('abc');
+
+    try {
+        file_put_contents($request->localPath, 'abcdef');
+        $scanner = new ClamAvDaemonScanner($server['endpoint'], maxStreamBytes: 4);
+
+        expect(fn () => $scanner->scan($request))
+            ->toThrow(MalwareScannerException::class, 'stream limit');
+    } finally {
+        unlink($request->localPath);
+        stopFakeClamd($server);
+    }
+});

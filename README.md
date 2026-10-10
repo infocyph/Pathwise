@@ -15,7 +15,7 @@ Pathwise 4 is a framework-neutral PHP 8.4+ filesystem toolkit built on Flysystem
 
 - PHP `>=8.4`
 - `ext-fileinfo`
-- `league/flysystem ^3.35.2`
+- `league/flysystem ^3.36`
 - `psr/log ^3.0.2`
 
 ZIP, POSIX ownership, XML parsing, and remote Flysystem adapters are optional capabilities. Install only the extensions/adapters your application uses.
@@ -76,7 +76,9 @@ $uploader->setMalwareScanMode(MalwareScanMode::REQUIRED);
 $uploader->setMalwareScanner($scanner);
 
 $source = UploadSource::fromMover(
-    mover: fn (string $target): void => $uploadedFile->moveTo($target),
+    mover: static function (string $target) use ($uploadedFile): void {
+        $uploadedFile->moveTo($target);
+    },
     clientFilename: $uploadedFile->getClientFilename() ?? 'upload.bin',
     size: $uploadedFile->getSize(),
     clientMediaType: $uploadedFile->getClientMediaType(),
@@ -144,6 +146,29 @@ if ($reservation !== null) {
 
 The queue is intentionally direct-local: it uses typed opaque leases, stale-worker rejection, strict versioned state, locking, and crash-safe persistence. It is not a distributed broker.
 
+For distributed deployments, let the host framework own a shared broker and use Pathwise inside workers. Separate local disks hold separate queues; network-mounted queue files are outside the supported contract. Pass shared storage keys and make handlers safe to retry. See the documentation's Queue guide for deployment and lease limits.
+
+## Optional borrowed Runwire 2.1.1 integration
+
+Runwire is an **optional host runtime**, pinned to `2.1.1` for integration development and suggested for deployments using the bridge. Normal Pathwise use does not instantiate or activate Runwire. The host owns its runtime, request, scope and cancellation.
+
+```php
+use Infocyph\Pathwise\Integration\Runwire\RunwireExecutionContext;
+use Infocyph\Pathwise\StreamHandler\DownloadProcessor;
+
+// $runtime and $request are supplied by the active host; Pathwise does not create them.
+$execution = new RunwireExecutionContext($runtime, $request, $scope ?? null);
+$download = new DownloadProcessor();
+$result = $download->withRunwire(
+    $execution,
+    static fn (DownloadProcessor $bound) => $bound->prepareDownload($path),
+);
+```
+
+The same execution object may be explicitly forwarded through intermediary services. `RunwireExecutionContext::iterateChecksums()` keeps the static ChecksumIndexer API unchanged and checks cancellation between completed file hashes; a single native hash remains synchronous. Bind separately inside newly created Fibers; bindings never implicitly inherit. Calls that return lazy generators must be **consumed inside** the scoped callback. Checkpoints validate the live request/deadline and optionally yield only inside a supplied, capable Runwire task. Blocking adapter operations, native subprocesses, arbitrary movers and filesystem calls remain synchronous; no owned cancellation source, scheduler or host lifecycle is introduced. Cancellation is checked before publication where Pathwise has a safe boundary; successfully committed publications are not retroactively reported as cancelled.
+
+`SafeFileWriter::withRunwire()` makes lock retry delays cooperative when the passed scope supports coroutines. `FileWatcher::watch(..., execution: $execution)` uses the same borrowed context for polling intervals. Both preserve synchronous waits when the capability or context is unavailable. Waits honor the host request and scope deadlines without cancelling or closing either. ZIP extraction checkpoints each bounded 64 KiB copy and checks before publication and transaction commit; cancellation rolls back replacements and removes owned staging files.
+
 ## Security model
 
 Pathwise 4 includes explicit controls for:
@@ -156,7 +181,7 @@ Pathwise 4 includes explicit controls for:
 - queue state size/payload/job limits and lease ownership;
 - policy enforcement, audit sinks, retention, indexing, and watcher workloads.
 
-Generic application use of `NativeCommandRunner` is deprecated in 4.1; Foundation/application process work belongs to Runwire. Pathwise has no production dependency on Runwire, Webrick, Foundation, InterMix, or ReqShield.
+Generic application use of `NativeCommandRunner` is deprecated as of 4.1; application process work belongs to the host runtime. Pathwise 4.2 adds optional integration with Runwire 2.1.1 through a passed execution context. Pathwise does not own host schedulers, worker lifecycles or process managers.
 
 Security-sensitive behavior is fail-closed where a configured capability is required. Local/remote capabilities remain explicit rather than silently emulated. Pathwise makes filesystem artifacts safe to treat as **data according to policy**; it does not make arbitrary uploaded/source/binary content safe to execute. See the documentation's **Trust Boundaries and Persistent Runtimes** guide for the full ownership model.
 
@@ -193,3 +218,4 @@ Pathwise is protected by [PHPForge](https://github.com/infocyph/PHPForge), which
   <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=documentation.md">Documentation</a> •
   <a href="https://github.com/infocyph/Pathwise/compare/main...HEAD?quick_pull=1&amp;template=maintenance.md">Maintenance</a>
 </div>
+

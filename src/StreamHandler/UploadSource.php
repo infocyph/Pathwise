@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Infocyph\Pathwise\StreamHandler;
 
+use Infocyph\Pathwise\Exceptions\FileSizeExceededException;
 use Infocyph\Pathwise\Exceptions\UploadException;
 use Infocyph\Pathwise\Utils\FlysystemHelper;
 use Infocyph\Pathwise\Utils\PathHelper;
@@ -18,7 +19,7 @@ use Infocyph\Pathwise\Utils\PathHelper;
 final readonly class UploadSource
 {
     /**
-     * @param \Closure(string): void $materializer
+     * @param \Closure(string, ?int): void $materializer
      */
     private function __construct(
         public string $clientFilename,
@@ -55,7 +56,11 @@ final readonly class UploadSource
             $size,
             $clientMediaType,
             $error,
-            $mover(...),
+            static function (string $target, ?int $maxBytes) use ($mover): void {
+                // Arbitrary host movers own their own streaming/quota enforcement.
+                unset($maxBytes);
+                $mover($target);
+            },
         );
     }
 
@@ -85,12 +90,23 @@ final readonly class UploadSource
             $size,
             $clientMediaType,
             $error,
-            static function (string $target) use ($path, $owned): void {
+            static function (string $target, ?int $maxBytes) use ($path, $owned): void {
                 try {
-                    FlysystemHelper::copy($path, $target);
+                    $input = FlysystemHelper::readStream($path);
+                    if (!is_resource($input)) {
+                        throw new UploadException('Unable to read upload path stream.');
+                    }
+
+                    try {
+                        self::copyStreamToTarget($input, $target, $maxBytes);
+                    } finally {
+                        fclose($input);
+                    }
                     if ($owned) {
                         FlysystemHelper::delete($path);
                     }
+                } catch (FileSizeExceededException $exception) {
+                    throw $exception;
                 } catch (\Throwable $exception) {
                     throw new UploadException('Unable to materialize upload path.', 0, $exception);
                 }
@@ -121,20 +137,22 @@ final readonly class UploadSource
             $size,
             $clientMediaType,
             $error,
-            static function (string $target) use ($stream): void {
-                self::copyStreamToTarget($stream, $target);
+            static function (string $target, ?int $maxBytes) use ($stream): void {
+                self::copyStreamToTarget($stream, $target, $maxBytes);
             },
         );
     }
 
-    public function materialize(?string $preferredTempDirectory = null): UploadMaterialization
+    public function materialize(?string $preferredTempDirectory = null, ?int $maxBytes = null): UploadMaterialization
     {
+        self::assertWithinMaterializationLimit($maxBytes, $this->size);
+
         $root = self::materializationRoot($preferredTempDirectory);
         $directory = self::allocateStagingDirectory($root);
         $target = PathHelper::join($directory, 'payload');
 
         try {
-            ($this->materializer)($target);
+            ($this->materializer)($target, $maxBytes);
             if (is_link($target) || !is_file($target)) {
                 throw new UploadException('Upload source did not produce a regular staging file.');
             }
@@ -142,6 +160,7 @@ final readonly class UploadSource
 
             clearstatcache(true, $target);
             $size = filesize($target);
+            self::assertWithinMaterializationLimit($maxBytes, is_int($size) ? $size : null);
             $sha256 = hash_file('sha256', $target);
             if (!is_int($size) || !is_string($sha256)) {
                 throw new UploadException('Unable to determine materialized upload identity.');
@@ -160,7 +179,7 @@ final readonly class UploadSource
             self::unlinkSilently($target);
             self::removeDirectorySilently($directory);
 
-            if ($exception instanceof UploadException) {
+            if ($exception instanceof UploadException || $exception instanceof FileSizeExceededException) {
                 throw $exception;
             }
 
@@ -180,7 +199,20 @@ final readonly class UploadSource
         throw new UploadException('Unable to allocate upload staging directory.');
     }
 
-    private static function copyStreamToTarget(mixed $stream, string $target): void
+    private static function assertWithinMaterializationLimit(?int $maxBytes, ?int $actualSize): void
+    {
+        if ($maxBytes === null) {
+            return;
+        }
+        if ($maxBytes < 0) {
+            throw new UploadException('Materialization byte limit must be non-negative.');
+        }
+        if ($actualSize !== null && $actualSize > $maxBytes) {
+            throw new FileSizeExceededException('Exceeded file size limit.');
+        }
+    }
+
+    private static function copyStreamToTarget(mixed $stream, string $target, ?int $maxBytes): void
     {
         if (!is_resource($stream)) {
             throw new UploadException('Upload source stream is no longer readable.');
@@ -192,8 +224,13 @@ final readonly class UploadSource
         }
 
         try {
-            if (stream_copy_to_stream($stream, $output) === false) {
+            $length = $maxBytes === null || $maxBytes === PHP_INT_MAX ? -1 : $maxBytes + 1;
+            $copied = stream_copy_to_stream($stream, $output, $length);
+            if (!is_int($copied)) {
                 throw new UploadException('Unable to copy upload source stream.');
+            }
+            if ($maxBytes !== null && $copied > $maxBytes) {
+                throw new FileSizeExceededException('Exceeded file size limit.');
             }
         } finally {
             fclose($output);

@@ -71,6 +71,11 @@ Untrusted ZIP extraction never uses raw native ``unzip``. Hardened extraction
 always passes through ``ZipEntryValidator`` and ``ZipArchiveExtractor`` so entry
 paths, types, sizes, ratios and rollback behavior remain authoritative.
 
+Native ZIP creation resolves source and destination to absolute paths before
+changing its working directory. A relative destination retains its caller
+directory meaning, and a leading dash is literal path data. Native filesystem
+commands remain synchronous even when a Runwire context is passed.
+
 Example
 -------
 

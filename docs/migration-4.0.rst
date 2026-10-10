@@ -84,7 +84,9 @@ framework integration layer.
 .. code-block:: php
 
    $source = UploadSource::fromMover(
-       fn (string $target): void => $uploadedFile->moveTo($target),
+       static function (string $target) use ($uploadedFile): void {
+           $uploadedFile->moveTo($target);
+       },
        $uploadedFile->getClientFilename() ?? 'upload.bin',
        $uploadedFile->getSize(),
        $uploadedFile->getClientMediaType(),
@@ -163,9 +165,8 @@ stream closure and exact range accounting.
 .. code-block:: php
 
    $prepared = $downloads->prepareDownload($path, rangeHeader: $range);
-   foreach ($downloads->streamChunks($prepared) as $chunk) {
-       yield $chunk;
-   }
+   $chunks = $downloads->streamChunks($prepared);
+   // Pass $chunks to a framework response that consumes iterable bodies.
 
 A preparation is revalidated before streaming; it is not an authorization
 capability.

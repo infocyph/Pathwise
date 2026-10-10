@@ -27,7 +27,9 @@ afterEach(function (): void {
         RecursiveIteratorIterator::CHILD_FIRST,
     );
     foreach ($iterator as $item) {
-        if ($item->isLink() || $item->isFile()) {
+        if ($item->isLink() && PHP_OS_FAMILY === 'Windows' && $item->isDir()) {
+            rmdir($item->getPathname());
+        } elseif ($item->isLink() || $item->isFile()) {
             unlink($item->getPathname());
         } else {
             rmdir($item->getPathname());

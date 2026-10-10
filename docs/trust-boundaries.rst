@@ -26,6 +26,63 @@ The integration boundary is intentionally narrow:
 
 Pathwise has no production dependency on Foundation, Webrick or Runwire.
 
+Borrowed Runwire 2.1.1 Context
+------------------------------
+
+Pathwise 4.2 accepts ``Integration\Runwire\RunwireExecutionContext`` constructed
+from the host's active ``RuntimeContext``, optional ``RequestContext`` and
+optional live ``CoroutineScope``. Forward the same object through intermediary
+services; no implicit global runtime lookup is used. ``UploadProcessor``,
+``DownloadProcessor``, ``FileCompression``, ``DirectoryOperations`` and
+``SafeFileWriter`` expose ``withRunwire($execution, $operation)``.
+
+.. code-block:: php
+
+   use Infocyph\Pathwise\Integration\Runwire\RunwireExecutionContext;
+   use Infocyph\Pathwise\StreamHandler\DownloadProcessor;
+
+   // All three lifecycle values belong to the caller's active host.
+   $execution = new RunwireExecutionContext($runtime, $request, $scope ?? null);
+   $download = new DownloadProcessor();
+   $download->withRunwire($execution, static function (DownloadProcessor $bound) use ($path, $send): void {
+       $prepared = $bound->prepareDownload($path);
+       foreach ($bound->streamChunks($prepared) as $chunk) {
+           $send($chunk);
+       }
+   });
+
+Consume lazy iterators inside the binding callback. Bind explicitly inside each
+new Fiber/task: bindings belong to one owner and current Fiber, are restored in
+``finally``, and do not implicitly inherit. Nested bindings must use the same
+execution object. Completed requests, foreign runtime requests, wrong process
+IDs, closed/foreign task scopes and stale owner runtime generations are rejected.
+
+Cancellation and deadlines are borrowed. Checkpoints yield only when a live
+supplied scope supports ``RUNWIRE_COROUTINES``. Lock retries and watcher intervals
+use cooperative scope sleeps when available, otherwise synchronous waits;
+borrowed waits check both request and scope cancellation/deadlines. Pass
+``execution: $execution`` to ``FileWatcher::watch()`` or ``PathwiseFacade::watch()``.
+``$execution->iterateChecksums()`` checks between completed hashes; a single hash
+and individual filesystem/adapter/native subprocess calls remain synchronous.
+Pathwise never closes/completes host requests/scopes or starts workers/event loops.
+
+ZIP extraction checks bounded 64 KiB copies, revalidates destinations after the
+last cooperative checkpoint, and checks before commit. Cancellation rolls back
+earlier replacements and removes owned staging files. Cleanup always runs;
+successful publications are not reported as cancelled after commit. When Runwire
+is absent, use the ordinary APIs without constructing an execution object.
+
+Transaction journals snapshot each canonical destination, including paths not
+yet created. Rollback rechecks that identity before restoring or deleting a file;
+a redirected symlink, parent path or relative working directory fails explicitly
+with ``TransactionRollbackException`` rather than writing to the new destination.
+ZIP staging/directory cleanup also rechecks destinations before deleting owned
+names. It never follows a redirected parent into another directory.
+
+Bindings isolate lifecycle context, not mutable operation settings. Use separate
+upload/archive/directory/writer owners for overlapping operations. A shared
+download processor should keep its configured policy immutable during streaming.
+
 Untrusted Uploads
 -----------------
 
@@ -126,7 +183,7 @@ Generic Process Execution
 Direct generic application use of ``NativeCommandRunner`` is deprecated in
 4.1. The class remains source-compatible because Pathwise still uses bounded,
 shell-free process execution behind trusted filesystem-native acceleration.
-Applications and Foundation should use released Runwire 1.0 for generic process
+Applications and Foundation should use released Runwire 2.1.1 for generic process
 work.
 
 ``NativeCommandRunner`` no longer retains arbitrary executable names in a
@@ -154,7 +211,7 @@ kept at the correct lifetime:
 * immutable platform ownership resolution may remain process-lifetime state.
 
 Symlink and TOCTOU Limits
-------------------------
+-------------------------
 
 Pathwise uses canonical roots, nearest-existing-parent resolution, link checks,
 exclusive random temporary names, destination-side staging and rechecks near

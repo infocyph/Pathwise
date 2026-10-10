@@ -109,3 +109,99 @@ test('download processors stream through isolated storage contexts without globa
         }
     }
 });
+
+test('local context upload roots reject symlink escapes for default and named disks', function (string $uploadPath): void {
+    if (PHP_OS_FAMILY === 'Windows') {
+        expect(PHP_OS_FAMILY)->toBe('Windows');
+
+        return;
+    }
+
+    $root = processorContextTempDirectory('pathwise_context_escape_root_');
+    $outside = processorContextTempDirectory('pathwise_context_escape_out_');
+    $link = PathHelper::join($root, 'uploads');
+    symlink($outside, $link);
+
+    try {
+        $context = new StorageContext([
+            'primary' => ['driver' => 'local', 'root' => $root],
+            'other' => ['driver' => 'local', 'root' => $root],
+        ], 'primary');
+        $uploader = new UploadProcessor();
+        $uploader->setStorageContext($context);
+
+        expect(fn () => $uploader->setDirectorySettings($uploadPath))
+            ->toThrow(InvalidArgumentException::class, 'inside local root')
+            ->and(scandir($outside))->toBe(['.', '..']);
+    } finally {
+        if (is_link($link)) {
+            unlink($link);
+        }
+        FlysystemHelper::deleteDirectory($root);
+        FlysystemHelper::deleteDirectory($outside);
+    }
+})->with(['default local disk' => 'uploads', 'named local disk' => 'other://uploads']);
+
+test('local context rejects nested upload symlink before publication and cleans owned staging', function (): void {
+    if (PHP_OS_FAMILY === 'Windows') {
+        expect(PHP_OS_FAMILY)->toBe('Windows');
+
+        return;
+    }
+
+    $root = processorContextTempDirectory('pathwise_context_nested_root_');
+    $outside = processorContextTempDirectory('pathwise_context_nested_out_');
+    $stage = processorContextTempDirectory('pathwise_context_nested_stage_');
+    $source = tempnam(sys_get_temp_dir(), 'pathwise_context_nested_source_');
+    $uploadRoot = PathHelper::join($root, 'uploads');
+    mkdir($uploadRoot);
+    $link = PathHelper::join($uploadRoot, date('Y'));
+    symlink($outside, $link);
+
+    try {
+        if (!is_string($source)) {
+            throw new RuntimeException('Unable to create nested containment fixture.');
+        }
+        file_put_contents($source, 'must-not-escape');
+        $context = new StorageContext(['primary' => ['driver' => 'local', 'root' => $root]], 'primary');
+        $uploader = new UploadProcessor();
+        $uploader->setStorageContext($context);
+        $uploader->setDirectorySettings('primary://uploads', true, $stage);
+
+        expect(fn () => $uploader->ingestSource(UploadSource::fromPath($source, 'outside.txt')))
+            ->toThrow(InvalidArgumentException::class, 'inside local root')
+            ->and(scandir($outside))->toBe(['.', '..'])
+            ->and(glob($stage . DIRECTORY_SEPARATOR . 'pathwise-upload-*'))->toBe([])
+            ->and(file_get_contents($source))->toBe('must-not-escape');
+    } finally {
+        if (is_string($source) && is_file($source)) {
+            unlink($source);
+        }
+        if (is_link($link)) {
+            unlink($link);
+        }
+        FlysystemHelper::deleteDirectory($root);
+        FlysystemHelper::deleteDirectory($outside);
+        FlysystemHelper::deleteDirectory($stage);
+    }
+});
+
+test('Windows local storage resolution rejects ADS, reserved devices and ambiguous trailing segments', function (): void {
+    if (PHP_OS_FAMILY !== 'Windows') {
+        expect(PHP_OS_FAMILY)->not->toBe('Windows');
+
+        return;
+    }
+
+    $root = processorContextTempDirectory('pathwise_ntfs_root_');
+    try {
+        $context = new StorageContext(['primary' => ['driver' => 'local', 'root' => $root]], 'primary');
+        foreach (['report.txt:extra', 'CON.txt', 'folder /file.txt', 'file.txt.'] as $name) {
+            expect(fn () => $context->localPath($name))
+                ->toThrow(InvalidArgumentException::class, 'Unsafe Windows local storage');
+        }
+        expect($context->localPath('valid/file.txt'))->toBeString();
+    } finally {
+        FlysystemHelper::deleteDirectory($root);
+    }
+});

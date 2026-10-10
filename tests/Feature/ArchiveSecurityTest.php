@@ -224,3 +224,117 @@ test('local ZIP creation refuses to follow symbolic links', function () {
     expect(fn () => (new FileCompression($this->archivePath, true))->compress($source))
         ->toThrow(CompressionException::class, 'Symbolic links are not followed');
 });
+
+test('Windows ZIP segments reject ADS, device names and trailing-name aliases', function (): void {
+    $root = $this->extractPath;
+    foreach (['file.txt:payload', 'CON.txt', 'LPT1.log', 'safe/.. /escape.txt', 'file.txt.', 'folder /child.txt'] as $name) {
+        if (PHP_OS_FAMILY === 'Windows') {
+            expect(fn () => ZipEntryValidator::validate($name, $root))
+                ->toThrow(UnsafeArchiveEntryException::class);
+        } else {
+            expect(ZipEntryValidator::validate($name, $root))->toBeString();
+        }
+    }
+});
+
+test('Windows NTFS extraction rejects unsafe archive entries before creating files', function (): void {
+    if (PHP_OS_FAMILY !== 'Windows') {
+        expect(PHP_OS_FAMILY)->not->toBe('Windows');
+
+        return;
+    }
+
+    foreach (['file.txt:payload', 'CON.txt', 'file.txt.', 'folder /child.txt'] as $entry) {
+        ($this->writeArchive)($entry, 'must-not-write');
+        expect(fn () => (new FileCompression($this->archivePath))->decompress($this->extractPath))
+            ->toThrow(UnsafeArchiveEntryException::class)
+            ->and(scandir($this->extractPath))->toBe(['.', '..']);
+    }
+});
+
+test('ZIP rollback never follows a destination symlink changed at a checkpoint', function (): void {
+    if (PHP_OS_FAMILY === 'Windows') {
+        expect(PHP_OS_FAMILY)->toBe('Windows');
+
+        return;
+    }
+    $target = $this->extractPath . DIRECTORY_SEPARATOR . 'existing.txt';
+    $outside = $this->securityRoot . DIRECTORY_SEPARATOR . 'outside.txt';
+    file_put_contents($target, 'original');
+    file_put_contents($outside, 'outside');
+    ($this->writeArchive)('existing.txt', 'changed');
+    $zip = new ZipArchive();
+    $zip->open($this->archivePath);
+    $entries = ZipEntryValidator::validateArchive($zip, $this->extractPath);
+    $changed = false;
+    try {
+        expect(function () use ($zip, $entries, $target, $outside, &$changed): void {
+            \Infocyph\Pathwise\Security\ZipArchiveExtractor::extractToLocal(
+                $zip,
+                $entries,
+                $this->extractPath,
+                function () use ($target, $outside, &$changed): void {
+                    foreach (glob($this->extractPath . DIRECTORY_SEPARATOR . '.pathwise-zip-*.tmp') ?: [] as $temporary) {
+                        clearstatcache(true, $temporary);
+                        if (!$changed && filesize($temporary) > 0) {
+                            unlink($target);
+                            symlink($outside, $target);
+                            $changed = true;
+                        }
+                    }
+                },
+            );
+        })->toThrow(\Infocyph\Pathwise\Exceptions\TransactionRollbackException::class);
+        expect($changed)->toBeTrue()->and(file_get_contents($outside))->toBe('outside')
+            ->and(glob($this->extractPath . DIRECTORY_SEPARATOR . '.pathwise-zip-*'))->toBe([]);
+    } finally {
+        $zip->close();
+    }
+});
+
+test('ZIP cleanup preserves outside files and directories after a parent is redirected', function (): void {
+    if (PHP_OS_FAMILY === 'Windows') {
+        ($this->writeArchive)('../outside.txt');
+        expect(fn () => (new FileCompression($this->archivePath))->decompress($this->extractPath))
+            ->toThrow(UnsafeArchiveEntryException::class)
+            ->and(file_exists($this->securityRoot . DIRECTORY_SEPARATOR . 'outside.txt'))->toBeFalse();
+
+        return;
+    }
+    $parent = $this->extractPath . DIRECTORY_SEPARATOR . 'parent';
+    $outside = $this->securityRoot . DIRECTORY_SEPARATOR . 'outside';
+    mkdir($outside . DIRECTORY_SEPARATOR . 'child', 0755, true);
+    ($this->writeArchive)('parent/child/new.txt', 'changed');
+    $zip = new ZipArchive();
+    $zip->open($this->archivePath);
+    $entries = ZipEntryValidator::validateArchive($zip, $this->extractPath);
+    $outsideTemporary = null;
+    try {
+        expect(function () use ($zip, $entries, $parent, $outside, &$outsideTemporary): void {
+            \Infocyph\Pathwise\Security\ZipArchiveExtractor::extractToLocal(
+                $zip,
+                $entries,
+                $this->extractPath,
+                function () use ($parent, $outside, &$outsideTemporary): void {
+                    if ($outsideTemporary !== null) {
+                        return;
+                    }
+                    foreach (glob($parent . DIRECTORY_SEPARATOR . 'child' . DIRECTORY_SEPARATOR . '.pathwise-zip-*.tmp') ?: [] as $temporary) {
+                        clearstatcache(true, $temporary);
+                        if (filesize($temporary) > 0) {
+                            rename($parent, $this->extractPath . DIRECTORY_SEPARATOR . 'saved-parent');
+                            $outsideTemporary = $outside . DIRECTORY_SEPARATOR . 'child' . DIRECTORY_SEPARATOR . basename($temporary);
+                            file_put_contents($outsideTemporary, 'outside');
+                            symlink($outside, $parent);
+                        }
+                    }
+                },
+            );
+        })->toThrow(\Infocyph\Pathwise\Exceptions\TransactionRollbackException::class);
+        expect($outsideTemporary)->toBeString()
+            ->and(file_get_contents($outsideTemporary))->toBe('outside')
+            ->and(is_dir($outside . DIRECTORY_SEPARATOR . 'child'))->toBeTrue();
+    } finally {
+        $zip->close();
+    }
+});

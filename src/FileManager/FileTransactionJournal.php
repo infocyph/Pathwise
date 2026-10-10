@@ -6,6 +6,7 @@ namespace Infocyph\Pathwise\FileManager;
 
 use Infocyph\Pathwise\Exceptions\FileAccessException;
 use Infocyph\Pathwise\Exceptions\TransactionRollbackException;
+use Infocyph\Pathwise\Security\LocalPathContainment;
 use Infocyph\Pathwise\Utils\PathHelper;
 
 final class FileTransactionJournal
@@ -13,7 +14,7 @@ final class FileTransactionJournal
     /** @var list<array{path: string, existed: bool, backup: string|null, mode: int|null, owner: int|null, group: int|null}> */
     private array $entries = [];
 
-    /** @var array<string, true> */
+    /** @var array<string, string> */
     private array $recordedPaths = [];
 
     public function __construct(public readonly string $originalPath) {}
@@ -30,6 +31,11 @@ final class FileTransactionJournal
         $path = PathHelper::normalize($path);
         if (isset($this->recordedPaths[$path])) {
             return;
+        }
+
+        $canonical = LocalPathContainment::canonicalKey($path);
+        if ($canonical === null) {
+            throw new FileAccessException("Unable to resolve transaction destination: {$path}");
         }
 
         $existed = is_file($path);
@@ -55,7 +61,7 @@ final class FileTransactionJournal
             'owner' => $owner,
             'group' => $group,
         ];
-        $this->recordedPaths[$path] = true;
+        $this->recordedPaths[$path] = $canonical;
     }
 
     public function rollback(?\Throwable $originalFailure = null): void
@@ -130,6 +136,10 @@ final class FileTransactionJournal
     /** @param array{path: string, existed: bool, backup: string|null, mode: int|null, owner: int|null, group: int|null} $entry */
     private function restore(array $entry): void
     {
+        clearstatcache(true);
+        if (LocalPathContainment::canonicalKey($entry['path']) !== $this->recordedPaths[$entry['path']]) {
+            throw new FileAccessException("Rollback destination changed: {$entry['path']}");
+        }
         if (!$entry['existed']) {
             if (is_file($entry['path']) && !unlink($entry['path'])) {
                 throw new FileAccessException("Unable to remove transaction-created file: {$entry['path']}");

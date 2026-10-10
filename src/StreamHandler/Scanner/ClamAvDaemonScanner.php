@@ -48,39 +48,38 @@ final readonly class ClamAvDaemonScanner implements MalwareScannerInterface, Mal
             throw new MalwareScannerException('Unable to open ClamAV scan input.');
         }
 
-        $socket = $this->connect();
-        $chunkSize = max(1, $this->chunkSize);
+        $socket = null;
+        $deadline = hrtime(true) / 1_000_000_000 + $this->ioTimeoutSeconds;
 
         try {
-            $this->writeFully($socket, "zINSTREAM\0");
+            $socket = $this->connect($deadline);
+            $this->writeFully($socket, "zINSTREAM\0", $deadline);
+            $this->sendScanInput($input, $socket, $deadline);
 
-            while (!feof($input)) {
-                $chunk = fread($input, $chunkSize);
-                if (!is_string($chunk)) {
-                    throw new MalwareScannerException('Unable to read ClamAV scan input.');
-                }
-                if ($chunk === '') {
-                    if (feof($input)) {
-                        break;
-                    }
+            $this->writeFully($socket, pack('N', 0), $deadline);
 
-                    throw new MalwareScannerException('ClamAV scan input stalled.');
-                }
-
-                $this->writeFully($socket, pack('N', strlen($chunk)) . $chunk);
-            }
-
-            $this->writeFully($socket, pack('N', 0));
-
-            return $this->parseResponse($this->readResponse($socket));
+            return $this->parseResponse($this->readResponse($socket, $deadline));
         } finally {
             fclose($input);
-            fclose($socket);
+            if (is_resource($socket)) {
+                fclose($socket);
+            }
+        }
+    }
+
+    /** @param resource $socket */
+    private function assertTimeRemaining(mixed $socket, float $deadline): void
+    {
+        $remaining = $this->remainingSeconds($deadline);
+        $seconds = (int) floor($remaining);
+        $microseconds = max(1, (int) (($remaining - $seconds) * 1_000_000));
+        if (!stream_set_timeout($socket, $seconds, $microseconds)) {
+            throw new MalwareScannerException('Unable to configure ClamAV socket timeout.');
         }
     }
 
     /** @return resource */
-    private function connect(): mixed
+    private function connect(float $deadline): mixed
     {
         $errorNumber = 0;
         $errorMessage = '';
@@ -91,7 +90,7 @@ final readonly class ClamAvDaemonScanner implements MalwareScannerInterface, Mal
                 $this->endpoint,
                 $errorNumber,
                 $errorMessage,
-                $this->connectTimeoutSeconds,
+                min($this->connectTimeoutSeconds, $this->remainingSeconds($deadline)),
                 STREAM_CLIENT_CONNECT,
             );
         } finally {
@@ -104,12 +103,12 @@ final readonly class ClamAvDaemonScanner implements MalwareScannerInterface, Mal
             );
         }
 
-        $seconds = (int) floor($this->ioTimeoutSeconds);
-        $microseconds = (int) (($this->ioTimeoutSeconds - $seconds) * 1_000_000);
-        if (!stream_set_timeout($socket, $seconds, $microseconds)) {
+        try {
+            $this->assertTimeRemaining($socket, $deadline);
+        } catch (\Throwable $exception) {
             fclose($socket);
 
-            throw new MalwareScannerException('Unable to configure ClamAV socket timeout.');
+            throw $exception;
         }
 
         return $socket;
@@ -119,10 +118,15 @@ final readonly class ClamAvDaemonScanner implements MalwareScannerInterface, Mal
     {
         $normalized = strtolower(trim($host, '[]'));
 
-        return $normalized === 'localhost'
-            || $normalized === '::1'
-            || $normalized === '127.0.0.1'
-            || str_starts_with($normalized, '127.');
+        if ($normalized === 'localhost' || $normalized === '::1') {
+            return true;
+        }
+
+        $packed = filter_var($normalized, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false
+            ? inet_pton($normalized)
+            : false;
+
+        return is_string($packed) && ord($packed[0]) === 127;
     }
 
     private function parseResponse(string $response): MalwareScanVerdict
@@ -142,30 +146,22 @@ final readonly class ClamAvDaemonScanner implements MalwareScannerInterface, Mal
     }
 
     /** @param resource $socket */
-    private function readResponse(mixed $socket): string
+    private function readResponse(mixed $socket, float $deadline): string
     {
         $response = '';
 
         while (strlen($response) < $this->maxResponseBytes) {
+            $this->assertTimeRemaining($socket, $deadline);
             $remaining = $this->maxResponseBytes - strlen($response);
             if ($remaining < 1) {
                 break;
             }
 
-            $readLength = max(1, min(4_096, $remaining));
-            $chunk = fread($socket, $readLength);
-            if (!is_string($chunk) || $chunk === '') {
-                $metadata = stream_get_meta_data($socket);
-                if ($metadata['timed_out']) {
-                    throw new MalwareScannerException('ClamAV response timed out.');
-                }
-                if (!is_string($chunk)) {
-                    throw new MalwareScannerException('Unable to read ClamAV response.');
-                }
-                if (feof($socket)) {
-                    return $response;
-                }
-
+            $chunk = $this->readResponseChunk($socket, max(1, min(4_096, $remaining)));
+            if ($chunk === null) {
+                return $response;
+            }
+            if ($chunk === '') {
                 continue;
             }
 
@@ -177,6 +173,71 @@ final readonly class ClamAvDaemonScanner implements MalwareScannerInterface, Mal
         }
 
         throw new MalwareScannerException('ClamAV response exceeds the configured limit.');
+    }
+
+    /**
+     * @param resource $socket
+     * @param int<1, max> $readLength
+     */
+    private function readResponseChunk(mixed $socket, int $readLength): ?string
+    {
+        $chunk = fread($socket, $readLength);
+        if (!is_string($chunk) || $chunk === '') {
+            return $this->responseReadEnded($socket, $chunk) ? null : '';
+        }
+
+        return $chunk;
+    }
+
+    private function remainingSeconds(float $deadline): float
+    {
+        $remaining = $deadline - hrtime(true) / 1_000_000_000;
+        if ($remaining <= 0) {
+            throw new MalwareScannerException('ClamAV operation timed out.');
+        }
+
+        return $remaining;
+    }
+
+    /** @param resource $socket */
+    private function responseReadEnded(mixed $socket, mixed $chunk): bool
+    {
+        $metadata = stream_get_meta_data($socket);
+        if ($metadata['timed_out']) {
+            throw new MalwareScannerException('ClamAV response timed out.');
+        }
+        if (!is_string($chunk)) {
+            throw new MalwareScannerException('Unable to read ClamAV response.');
+        }
+
+        return feof($socket);
+    }
+
+    /**
+     * @param resource $input
+     * @param resource $socket
+     */
+    private function sendScanInput(mixed $input, mixed $socket, float $deadline): void
+    {
+        $remaining = $this->maxStreamBytes;
+        while (!feof($input)) {
+            $this->assertTimeRemaining($socket, $deadline);
+            $length = max(1, min($this->chunkSize, $remaining === PHP_INT_MAX ? $remaining : $remaining + 1));
+            $chunk = fread($input, $length);
+            if (!is_string($chunk) || ($chunk === '' && !feof($input))) {
+                throw new MalwareScannerException('Unable to read ClamAV scan input.');
+            }
+            if ($chunk === '') {
+                break;
+            }
+
+            $bytes = strlen($chunk);
+            if ($bytes > $remaining) {
+                throw new MalwareScannerException('ClamAV scan input exceeds the configured stream limit.');
+            }
+            $remaining -= $bytes;
+            $this->writeFully($socket, pack('N', $bytes) . $chunk, $deadline);
+        }
     }
 
     private function validateConfiguration(): void
@@ -218,7 +279,14 @@ final readonly class ClamAvDaemonScanner implements MalwareScannerInterface, Mal
 
     private function validateLimits(): void
     {
-        if ($this->connectTimeoutSeconds <= 0 || $this->ioTimeoutSeconds <= 0) {
+        if (
+            !is_finite($this->connectTimeoutSeconds)
+            || !is_finite($this->ioTimeoutSeconds)
+            || $this->connectTimeoutSeconds <= 0
+            || $this->ioTimeoutSeconds <= 0
+            || $this->connectTimeoutSeconds > 86_400
+            || $this->ioTimeoutSeconds > 86_400
+        ) {
             throw new \InvalidArgumentException('ClamAV timeouts must be positive.');
         }
         if ($this->chunkSize < 1 || $this->chunkSize > 1_048_576) {
@@ -233,12 +301,13 @@ final readonly class ClamAvDaemonScanner implements MalwareScannerInterface, Mal
     }
 
     /** @param resource $stream */
-    private function writeFully(mixed $stream, string $payload): void
+    private function writeFully(mixed $stream, string $payload, float $deadline): void
     {
         $offset = 0;
         $length = strlen($payload);
 
         while ($offset < $length) {
+            $this->assertTimeRemaining($stream, $deadline);
             $written = fwrite($stream, substr($payload, $offset));
             if (!is_int($written) || $written < 1) {
                 $metadata = stream_get_meta_data($stream);

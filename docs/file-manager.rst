@@ -72,6 +72,7 @@ Capabilities include:
 
 * structured text/CSV/JSON/XML/binary writing;
 * direct-local lock support;
+* lock reacquisition preserves data written through the current handle;
 * checksum verification;
 * direct-local atomic replacement through ``enableAtomicWrite()``;
 * ordinary staged adapter writes where atomic rename semantics cannot be
@@ -91,6 +92,20 @@ Atomic mode is intentionally a local guarantee: Pathwise stages beside the
 local destination and requires the final rename to succeed. Adapter-backed
 publication is not described as atomic merely because Pathwise can stage data
 before the final write.
+
+Closing publishes staging only after overwrite initialization or a write has
+started. A shared lock alone, or cancellation before exclusive acquisition,
+discards uninitialized staging and preserves the existing local/adapter target.
+
+``lock()`` validates and applies the requested shared/exclusive mode. Mode changes
+release the previous lock before attempting the new one; a failed conversion
+leaves the writer unlocked. Overwrite initialization happens once per opened
+handle, after the first exclusive acquisition. Unlocking and reacquiring never
+truncates data already written. ``withRunwire($execution, $operation)`` makes retry
+delays cooperative inside a supplied capable host scope and observes borrowed
+deadlines and cancellation. The normal path keeps bounded synchronous retries.
+Atomic and adapter staging modes lock their working file. Applications needing
+serialized publication to one destination must coordinate publishers separately.
 
 ``FileCompression``
 -------------------

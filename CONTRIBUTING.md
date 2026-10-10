@@ -80,6 +80,16 @@ composer ic:ci
 
 When `composer ic:ci` passes, running the same checks individually is unnecessary.
 
+Validate the PHP examples in README and the published guides with
+`php tests/Support/CheckDocumentation.php`. CI runs this check too. The Sphinx
+build uses `docs/requirements.txt`; build with warnings treated as errors before
+changing the published guides.
+
+The production dependency audit is `composer audit --no-dev --format=json`.
+The development PHPForge/PHPBench chain currently includes abandoned
+`doctrine/annotations`; this is upstream tooling debt and is not a production
+dependency. Keep that distinction explicit when reporting audit results.
+
 Use focused commands while developing or when the complete suite cannot run:
 
 <details>

@@ -56,22 +56,7 @@ final class ZipEntryValidator
             throw new UnsafeArchiveEntryException("Absolute ZIP entry path detected: {$entry}");
         }
 
-        $segments = explode('/', $normalized);
-        $safeSegments = [];
-        foreach ($segments as $segment) {
-            if ($segment === '' || $segment === '.') {
-                continue;
-            }
-            if ($segment === '..') {
-                throw new UnsafeArchiveEntryException("ZIP traversal entry detected: {$entry}");
-            }
-
-            $safeSegments[] = $segment;
-        }
-
-        if ($safeSegments === []) {
-            throw new UnsafeArchiveEntryException("Empty ZIP entry path detected: {$entry}");
-        }
+        $safeSegments = self::extractSafeSegments($normalized, $entry);
 
         self::assertPathLimits($safeSegments, $entry, $maxEntryNameBytes, $maxPathBytes, $maxPathDepth);
         $relative = implode('/', $safeSegments);
@@ -182,6 +167,34 @@ final class ZipEntryValidator
     }
 
     /**
+     * @param array<string, true> $filePaths
+     * @param array<string, true> $ancestorPaths
+     */
+    private static function assertNoFileAncestor(
+        string $canonical,
+        string $entry,
+        array &$filePaths,
+        array &$ancestorPaths,
+    ): void {
+        $segments = explode('/', $canonical);
+        $ancestor = '';
+        $lastIndex = count($segments) - 1;
+        foreach ($segments as $index => $segment) {
+            if ($segment === '') {
+                continue;
+            }
+            $ancestor = $ancestor === '' ? $segment : $ancestor . '/' . $segment;
+            if ($index === $lastIndex) {
+                break;
+            }
+            if (isset($filePaths[$ancestor])) {
+                throw new UnsafeArchiveEntryException("ZIP entry is nested below an archive file: {$entry}");
+            }
+            $ancestorPaths[$ancestor] = true;
+        }
+    }
+
+    /**
      * @param array<string, bool> $seenPaths
      * @param array<string, true> $filePaths
      * @param array<string, true> $ancestorPaths
@@ -202,22 +215,7 @@ final class ZipEntryValidator
             throw new UnsafeArchiveEntryException("ZIP file conflicts with an archive directory path: {$entry}");
         }
 
-        $segments = explode('/', $canonical);
-        $ancestor = '';
-        $lastIndex = count($segments) - 1;
-        foreach ($segments as $index => $segment) {
-            if ($segment === '') {
-                continue;
-            }
-            $ancestor = $ancestor === '' ? $segment : $ancestor . '/' . $segment;
-            if ($index === $lastIndex) {
-                break;
-            }
-            if (isset($filePaths[$ancestor])) {
-                throw new UnsafeArchiveEntryException("ZIP entry is nested below an archive file: {$entry}");
-            }
-            $ancestorPaths[$ancestor] = true;
-        }
+        self::assertNoFileAncestor($canonical, $entry, $filePaths, $ancestorPaths);
 
         $seenPaths[$canonical] = $directory;
         if (!$directory) {
@@ -288,6 +286,44 @@ final class ZipEntryValidator
         if (in_array($mode, [self::UNIX_BLOCK_DEVICE, self::UNIX_CHARACTER_DEVICE, self::UNIX_FIFO, self::UNIX_SOCKET], true)) {
             throw new UnsafeArchiveEntryException("Special-file ZIP entry detected: {$entry}");
         }
+    }
+
+    private static function assertWindowsSafeSegment(string $segment, string $entry): void
+    {
+        if (PHP_OS_FAMILY !== 'Windows') {
+            return;
+        }
+
+        if (
+            str_contains($segment, ':')
+            || str_ends_with($segment, '.')
+            || str_ends_with($segment, ' ')
+            || preg_match('/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\\..*)?$/iD', $segment) === 1
+        ) {
+            throw new UnsafeArchiveEntryException("Unsafe Windows ZIP entry segment detected: {$entry}");
+        }
+    }
+
+    /** @return list<string> */
+    private static function extractSafeSegments(string $normalized, string $entry): array
+    {
+        $safeSegments = [];
+        foreach (explode('/', $normalized) as $segment) {
+            if ($segment === '' || $segment === '.') {
+                continue;
+            }
+            if ($segment === '..') {
+                throw new UnsafeArchiveEntryException("ZIP traversal entry detected: {$entry}");
+            }
+
+            self::assertWindowsSafeSegment($segment, $entry);
+            $safeSegments[] = $segment;
+        }
+        if ($safeSegments === []) {
+            throw new UnsafeArchiveEntryException("Empty ZIP entry path detected: {$entry}");
+        }
+
+        return $safeSegments;
     }
 
     /** @return array{int, int} */

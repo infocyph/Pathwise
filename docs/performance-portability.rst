@@ -237,5 +237,41 @@ no regressions that indicate accidental full-file buffering or security-check
 removal. Wall-clock values are recorded as baselines rather than brittle
 universal thresholds because CI hardware and storage vary.
 
+The 4.2 host comparison additionally enforces an unchanged 2% median successful
+RPM regression limit for tag 4.1 versus the candidate. The strict source loader
+overrides optimized Composer class maps and records file paths/SHA-256 values;
+missing or mixed revision files abort measurement. The synthetic in-process
+comparison and real HTTP profile have separate artifacts:
+
+.. code-block:: bash
+
+   # Export tag 4.1's src/ into a separate baseline directory first.
+   php tests/Support/CompareFoundationHostPerformance.php /tmp/pathwise41/src "$PWD/src" /tmp/host-comparison.json
+   php tests/Support/FoundationHostLoad.php /tmp/pathwise41/src "$PWD/src" /tmp/host-http-load.json
+
+The Linux HTTP runner owns a two-worker Runwire 2.1.1 host using Foundation
+3.0.1 filesystem services. It validates complete small/256 KiB/range streaming
+responses at several concurrency levels, verifies every worker and warms clients
+before measurement, alternates three baseline/candidate trials and continuously
+samples live process-tree RSS, CPU and descriptors. A separate bound-context
+soak checks request lifecycle cleanup under repeated load. Worker replacements,
+response errors, incomplete bodies and resource-budget breaches fail the run.
+These artifacts certify the defined fixture and report variance; the application's
+deployment, transport/backpressure policy and storage workload need their own
+representative acceptance measurements.
+
+The HTTP profile enables and warms CLI OPcache and every payload/range path.
+Clients close warmup connections before waiting at the readiness barrier and
+open fresh connections during measurement, so slow peer warmup cannot consume
+the host's idle/header timeout. Host timeout and error budgets remain active;
+failed response diagnostics include status, length and digest, and artifacts
+retain completed trial metrics before failing a response or resource budget.
+Both revisions use the same two physical worker cores; when a third core is
+available, load clients run apart from those cores and their SMT siblings.
+Reports include the actual affinity, trial spread and load-generator CPU so
+hybrid CPU placement or a client bottleneck cannot silently masquerade as a
+library throughput difference. The runner requires Linux ``/proc``, ``taskset``,
+and the development host dependencies.
+
 See :doc:`trust-boundaries` for persistent-worker and cross-library ownership
 guidance.

@@ -5,11 +5,28 @@ on:
     - cron: "0 0 * * 0"
   push:
     branches: [ "main", "master" ]
+    tags: [ "v*", "[0-9]*" ]
   pull_request:
     branches: [ "main", "master", "develop", "development" ]
 
+
+# Cancel superseded PR revisions; retain complete checks for the newest head.
+# Push-to-main, scheduled and release-tag workflows are never cancelled here.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    uses: infocyph/phpforge/.github/workflows/release.yml@main
+    permissions:
+      contents: write
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+
   phpforge:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
     uses: infocyph/phpforge/.github/workflows/security-standards.yml@main
     with:
       fail_on_skipped_tests: true
@@ -23,6 +40,7 @@ jobs:
       contents: read
 
   windows:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
     name: "Windows / PHP ${{ matrix.php }}"
     runs-on: windows-latest
     strategy:
@@ -43,7 +61,148 @@ jobs:
       - name: "Run platform tests"
         run: composer ic:test:code
 
+  production-no-runwire:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
+    name: "Production-only installation (Runwire absent)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: "Set up PHP"
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: "fileinfo, zip"
+          coverage: none
+          tools: composer:v2
+      - name: "Install production dependencies"
+        run: composer install --no-dev --no-interaction --prefer-dist
+      - name: "Verify normal operations without Runwire"
+        run: |
+          php -r '
+          require "vendor/autoload.php";
+          if (class_exists(\Infocyph\Runwire\RuntimeContext::class)) {
+              fwrite(STDERR, "Runwire must not be installed as a production dependency.\n");
+              exit(1);
+          }
+          $processor = new \Infocyph\Pathwise\StreamHandler\DownloadProcessor();
+          $source = sys_get_temp_dir() . "/pathwise_prod_" . bin2hex(random_bytes(8)) . ".txt";
+          try {
+              file_put_contents($source, "unbound");
+              $prepared = $processor->prepareDownload($source);
+              if ($prepared->size !== 7) { exit(1); }
+              $uploader = new \Infocyph\Pathwise\StreamHandler\UploadProcessor();
+              if (!method_exists($uploader, "withRunwire")) { exit(1); }
+              $writer = new \Infocyph\Pathwise\FileManager\SafeFileWriter($source);
+              $writer->lock();
+              $writer->writeBinary("preserved");
+              $writer->unlock();
+              $writer->lock();
+              $writer->close();
+              if (file_get_contents($source) !== "preserved") { exit(1); }
+              \Infocyph\Pathwise\Utils\FileWatcher::watch(dirname($source), static function (): void {}, durationSeconds: 1, recursive: false);
+          } finally {
+              unlink($source);
+          }
+          '
+
+  source-security-report:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
+    name: "Security report / production dependencies and source contracts"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: "fileinfo, pcntl, posix, zip"
+          coverage: none
+          tools: composer:v2
+      - name: Install dependencies for audited lock resolution
+        run: composer install --no-interaction --prefer-dist
+      - name: Audit production dependencies (strict)
+        run: |
+          composer audit --no-dev --format=json > "$RUNNER_TEMP/pathwise-security.json"
+          cat "$RUNNER_TEMP/pathwise-security.json"
+      - name: Run filesystem trust-boundary and Runwire contract tests via PHPForge
+        run: composer ic:test:code
+      - name: Verify documented PHP examples
+        run: php tests/Support/CheckDocumentation.php
+      - name: Publish production dependency security report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pathwise-production-security-report
+          path: ${{ runner.temp }}/pathwise-security.json
+          if-no-files-found: warn
+
+  foundation-host-performance:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
+    name: "Foundation 3 host / matched 4.1 vs 4.2 performance"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: "fileinfo, pcntl, posix, simplexml, xmlreader, zip"
+          coverage: none
+          tools: composer:v2
+      - name: Install identical Foundation host dependencies
+        run: composer install --no-interaction --prefer-dist
+      - name: Retrieve the immediate 4.1 release source
+        run: |
+          mkdir -p "$RUNNER_TEMP/pathwise41"
+          git fetch --depth=1 origin refs/tags/4.1:refs/tags/4.1
+          git archive 4.1 src | tar -x -C "$RUNNER_TEMP/pathwise41"
+      - name: Compare matched host request throughput, tail latency and memory
+        run: |
+          php tests/Support/CompareFoundationHostPerformance.php \
+            "$RUNNER_TEMP/pathwise41/src" "$PWD/src" \
+            "$RUNNER_TEMP/pathwise-host-performance.json"
+      - name: Compare sustained HTTP concurrency and bound-worker resource budgets
+        run: |
+          php tests/Support/FoundationHostLoad.php \
+            "$RUNNER_TEMP/pathwise41/src" "$PWD/src" \
+            "$RUNNER_TEMP/pathwise-host-http-load.json"
+      - name: Publish matched host performance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: foundation-host-performance
+          path: |
+            ${{ runner.temp }}/pathwise-host-performance.json
+            ${{ runner.temp }}/pathwise-host-http-load.json
+          if-no-files-found: warn
+
+  foundation-3-host:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
+    name: "Foundation 3.0.1 / Runwire 2.1.1 host and isolation"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: "fileinfo, pcntl, posix, simplexml, xmlreader, zip"
+          coverage: none
+          tools: composer:v2
+      - name: Install Pathwise and pinned Foundation host
+        run: composer install --no-interaction --prefer-dist
+      - name: Exercise composed Foundation and Runwire runtime
+        run: php tests/Support/FoundationRunwireHost.php
+
   adapter-contracts:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
     name: "Optional adapter contracts"
     runs-on: ubuntu-latest
     env:
@@ -65,6 +224,7 @@ jobs:
         run: composer ic:test:code
 
   release-stress:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
     name: "Release stress / PHP 8.4"
     runs-on: ubuntu-latest
     timeout-minutes: 30

@@ -219,3 +219,130 @@ test('fixed-width and serialized writers reject unsafe values', function () {
     expect(fn () => $writer->writeFixedWidth(['x'], [0]))->toThrow(FileAccessException::class)
         ->and(fn () => $writer->writeSerialized((object) ['x' => 1]))->toThrow(FileAccessException::class);
 });
+
+test('serialized validation uses a finite total work budget for shared reference graphs', function (): void {
+    $parts = [['leaf']];
+    for ($depth = 0; $depth < 25; $depth++) {
+        $parent = count($parts) - 1;
+        $parts[] = [&$parts[$parent], &$parts[$parent]];
+    }
+    $sharedGraph = $parts[array_key_last($parts)];
+    $validator = \Infocyph\Pathwise\Utils\SerializedValueValidator::class;
+
+    expect($validator::containsUnsupportedValue(['safe' => ['value' => 123]]))->toBeFalse()
+        ->and($validator::containsUnsupportedValue($sharedGraph))->toBeTrue()
+        ->and(fn () => (new SafeFileWriter($this->tempFilePath))->writeSerialized($sharedGraph))
+        ->toThrow(FileAccessException::class, 'safe scalar and array types');
+});
+
+test('failed and timed lock attempts do not truncate an existing local file', function (): void {
+    if (PHP_OS_FAMILY === 'Windows') {
+        expect(PHP_OS_FAMILY)->toBe('Windows');
+
+        return;
+    }
+
+    file_put_contents($this->tempFilePath, 'preserve-until-locked');
+    $holder = fopen($this->tempFilePath, 'c+');
+    if (!is_resource($holder)) {
+        throw new RuntimeException('Unable to open lock fixture.');
+    }
+
+    try {
+        expect(flock($holder, LOCK_EX | LOCK_NB))->toBeTrue();
+        $writer = new SafeFileWriter($this->tempFilePath);
+        expect(fn () => $writer->lock(LOCK_EX, true, 2, 5))
+            ->toThrow(FileAccessException::class, 'Failed to acquire lock')
+            ->and(file_get_contents($this->tempFilePath))->toBe('preserve-until-locked');
+
+        flock($holder, LOCK_UN);
+        $writer->lock();
+        $writer->writeLine('committed-after-lock');
+        $writer->close();
+
+        expect(file_get_contents($this->tempFilePath))->toBe('committed-after-lock' . PHP_EOL);
+    } finally {
+        flock($holder, LOCK_UN);
+        fclose($holder);
+    }
+});
+
+test('serialized line framing rejects embedded line breaks without writing', function (): void {
+    $writer = new SafeFileWriter($this->tempFilePath);
+    expect(fn () => $writer->writeSerialized("one\ntwo"))
+        ->toThrow(FileAccessException::class, 'line breaks')
+        ->and($writer->count())->toBe(0);
+    $writer->writeSerialized(['safe' => 'value']);
+    $writer->close();
+    $reader = new \Infocyph\Pathwise\FileManager\SafeFileReader($this->tempFilePath);
+    expect(iterator_to_array($reader->serializedValues()))->toBe([['safe' => 'value']]);
+});
+
+test('reacquiring and changing a writer lock preserves initialized contents', function (): void {
+    $writer = new SafeFileWriter($this->tempFilePath);
+    $writer->lock();
+    $writer->writeBinary('preserved');
+    $writer->flush();
+    $writer->unlock();
+    $writer->lock();
+    $writer->unlock();
+    expect(file_get_contents($this->tempFilePath))->toBe('preserved');
+    $writer->lock();
+    $writer->lock(LOCK_SH);
+    $writer->lock(LOCK_EX);
+    $writer->unlock();
+    expect(file_get_contents($this->tempFilePath))->toBe('preserved');
+    $writer->close();
+});
+
+test('an exclusive upgrade acquires actual exclusive ownership', function (): void {
+    $writer = new SafeFileWriter($this->tempFilePath);
+    $writer->lock(LOCK_SH);
+    $writer->lock(LOCK_EX);
+    $other = fopen($this->tempFilePath, 'rb');
+    try {
+        expect(flock($other, LOCK_SH | LOCK_NB))->toBeFalse();
+    } finally {
+        fclose($other);
+        $writer->close();
+    }
+});
+
+test('closing an atomic writer after a shared lock preserves the destination', function (): void {
+    $target = $this->mountRoot . DIRECTORY_SEPARATOR . 'atomic.txt';
+    file_put_contents($target, 'original');
+    $writer = (new SafeFileWriter($target))->enableAtomicWrite();
+    $writer->lock(LOCK_SH);
+    $writer->close();
+    expect(file_get_contents($target))->toBe('original')
+        ->and(scandir($this->mountRoot))->toBe(['.', '..', 'atomic.txt']);
+});
+
+test('closing an adapter writer after a shared lock preserves the destination', function (): void {
+    file_put_contents($this->mountRoot . DIRECTORY_SEPARATOR . 'remote.txt', 'original');
+    $writer = new SafeFileWriter('writer://remote.txt');
+    $writer->lock(LOCK_SH);
+    $writer->close();
+    expect(FlysystemHelper::read('writer://remote.txt'))->toBe('original');
+});
+
+test('staged writers publish explicit writes or truncation after a shared lock is released', function (bool $adapter, bool $truncate): void {
+    $target = $adapter ? $this->mountRoot . DIRECTORY_SEPARATOR . 'remote.txt' : $this->tempFilePath;
+    file_put_contents($target, 'original');
+    $writer = new SafeFileWriter($adapter ? 'writer://remote.txt' : $target);
+    if (!$adapter) {
+        $writer->enableAtomicWrite();
+    }
+    $writer->lock(LOCK_SH);
+    $writer->unlock();
+    if ($truncate) {
+        $writer->truncate();
+    } else {
+        $writer->writeBinary('replacement');
+    }
+    $writer->close();
+    expect(file_get_contents($target))->toBe($truncate ? '' : 'replacement');
+})->with([
+    'atomic write' => [false, false], 'atomic truncate' => [false, true],
+    'adapter write' => [true, false], 'adapter truncate' => [true, true],
+]);
