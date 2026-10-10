@@ -241,7 +241,8 @@ The 4.2 standalone comparison additionally enforces an unchanged 2% median succe
 RPM regression limit for tag 4.1 versus the candidate. The strict source loader
 overrides optimized Composer class maps and records file paths/SHA-256 values;
 missing or mixed revision files abort measurement. The synthetic in-process
-comparison and real HTTP profile have separate artifacts:
+comparison and real HTTP profile have separate artifacts. CI repeats the
+comparison on PHP 8.4 and 8.5:
 
 .. code-block:: bash
 
