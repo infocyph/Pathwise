@@ -26,8 +26,9 @@ Optional extensions:
 
 Runwire ``2.1.1`` is optional for host-composed runtime/request/task integration.
 Pathwise does not install or start it for ordinary use. Development pins
-Runwire ``2.1.1`` and Foundation ``3.0.1`` to verify composition;
-``composer install --no-dev`` excludes both. See :doc:`trust-boundaries`.
+Runwire ``2.1.1`` to verify optional passed-context integration;
+``composer install --no-dev`` excludes it. Pathwise's development setup and
+release validation do not require a framework. See :doc:`trust-boundaries`.
 
 Optional adapter packages (choose per driver):
 

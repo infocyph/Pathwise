@@ -95,6 +95,10 @@ test('production dependency surface stays filesystem focused and runtime neutral
         'ext-pcntl',
         'ext-posix',
     );
+    expect(array_keys($composer['require-dev'] ?? []))->not->toContain(
+        'infocyph/foundation',
+        'infocyph/webrick',
+    );
 });
 
 test('only the optional Runwire integration imports host runtime types', function (): void {

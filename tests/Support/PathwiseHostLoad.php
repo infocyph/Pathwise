@@ -164,7 +164,7 @@ final class LoadHost
         $reservation = stream_socket_server('tcp://127.0.0.1:0');
         $this->port = (int) substr(strrchr(stream_socket_get_name($reservation, false), ':'), 1);
         fclose($reservation);
-        $this->process = proc_open(loadCommand('host', [PHP_BINARY, '-d', 'opcache.enable_cli=1', __DIR__ . '/FoundationHostBenchmark.php',
+        $this->process = proc_open(loadCommand('host', [PHP_BINARY, '-d', 'opcache.enable_cli=1', __DIR__ . '/PathwiseHostBenchmark.php',
             $this->source, '200', '--serve', '127.0.0.1:' . $this->port, (string) HOST_WORKERS,
             $bound ? 'bound' : 'unbound', $this->root . '/fixture']),
             [0 => ['file', '/dev/null', 'r'], 1 => ['file', $this->root . '/host.log', 'a'], 2 => ['file', $this->root . '/host.log', 'a']], $pipes);
@@ -257,7 +257,7 @@ function loadClient(int $port, string $output, int $index): void
     $socket = null;
     try {
         $socket = loadConnect($port);
-        $small = str_repeat('matched-foundation-request-', 32);
+        $small = str_repeat('matched-pathwise-download-', 32);
         $large = str_repeat('0123456789abcdef', 16384);
         $workload = [['/small', false, 200, $small], ['/large', false, 200, $large], ['/range', true, 206, substr($large, 4099, 8190)]];
         if (loadRequest($socket, '/small', close: $close) !== [200, $small]) {
@@ -428,7 +428,7 @@ if (($argv[1] ?? '') === '--client') {
 }
 [$baseline, $candidate, $output] = array_slice($argv, 1, 3);
 $hosts = [];
-$report = ['description' => 'Real loopback HTTP, Foundation 3 / host-owned Runwire 2.1.1, mixed 832B/256KiB/range downloads',
+$report = ['description' => 'Direct Pathwise streaming over test-owned Runwire 2.1.1 HTTP, mixed 832B/256KiB/range downloads',
     'environment' => ['php' => PHP_VERSION, 'os' => php_uname(), 'opcache_cli' => true,
         'warmup_requests_per_client' => 101, 'cpu_affinity' => loadAffinity()],
     'budgets' => LOAD_BUDGETS, 'readiness' => [], 'profiles' => [], 'pass' => true];

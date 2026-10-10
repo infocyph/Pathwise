@@ -14,17 +14,17 @@ The integration boundary is intentionally narrow:
   private upload staging, controlled publication, hardened ZIP extraction,
   file metadata, download preparation and trusted direct-local filesystem
   acceleration.
-* **Foundation/application policy** owns authorization, configured roots,
+* **Application policy** owns authorization, configured roots,
   public-name eligibility, scanner composition and decisions about later
   privileged use of an artifact.
-* **Webrick** owns HTTP routing, conditional/range/cache semantics and response
+* **The HTTP host** owns HTTP routing, conditional/range/cache semantics and response
   transport.
 * **Runwire** owns generic process execution, deadlines/cancellation and process
   isolation primitives.
 * the **OS/container** remains the final privilege, mount and execution-isolation
   boundary.
 
-Pathwise has no production dependency on Foundation, Webrick or Runwire.
+Pathwise has no framework dependency. Runwire is optional and is not a production dependency.
 
 Borrowed Runwire 2.1.1 Context
 ------------------------------
@@ -127,7 +127,7 @@ composed by the application rather than by giving Pathwise an executable path:
 
    Pathwise UploadProcessor
           -> MalwareScannerInterface
-          <- Foundation/application adapter
+          <- application adapter
           -> Runwire Command + ProcessRunner
           -> trusted scanner executable
 
@@ -154,7 +154,7 @@ application has established trust.
 Trusted Public Files
 --------------------
 
-A runtime must not map a raw URL directly to disk. The application/Webrick first
+A runtime must not map a raw URL directly to disk. The application first
 decides that a request targets a public asset and selects the configured public
 root. ``PublicFileResolver`` then accepts only that root plus a relative
 filesystem candidate:
@@ -183,7 +183,7 @@ Generic Process Execution
 Direct generic application use of ``NativeCommandRunner`` is deprecated in
 4.1. The class remains source-compatible because Pathwise still uses bounded,
 shell-free process execution behind trusted filesystem-native acceleration.
-Applications and Foundation should use released Runwire 2.1.1 for generic process
+Applications may use Runwire 2.1.1 for generic process
 work.
 
 ``NativeCommandRunner`` no longer retains arbitrary executable names in a

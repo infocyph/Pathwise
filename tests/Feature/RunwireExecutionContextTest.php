@@ -333,7 +333,7 @@ test('benchmark revision selection overrides optimized Composer maps and rejects
         file_put_contents($directory . DIRECTORY_SEPARATOR . $class . '.php',
             '<?php namespace Infocyph\\Pathwise\\StreamHandler; final class ' . $class . ' {}');
     }
-    $command = [PHP_BINARY, dirname(__DIR__) . '/Support/FoundationHostBenchmark.php', $root, '200', '--verify-source'];
+    $command = [PHP_BINARY, dirname(__DIR__) . '/Support/PathwiseHostBenchmark.php', $root, '200', '--verify-source'];
     try {
         $process = new \Symfony\Component\Process\Process($command);
         $process->mustRun();
@@ -357,7 +357,7 @@ test('HTTP load clients discard an expired warmup connection before measurement'
     $port = substr(strrchr(stream_socket_get_name($server, false), ':'), 1);
     $output = $this->runwireRoot . DIRECTORY_SEPARATOR . 'http-client.json';
     $process = proc_open([
-        PHP_BINARY, dirname(__DIR__) . '/Support/FoundationHostLoad.php', '--client', $port, $output, '0',
+        PHP_BINARY, dirname(__DIR__) . '/Support/PathwiseHostLoad.php', '--client', $port, $output, '0',
     ], [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['file', $output . '.log', 'a']], $pipes);
     $connection = null;
     $respond = static function ($socket, bool $expire = false): bool {
@@ -373,7 +373,7 @@ test('HTTP load clients discard an expired warmup connection before measurement'
         }
         $large = str_repeat('0123456789abcdef', 16384);
         $body = match ($path) {
-            '/small' => str_repeat('matched-foundation-request-', 32),
+            '/small' => str_repeat('matched-pathwise-download-', 32),
             '/large' => $large,
             '/range' => substr($large, 4099, 8190),
         };

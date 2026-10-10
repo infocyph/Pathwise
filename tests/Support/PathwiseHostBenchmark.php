@@ -57,12 +57,9 @@ if (($argv[3] ?? '') === '--verify-source') {
     exit(0);
 }
 
-use Infocyph\Foundation\Filesystem\FilesystemResponseFactory;
-use Infocyph\Foundation\Filesystem\FilesystemTransferFactory;
-use Infocyph\Foundation\Filesystem\FilesystemPublicFileResolver;
-use Infocyph\Foundation\Foundation;
 use Infocyph\Pathwise\Integration\Runwire\RunwireExecutionContext;
 use Infocyph\Pathwise\StreamHandler\DownloadProcessor;
+use Infocyph\Pathwise\StreamHandler\PublicFileResolver;
 use Infocyph\Runwire\Http\HttpRequest;
 use Infocyph\Runwire\Http\Headers;
 use Infocyph\Runwire\Http\ResponseWriterInterface;
@@ -70,31 +67,24 @@ use Infocyph\Runwire\Runtime;
 use Infocyph\Runwire\RuntimeOptions;
 use Infocyph\Runwire\Runtime\Enum\RuntimeDriver;
 use Infocyph\Runwire\Server;
-use Infocyph\Webrick\Request\Request;
 
 $root = ($argv[3] ?? '') === '--serve'
     ? ($argv[7] ?? throw new RuntimeException('HTTP benchmark requires an owned fixture root.'))
-    : sys_get_temp_dir() . '/pathwise-foundation-perf-' . bin2hex(random_bytes(6));
+    : sys_get_temp_dir() . '/pathwise-perf-' . bin2hex(random_bytes(6));
 mkdir($root . '/public/assets', 0700, true);
-$content = str_repeat('matched-foundation-request-', 32);
+$content = str_repeat('matched-pathwise-download-', 32);
 file_put_contents($root . '/public/assets/fixture.txt', $content);
 
 try {
-    $app = Foundation::web([
-        'base_path' => $root,
-        '_config_cache' => false,
-        'router' => ['cache' => false],
-    ]);
-    $app->boot();
-    $responses = $app->make(FilesystemResponseFactory::class);
+    $download = new DownloadProcessor();
+    $download->setAllowedRoots([$root . '/public']);
+    $publicFiles = new PublicFileResolver();
     if (($argv[3] ?? '') === '--serve') {
         file_put_contents($root . '/public/assets/large.bin', str_repeat('0123456789abcdef', 16_384));
-        $download = $app->make(FilesystemTransferFactory::class)->download($root . '/public');
-        $publicFiles = $app->make(FilesystemPublicFileResolver::class);
         class_exists(\Infocyph\Pathwise\StreamHandler\PublicFileResolver::class);
         $loadedSources = benchmarkSources($source);
         $bound = ($argv[6] ?? 'unbound') === 'bound';
-        $handler = static function (HttpRequest $incoming, ResponseWriterInterface $writer) use ($download, $publicFiles, $source, $loadedSources, $bound): void {
+        $handler = static function (HttpRequest $incoming, ResponseWriterInterface $writer) use ($download, $publicFiles, $root, $source, $loadedSources, $bound): void {
             if ($incoming->target === '/ready') {
                 $writer->end(json_encode(['pid' => getmypid(), 'selected_source' => $source, 'loaded_sources' => $loadedSources], JSON_THROW_ON_ERROR));
 
@@ -105,7 +95,7 @@ try {
                 '/large', '/range' => 'assets/large.bin',
                 default => throw new RuntimeException('Unknown host benchmark workload.'),
             };
-            $path = $publicFiles->resolve($relative)->path;
+            $path = $publicFiles->resolve($root . '/public', $relative)->path;
             $operation = static function (DownloadProcessor $owner) use ($incoming, $path, $writer): void {
                 $prepared = $owner->prepareDownload($path, rangeHeader: $incoming->headers->first('range'));
                 if (!$writer->start($prepared->status, Headers::fromArray($prepared->headers))->accepted()) {
@@ -132,17 +122,13 @@ try {
 
         return;
     }
-    $request = Request::fake(
-        headers: ['Host' => 'localhost'],
-        uri: 'http://localhost/assets/fixture.txt',
-    );
-
-    $sample = static function () use ($responses, $request, $content): float {
+    $sample = static function () use ($download, $publicFiles, $root, $content): float {
         $started = hrtime(true);
-        $response = $responses->publicFile($request, 'assets/fixture.txt');
-        $body = $response->getFileBody();
-        if ($response->getStatusCode() !== 200 || $body === null || $body->read(strlen($content)) !== $content) {
-            throw new RuntimeException('Incorrect Foundation filesystem response; benchmark aborted.');
+        $path = $publicFiles->resolve($root . '/public', 'assets/fixture.txt')->path;
+        $prepared = $download->prepareDownload($path);
+        $body = implode('', iterator_to_array($download->streamChunks($prepared), false));
+        if ($prepared->status !== 200 || $body !== $content) {
+            throw new RuntimeException('Incorrect Pathwise download; benchmark aborted.');
         }
 
         return (hrtime(true) - $started) / 1_000_000;
@@ -171,7 +157,7 @@ try {
         'p99_ms' => $latencies[$index(99.0)],
         'peak_rss_kb' => isset($rssMatches[1]) ? (int) $rssMatches[1] : null,
         'successes' => $iterations,
-        'host' => 'Foundation 3.0.1 + Webrick filesystem response (in-process, synthetic)',
+        'host' => 'Direct Pathwise public-file resolution and download (in-process, synthetic)',
         'selected_source' => $source,
         'loaded_sources' => $loadedSources,
     ];
