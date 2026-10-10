@@ -92,7 +92,7 @@ The strict untrusted-data profile uses private bounded staging, server-generated
 
 ## Trusted public/static files
 
-Do not map a raw URL directly to disk. Let application/Webrick policy choose the public root and candidate name, then resolve that relative candidate through Pathwise:
+Do not map a raw URL directly to disk. Let application policy choose the public root and candidate name, then resolve that relative candidate through Pathwise:
 
 ```php
 use Infocyph\Pathwise\StreamHandler\PublicFileResolver;
@@ -106,7 +106,7 @@ $asset = (new PublicFileResolver())->resolve(
 // or an already-authorized response/file writer.
 ```
 
-Traversal/root escape fails closed and symlink policy is explicit. Route eligibility, dotfile policy, HTTP caching/ranges, and transport remain Webrick/application concerns.
+Traversal/root escape fails closed and symlink policy is explicit. Route eligibility, dotfile policy, HTTP caching/ranges, and transport remain application concerns.
 
 ## Secure downloads and ranges
 

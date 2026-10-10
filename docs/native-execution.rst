@@ -22,7 +22,7 @@ Generic Process Boundary
 
 ``NativeCommandRunner`` is retained in Pathwise 4.1 for source compatibility and
 for the library's internal filesystem-native acceleration. Direct application use
-for generic process execution is deprecated. Application and Foundation process
+for generic process execution is deprecated. Application process
 work belongs to Runwire ``Command``, ``ProcessPolicy`` and ``ProcessRunner``.
 
 Pathwise intentionally has no production dependency on Runwire. Ordinary file,

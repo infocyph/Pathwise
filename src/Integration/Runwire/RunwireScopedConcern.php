@@ -88,6 +88,10 @@ trait RunwireScopedConcern
 
     private function currentRunwireContext(): ?RunwireExecutionContext
     {
+        if ($this->runwireMainContext === null && $this->runwireFiberContexts === null) {
+            return null;
+        }
+
         $fiber = Fiber::getCurrent();
 
         return $fiber === null ? $this->runwireMainContext : ($this->runwireFiberContexts[$fiber] ?? null);

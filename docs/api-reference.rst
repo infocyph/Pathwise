@@ -131,7 +131,7 @@ Downloads and Public Files
    Resolves a configured trusted local public root plus a relative filesystem
    candidate into a canonically-contained ``PublicFileResolution``. It is the
    filesystem boundary for static/public delivery; URL/routing policy remains
-   application/Webrick-owned.
+   application-owned.
 
 ``StreamHandler\PublicFileSymlinkPolicy``
    Explicit public-file symlink behavior. ``REJECT`` is the default;
@@ -219,7 +219,7 @@ Native Execution
 ``Native\NativeCommandRunner``
    Legacy non-blocking bounded argv runner retained for Pathwise 4.1 source
    compatibility and internal filesystem-native acceleration. **Direct generic
-   application use is deprecated**; use Runwire for application/Foundation
+   application use is deprecated**; use Runwire for application
    process execution.
 
 ``Native\NativeExecutionLimits``

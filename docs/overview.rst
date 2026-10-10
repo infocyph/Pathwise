@@ -86,7 +86,7 @@ broker, log service, or application path/config system. For example:
 * Pathwise provides storage contexts; application-specific base/public/storage
   path conventions belong to the consuming framework.
 
-This boundary lets projects such as Foundation reuse Pathwise mechanics without
+This boundary lets frameworks and other libraries reuse Pathwise mechanics without
 copying them or coupling Pathwise to a specific HTTP/runtime framework.
 
 Quick Example

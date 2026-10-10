@@ -4,11 +4,10 @@ declare(strict_types=1);
 
 require dirname(__DIR__, 2) . '/vendor/autoload.php';
 
-use Infocyph\Foundation\Filesystem\FilesystemResponseFactory;
-use Infocyph\Foundation\Filesystem\FilesystemTransferFactory;
-use Infocyph\Foundation\Filesystem\StorageRegistry;
-use Infocyph\Foundation\Foundation;
 use Infocyph\Pathwise\Integration\Runwire\RunwireExecutionContext;
+use Infocyph\Pathwise\Storage\StorageContext;
+use Infocyph\Pathwise\StreamHandler\DownloadProcessor;
+use Infocyph\Pathwise\StreamHandler\PublicFileResolver;
 use Infocyph\Runwire\Coroutine\CoroutineRuntime;
 use Infocyph\Runwire\Coroutine\CoroutineScope;
 use Infocyph\Runwire\Exception\CancelledException;
@@ -17,7 +16,6 @@ use Infocyph\Runwire\Runtime\Enum\CancellationReason;
 use Infocyph\Runwire\Runtime\Enum\RuntimeDriver;
 use Infocyph\Runwire\RuntimeCapabilities;
 use Infocyph\Runwire\RuntimeContext;
-use Infocyph\Webrick\Request\Request;
 
 function requireHost(bool $condition, string $message): void
 {
@@ -44,44 +42,40 @@ function cleanupHost(string $root): void
 function makeHost(string $root): array
 {
     mkdir($root, 0700, true);
-    $app = Foundation::web([
-        'base_path' => $root,
-        '_config_cache' => false,
-        'router' => ['cache' => false],
-    ]);
-    $app->boot();
-    $storage = $app->make(StorageRegistry::class);
-    $storage->disk('uploads')->write('host/fixture.txt', 'host-proof');
+    $storage = new StorageContext(['uploads' => ['driver' => 'local', 'root' => $root]], 'uploads');
+    $storage->filesystem()->write('host/fixture.txt', 'host-proof');
+    $download = new DownloadProcessor();
+    $download->setStorageContext($storage);
+    $download->setAllowedRoots(['uploads://host']);
 
-    return [$app, $storage, $app->make(FilesystemTransferFactory::class)->download('host', 'uploads')];
+    return [$storage, $download];
 }
 
-$rootA = sys_get_temp_dir() . '/pathwise-foundation3-a-' . bin2hex(random_bytes(5));
-$rootB = sys_get_temp_dir() . '/pathwise-foundation3-b-' . bin2hex(random_bytes(5));
+$rootA = sys_get_temp_dir() . '/pathwise-host-a-' . bin2hex(random_bytes(5));
+$rootB = sys_get_temp_dir() . '/pathwise-host-b-' . bin2hex(random_bytes(5));
 
 try {
-    [$appA, $storageA, $downA] = makeHost($rootA);
-    [$appB, $storageB, $downB] = makeHost($rootB);
-    $storageB->disk('uploads')->write('host/fixture.txt', 'other-host');
+    [$storageA, $downA] = makeHost($rootA);
+    [$storageB, $downB] = makeHost($rootB);
+    $storageB->filesystem()->write('host/fixture.txt', 'other-host');
 
-    requireHost($storageA->disk('uploads')->read('host/fixture.txt') === 'host-proof', 'Host A storage changed.');
-    requireHost($storageB->disk('uploads')->read('host/fixture.txt') === 'other-host', 'Host B storage changed.');
+    requireHost($storageA->filesystem()->read('host/fixture.txt') === 'host-proof', 'Host A storage changed.');
+    requireHost($storageB->filesystem()->read('host/fixture.txt') === 'other-host', 'Host B storage changed.');
 
     mkdir($rootA . '/public/assets', 0700, true);
-    file_put_contents($rootA . '/public/assets/fixture.txt', 'webrick-response');
-    $request = Request::fake(
-        headers: ['Host' => 'localhost'],
-        uri: 'http://localhost/assets/fixture.txt',
-    );
-    $response = $appA->make(FilesystemResponseFactory::class)->publicFile($request, 'assets/fixture.txt');
+    file_put_contents($rootA . '/public/assets/fixture.txt', 'public-response');
+    $resolved = (new PublicFileResolver())->resolve($rootA . '/public', 'assets/fixture.txt');
+    $publicDownload = new DownloadProcessor();
+    $publicDownload->setAllowedRoots([$rootA . '/public']);
+    $prepared = $publicDownload->prepareDownload($resolved->path);
     requireHost(
-        $response->getStatusCode() === 200
-        && $response->getFileBody()?->read(strlen('webrick-response')) === 'webrick-response',
-        'Foundation/Webrick public response did not preserve Pathwise transfer semantics.',
+        $prepared->status === 200
+        && implode('', iterator_to_array($publicDownload->streamChunks($prepared), false)) === 'public-response',
+        'Public-file resolution did not preserve Pathwise transfer semantics.',
     );
 
     $capabilities = new RuntimeCapabilities(RuntimeDriver::NATIVE, supportsRunwireCoroutines: true);
-    $runtime = RuntimeContext::fromCapabilities($capabilities, 'foundation3-host', generation: 1);
+    $runtime = RuntimeContext::fromCapabilities($capabilities, 'pathwise-host', generation: 1);
     $requestA = RequestContext::create($runtime);
     $requestB = RequestContext::create($runtime);
     $runwire = new CoroutineRuntime();
@@ -136,7 +130,7 @@ try {
     $requestA->complete();
     $requestB->complete();
 
-    // Persistent host: reuse both app contexts and processors across 1,500 request lifecycles.
+    // Persistent host: reuse both storage contexts and processors across 1,500 request lifecycles.
     $memoryBefore = memory_get_usage(true);
     for ($i = 0; $i < 1500; $i++) {
         $request = RequestContext::create($runtime);
@@ -176,7 +170,7 @@ try {
     gc_collect_cycles();
     requireHost(memory_get_usage(true) - $memoryBefore <= 16 * 1024 * 1024,
         'Worker retained excessive request-scoped memory after 1,500 lifecycles.');
-    fwrite(STDOUT, "Foundation 3.0.1 / Runwire 2.1.1 host, Webrick response, cancellation and 1,500 worker lifecycles PASS\n");
+    fwrite(STDOUT, "Pathwise / Runwire 2.1.1 forwarding, isolation, cancellation and 1,500 worker lifecycles PASS\n");
 } finally {
     cleanupHost($rootA);
     cleanupHost($rootB);

@@ -47,7 +47,7 @@ The default chunk size is 64 KiB and can be changed with ``setChunkSize()``.
 
 ``PublicFileResolver`` resolves a trusted public root plus relative candidate
 before response transport. That canonical resolution/metadata cost is deliberate
-and should happen once at the filesystem trust boundary; Webrick/Runwire should
+and should happen once at the filesystem trust boundary; the HTTP host should
 consume the resolved artifact rather than reparsing the raw URL as a disk path.
 
 StorageContext Cost Model
@@ -132,7 +132,7 @@ the PHP semantics, and ``NATIVE`` requires the native capability.
 
 The legacy ``NativeCommandRunner`` remains bounded and shell-free for Pathwise
 internal/source-compatible use, but generic application process use is
-deprecated. Runwire owns application/Foundation process execution.
+deprecated. Runwire owns application process execution.
 
 Directory Workloads
 -------------------
@@ -237,20 +237,22 @@ no regressions that indicate accidental full-file buffering or security-check
 removal. Wall-clock values are recorded as baselines rather than brittle
 universal thresholds because CI hardware and storage vary.
 
-The 4.2 host comparison additionally enforces an unchanged 2% median successful
+The 4.2 standalone comparison additionally enforces an unchanged 2% median successful
 RPM regression limit for tag 4.1 versus the candidate. The strict source loader
 overrides optimized Composer class maps and records file paths/SHA-256 values;
 missing or mixed revision files abort measurement. The synthetic in-process
-comparison and real HTTP profile have separate artifacts:
+comparison and real HTTP profile have separate artifacts. CI repeats the
+comparison on PHP 8.4 and 8.5:
 
 .. code-block:: bash
 
    # Export tag 4.1's src/ into a separate baseline directory first.
-   php tests/Support/CompareFoundationHostPerformance.php /tmp/pathwise41/src "$PWD/src" /tmp/host-comparison.json
-   php tests/Support/FoundationHostLoad.php /tmp/pathwise41/src "$PWD/src" /tmp/host-http-load.json
+   php tests/Support/ComparePathwisePerformance.php /tmp/pathwise41/src "$PWD/src" /tmp/host-comparison.json
+   php tests/Support/PathwiseHostLoad.php /tmp/pathwise41/src "$PWD/src" /tmp/host-http-load.json
 
-The Linux HTTP runner owns a two-worker Runwire 2.1.1 host using Foundation
-3.0.1 filesystem services. It validates complete small/256 KiB/range streaming
+The Linux HTTP test runner owns a two-worker Runwire 2.1.1 host and calls
+Pathwise's public-file resolver and download processor directly. It requires
+no framework. It validates complete small/256 KiB/range streaming
 responses at several concurrency levels, verifies every worker and warms clients
 before measurement, alternates three baseline/candidate trials and continuously
 samples live process-tree RSS, CPU and descriptors. A separate bound-context
@@ -271,7 +273,8 @@ available, load clients run apart from those cores and their SMT siblings.
 Reports include the actual affinity, trial spread and load-generator CPU so
 hybrid CPU placement or a client bottleneck cannot silently masquerade as a
 library throughput difference. The runner requires Linux ``/proc``, ``taskset``,
-and the development host dependencies.
+and the optional Runwire development dependency. The separate in-process
+comparison calls Pathwise directly without starting an HTTP runtime.
 
 See :doc:`trust-boundaries` for persistent-worker and cross-library ownership
 guidance.

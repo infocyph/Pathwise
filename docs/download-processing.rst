@@ -149,7 +149,7 @@ Framework Boundary
 Pathwise owns filesystem/range mechanics. An HTTP framework owns request
 conditionals, response object creation, server offload features such as
 X-Sendfile/X-Accel-Redirect, and connection lifecycle. This boundary is
-intentional and is the integration model used by Foundation 3.
+intentional and applies to any host framework or intermediary library.
 
 See :doc:`storage-context`, :doc:`security`, and
 :doc:`performance-portability`.

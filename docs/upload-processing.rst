@@ -167,7 +167,7 @@ scanning, removes scan state on every path, and maps scanner failures to stable
 ``UploadException`` messages while retaining the original exception as
 ``previous``.
 
-A process-backed scanner belongs in an application/Foundation adapter that
+A process-backed scanner belongs in an application adapter that
 implements ``MalwareScannerInterface`` and uses Runwire for the trusted process.
 Pathwise itself does not accept an executable path for hostile-upload scanning.
 See :doc:`malware-scanning` and :doc:`trust-boundaries`.
