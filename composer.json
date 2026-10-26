@@ -17,7 +17,7 @@
     },
     "require-dev": {
         "infocyph/phpforge": "dev-main@dev",
-        "infocyph/runwire": "2.1.1"
+        "infocyph/runwire": "2.1.2"
     },
     "suggest": {
         "ext-posix": "required if you want to use permissions.",
