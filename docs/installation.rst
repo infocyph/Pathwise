@@ -10,9 +10,15 @@ Install with Composer:
 Requirements:
 
 * PHP 8.4+
-* ``league/flysystem`` 3.x
+* ``league/flysystem`` 3.36+
+* ``league/flysystem-local`` 3.25.1+
 * ``psr/log`` 3.x for Pathwise's PSR-3 logger integration surface
 * ``ext-fileinfo``
+
+The local adapter and its transitive ``league/mime-type-detection`` dependency
+must support PHP 8.4's explicit nullable parameter declarations. Composer
+requires the adapter minimum above and excludes MIME detection versions below
+1.16, including during lowest-dependency resolution.
 
 ``psr/log`` supplies the PSR-3 interfaces Pathwise exposes in its production
 API; it does not install a concrete logger implementation. Applications may
@@ -24,9 +30,9 @@ Optional extensions:
 * ``ext-posix`` for richer Unix ownership details.
 * ``ext-xmlreader`` and ``ext-simplexml`` for XML helpers.
 
-Runwire ``2.1.1`` is optional for host-composed runtime/request/task integration.
-Pathwise does not install or start it for ordinary use. Development pins
-Runwire ``2.1.1`` to verify optional passed-context integration;
+Runwire ``3.0`` is optional for host-composed runtime/request/task integration.
+Pathwise does not install or start it for ordinary use. Development requires
+Runwire ``^3.0`` to verify optional passed-context integration;
 ``composer install --no-dev`` excludes it. Pathwise's development setup and
 release validation do not require a framework. See :doc:`trust-boundaries`.
 

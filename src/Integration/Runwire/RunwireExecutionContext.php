@@ -50,7 +50,7 @@ final class RunwireExecutionContext
             $this->request->cancellation->throwIfCancelled();
         }
         if ($this->scope !== null && $this->scopeProbe !== null) {
-            // A Runwire 2.1.1 public guard checks the live scheduler/task and closed scope.
+            // A Runwire 3.0 public guard checks the live scheduler/task and closed scope.
             $this->scope->hasLocal($this->scopeProbe);
             $this->scope->cancellation()->throwIfCancelled();
         }

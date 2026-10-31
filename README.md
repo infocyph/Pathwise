@@ -148,9 +148,9 @@ The queue is intentionally direct-local: it uses typed opaque leases, stale-work
 
 For distributed deployments, let the host framework own a shared broker and use Pathwise inside workers. Separate local disks hold separate queues; network-mounted queue files are outside the supported contract. Pass shared storage keys and make handlers safe to retry. See the documentation's Queue guide for deployment and lease limits.
 
-## Optional borrowed Runwire 2.1.1 integration
+## Optional borrowed Runwire 3.0 integration
 
-Runwire is an **optional host runtime**, pinned to `2.1.1` for integration development and suggested for deployments using the bridge. Normal Pathwise use does not instantiate or activate Runwire. The host owns its runtime, request, scope and cancellation.
+Runwire is an **optional host runtime**, using `^3.0` for integration development and suggested for deployments using the bridge. Normal Pathwise use does not instantiate or activate Runwire. The host owns its runtime, request, scope and cancellation.
 
 ```php
 use Infocyph\Pathwise\Integration\Runwire\RunwireExecutionContext;
@@ -181,7 +181,7 @@ Pathwise 4 includes explicit controls for:
 - queue state size/payload/job limits and lease ownership;
 - policy enforcement, audit sinks, retention, indexing, and watcher workloads.
 
-Generic application use of `NativeCommandRunner` is deprecated as of 4.1; application process work belongs to the host runtime. Pathwise 4.2 adds optional integration with Runwire 2.1.1 through a passed execution context. Pathwise does not own host schedulers, worker lifecycles or process managers.
+Generic application use of `NativeCommandRunner` is deprecated as of 4.1; application process work belongs to the host runtime. Pathwise 4.2 introduced optional integration through a passed execution context; 4.2.1 qualifies it against Runwire 3.0. Pathwise does not own host schedulers, worker lifecycles or process managers.
 
 Security-sensitive behavior is fail-closed where a configured capability is required. Local/remote capabilities remain explicit rather than silently emulated. Pathwise makes filesystem artifacts safe to treat as **data according to policy**; it does not make arbitrary uploaded/source/binary content safe to execute. See the documentation's **Trust Boundaries and Persistent Runtimes** guide for the full ownership model.
 

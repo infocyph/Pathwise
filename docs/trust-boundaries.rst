@@ -26,8 +26,8 @@ The integration boundary is intentionally narrow:
 
 Pathwise has no framework dependency. Runwire is optional and is not a production dependency.
 
-Borrowed Runwire 2.1.1 Context
-------------------------------
+Borrowed Runwire 3.0 Context
+----------------------------
 
 Pathwise 4.2 accepts ``Integration\Runwire\RunwireExecutionContext`` constructed
 from the host's active ``RuntimeContext``, optional ``RequestContext`` and
@@ -183,7 +183,7 @@ Generic Process Execution
 Direct generic application use of ``NativeCommandRunner`` is deprecated in
 4.1. The class remains source-compatible because Pathwise still uses bounded,
 shell-free process execution behind trusted filesystem-native acceleration.
-Applications may use Runwire 2.1.1 for generic process
+Applications may use Runwire 3.0 for generic process
 work.
 
 ``NativeCommandRunner`` no longer retains arbitrary executable names in a

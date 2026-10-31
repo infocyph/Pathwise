@@ -170,7 +170,7 @@ try {
     gc_collect_cycles();
     requireHost(memory_get_usage(true) - $memoryBefore <= 16 * 1024 * 1024,
         'Worker retained excessive request-scoped memory after 1,500 lifecycles.');
-    fwrite(STDOUT, "Pathwise / Runwire 2.1.1 forwarding, isolation, cancellation and 1,500 worker lifecycles PASS\n");
+    fwrite(STDOUT, "Pathwise / Runwire 3.0 forwarding, isolation, cancellation and 1,500 worker lifecycles PASS\n");
 } finally {
     cleanupHost($rootA);
     cleanupHost($rootB);

@@ -428,7 +428,7 @@ if (($argv[1] ?? '') === '--client') {
 }
 [$baseline, $candidate, $output] = array_slice($argv, 1, 3);
 $hosts = [];
-$report = ['description' => 'Direct Pathwise streaming over test-owned Runwire 2.1.1 HTTP, mixed 832B/256KiB/range downloads',
+$report = ['description' => 'Direct Pathwise streaming over test-owned Runwire 3.0 HTTP, mixed 832B/256KiB/range downloads',
     'environment' => ['php' => PHP_VERSION, 'os' => php_uname(), 'opcache_cli' => true,
         'warmup_requests_per_client' => 101, 'cpu_affinity' => loadAffinity()],
     'budgets' => LOAD_BUDGETS, 'readiness' => [], 'profiles' => [], 'pass' => true];
