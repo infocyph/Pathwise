@@ -10,9 +10,15 @@ Install with Composer:
 Requirements:
 
 * PHP 8.4+
-* ``league/flysystem`` 3.x
+* ``league/flysystem`` 3.36+
+* ``league/flysystem-local`` 3.25.1+
 * ``psr/log`` 3.x for Pathwise's PSR-3 logger integration surface
 * ``ext-fileinfo``
+
+The local adapter and its transitive ``league/mime-type-detection`` dependency
+must support PHP 8.4's explicit nullable parameter declarations. Composer
+requires the adapter minimum above and excludes MIME detection versions below
+1.16, including during lowest-dependency resolution.
 
 ``psr/log`` supplies the PSR-3 interfaces Pathwise exposes in its production
 API; it does not install a concrete logger implementation. Applications may

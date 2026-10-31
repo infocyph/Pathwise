@@ -13,11 +13,15 @@
         "php": ">=8.4",
         "ext-fileinfo": "*",
         "league/flysystem": "^3.36",
+        "league/flysystem-local": "^3.25.1",
         "psr/log": "^3.0.2"
     },
     "require-dev": {
         "infocyph/phpforge": "dev-main@dev",
         "infocyph/runwire": "^3.0"
+    },
+    "conflict": {
+        "league/mime-type-detection": "<1.16"
     },
     "suggest": {
         "ext-posix": "required if you want to use permissions.",
