@@ -250,7 +250,7 @@ comparison on PHP 8.4 and 8.5:
    php tests/Support/ComparePathwisePerformance.php /tmp/pathwise41/src "$PWD/src" /tmp/host-comparison.json
    php tests/Support/PathwiseHostLoad.php /tmp/pathwise41/src "$PWD/src" /tmp/host-http-load.json
 
-The Linux HTTP test runner owns a two-worker Runwire 2.1.1 host and calls
+The Linux HTTP test runner owns a two-worker Runwire 3.0 host and calls
 Pathwise's public-file resolver and download processor directly. It requires
 no framework. It validates complete small/256 KiB/range streaming
 responses at several concurrency levels, verifies every worker and warms clients

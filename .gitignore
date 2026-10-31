@@ -8,7 +8,6 @@
 *.patch
 *.txt
 !docs/requirements.txt
-AI_CONTEXT.md
 composer.lock
 example
 example.php

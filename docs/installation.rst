@@ -24,9 +24,9 @@ Optional extensions:
 * ``ext-posix`` for richer Unix ownership details.
 * ``ext-xmlreader`` and ``ext-simplexml`` for XML helpers.
 
-Runwire ``2.1.1`` is optional for host-composed runtime/request/task integration.
-Pathwise does not install or start it for ordinary use. Development pins
-Runwire ``2.1.1`` to verify optional passed-context integration;
+Runwire ``3.0`` is optional for host-composed runtime/request/task integration.
+Pathwise does not install or start it for ordinary use. Development requires
+Runwire ``^3.0`` to verify optional passed-context integration;
 ``composer install --no-dev`` excludes it. Pathwise's development setup and
 release validation do not require a framework. See :doc:`trust-boundaries`.
 
